@@ -1,0 +1,31 @@
+error: `every_instance` is an `#[event]` option: a request reaches one instance, and its caller takes one reply
+ --> tests/ui/rpc_message_declared_every_instance.rs:9:38
+  |
+9 |     #[ulo_rpc::message("orders.get", every_instance)]
+  |                                      ^^^^^^^^^^^^^^
+
+warning: unused import: `ulo_rpc::Payload`
+ --> tests/ui/rpc_message_declared_every_instance.rs:2:5
+  |
+2 | use ulo_rpc::Payload;
+  |     ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0599]: no associated function or constant named `__ulo_mount_get` found for struct `Orders` in the current scope
+  --> tests/ui/rpc_message_declared_every_instance.rs:10:14
+   |
+ 5 | struct Orders;
+   | ------------- associated function or constant `__ulo_mount_get` not found for this struct
+...
+10 |     async fn get(&self, id: Payload<u64>) -> u64 {
+   |              ^^^ associated function or constant not found in `Orders`
+
+error[E0599]: no associated function or constant named `__ULO_CHECKS_get` found for struct `Orders` in the current scope
+  --> tests/ui/rpc_message_declared_every_instance.rs:10:14
+   |
+ 5 | struct Orders;
+   | ------------- associated function or constant `__ULO_CHECKS_get` not found for this struct
+...
+10 |     async fn get(&self, id: Payload<u64>) -> u64 {
+   |              ^^^ associated function or constant not found in `Orders`

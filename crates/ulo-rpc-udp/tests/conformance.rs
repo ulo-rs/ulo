@@ -1,10 +1,11 @@
 //! The RPC conformance suite over the UDP link, each scenario against a server on a port of its
-//! own. The link declares unary calls alone and a 65,507-byte frame, so the streamed scenarios,
-//! the held-`cancel` ones among them, and the binary one assert the startup refusals, the three
-//! stream scenarios the client's `shape_unsupported` refusal besides, and the
-//! oversized one the client's refusal one byte over the datagram. The recovery scenario is
-//! declared not applicable, and the ordered-`cancel` one is skipped from the link's declaration
-//! without `ordered_control`.
+//! own. The link declares unary calls alone and a 65,507-byte frame, so the streamed scenarios and
+//! the binary one assert the startup refusals, the three stream scenarios the client's
+//! `shape_unsupported` refusal besides, and the oversized one the client's refusal one byte over
+//! the datagram. The four scenarios sending a streamed request's `open` below the server, the
+//! recovery scenario and the every-instance event's delivery are not applicable or refused as
+//! declared below, and the ordered-`cancel` one is skipped from the link's declaration without
+//! `ordered_control`.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
@@ -40,6 +41,14 @@ impl Broker for Loopback {
 
 ulo_rpc_conformance::conformance_suite!(Loopback; not_applicable {
     recovery_after_disrupt: "UDP holds no connection to lose",
+    cancel_before_opened: "UDP carries no streamed request, so there is no `open` to cancel; `client_stream`, `client_stream_in_order` and \
+                           `bidi_stream` assert its startup refusal of a streamed handler",
+    a_late_opened_releases_the_held_cancel: "UDP carries no streamed request, so no `cancel` is held for an `opened`; `client_stream`, \
+                                             `client_stream_in_order` and `bidi_stream` assert its startup refusal of a streamed handler",
+    a_held_cancel_is_dropped_when_its_hold_runs_out: "UDP carries no streamed request, so no `cancel` is held for an `opened`; `client_stream`, \
+                                                      `client_stream_in_order` and `bidi_stream` assert its startup refusal of a streamed handler",
+    a_held_cancel_lasts_until_its_call_s_deadline: "UDP carries no streamed request, so no `cancel` is held for an `opened`; `client_stream`, \
+                                                    `client_stream_in_order` and `bidi_stream` assert its startup refusal of a streamed handler",
 });
 
 /// Datagrams on loopback arrive in the order they were sent, so the ordered-`cancel` scenario

@@ -20,12 +20,12 @@ const START: Duration = Duration::from_secs(5);
 /// reads up during the outage.
 pub async fn waits_for_the_first_ping<H: Host>() {
     let host = H::start().await;
-    if let Some(reason) = host.capabilities().why_not_lazy() {
+    if let Some(reason) = host.capabilities().why_not_lazy_start() {
         if <H::Store as Store>::create_connects(&host.options()) {
             refuses_lazy::<H>(&host);
             return;
         }
-        crate::skipped("lazy_readiness_waits_for_the_first_ping", "lazy", reason);
+        crate::skipped("lazy_readiness_waits_for_the_first_ping", "lazy_start", reason);
         return;
     }
     assert!(
@@ -62,7 +62,7 @@ pub async fn waits_for_the_first_ping<H: Host>() {
     closed(app, "the lazy app").await;
 }
 
-/// On a host declared without `lazy` whose options make `create` connect, `.lazy()` is refused at
+/// On a host declared without `lazy_start` whose options make `create` connect, `.lazy()` is refused at
 /// `wire`, naming the store. Planted break: the registration accepting `.lazy()` on such options.
 fn refuses_lazy<H: Host>(host: &H) {
     let name = <H::Store as Store>::NAME;

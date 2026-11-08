@@ -51,8 +51,9 @@ pub struct Calculator {
     journal: Dep<Journal>,
 }
 
-/// A `message` answers its caller; an `event` answers nobody. `RoleGuard` guards every handler,
-/// and only those declaring `#[meta(RequiresRole(..))]` ask for anything.
+/// A `message` answers its caller; an `event` answers nobody, and reaches one server instance unless
+/// declared `every_instance`, which TCP refuses. `RoleGuard` guards every handler, and only those
+/// declaring `#[meta(RequiresRole(..))]` ask for anything.
 #[handlers]
 #[guards(RoleGuard)]
 impl Calculator {

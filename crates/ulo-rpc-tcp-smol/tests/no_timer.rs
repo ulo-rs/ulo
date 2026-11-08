@@ -28,7 +28,7 @@ async fn refused() {
     assert!(app.handle().timer().is_none(), "the app has a timer");
     let mut link = Tcp::new("127.0.0.1:0").with_runtime(OnSmol::runtime());
     link.prepare(&app.handle()).await.expect("the link prepares");
-    let Err(refused) = link.listen(&[Pattern::from("no_timer.add")]).await else {
+    let Err(refused) = link.listen(&[Pattern::from("no_timer.add").into()]).await else {
         panic!("a link listened on an app with no timer");
     };
     let no_timer = refused.downcast_ref::<NoTimer>().unwrap_or_else(|| panic!("the refusal is not a `NoTimer`: {refused}"));

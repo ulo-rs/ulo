@@ -25,7 +25,7 @@ use ulo_http::{AppService, Backend, BackendLimits, ConnInfo, HttpBody, HttpConfi
 use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Pattern, Payload, ReplyPath, RpcClient};
+use ulo_rpc::{Codec, Ack, CallHeaders, Capabilities, Data, Delivery, DeliveryMode, Frame, Link, Outbound, Subscription, Payload, ReplyPath, RpcClient};
 use ulo_transport::ErrorKind;
 
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -142,7 +142,7 @@ impl Link for Wire {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         self.inbound.lock().unwrap_or_else(PoisonError::into_inner).take().ok_or_else(|| "the wire listened twice".into())
     }
 

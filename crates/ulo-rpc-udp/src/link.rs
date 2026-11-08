@@ -17,7 +17,7 @@ use ulo_runtime_tokio::Tokio;
 use ulo_net::{Endpoint, EndpointSpec};
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{
-    Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo,
+    Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::{Watch, ordered};
 use ulo_transport::{Details, ErrorKind};
@@ -210,6 +210,7 @@ impl Link for Udp {
                  a connected client socket may learn of it through an ICMP port unreachable, which is often filtered and is not relied on",
             )
             .without_ordered_control("datagrams arrive in any order, so a `cancel` may overtake its request")
+            .without_every_instance("the caller sends to one server's address, so an event reaches that server and no other instance")
     }
 
     fn usable(&self) -> Result<(), BoxError> {
@@ -229,9 +230,9 @@ impl Link for Udp {
         Ok(())
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         // The server routes by the `p` each frame carries; the socket takes every pattern.
-        let _ = patterns;
+        let _ = subscriptions;
         let Some(addr) = self.prepared else {
             return Err("the UDP link listens once `prepare` has resolved its endpoint".into());
         };
@@ -1152,7 +1153,7 @@ mod tests {
         let app = ulo::App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
         let mut udp = Udp::new("127.0.0.1:0");
         udp.prepare(&app.handle()).await.expect("the link prepares");
-        let inbound = udp.listen(&[Pattern::from(LATE)]).await.expect("the link listens");
+        let inbound = udp.listen(&[Pattern::from(LATE).into()]).await.expect("the link listens");
         let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
         let caller = UdpSocket::bind("127.0.0.1:0").await.expect("the caller's socket");
         let (swept, release) = gate::stop(addr);
@@ -1233,7 +1234,7 @@ mod tests {
         let app = ulo::App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
         let mut udp = Udp::new("127.0.0.1:0");
         udp.prepare(&app.handle()).await.expect("the link prepares");
-        let _inbound = udp.listen(&[Pattern::from(LATE)]).await.expect("the link listens");
+        let _inbound = udp.listen(&[Pattern::from(LATE).into()]).await.expect("the link listens");
         let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
         let socket = lock(&udp.state.socket).clone().expect("the server's socket");
         let caller = UdpSocket::bind("127.0.0.1:0").await.expect("the caller's socket");

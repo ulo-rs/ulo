@@ -98,7 +98,7 @@ async fn a_request_read_after_the_drain_ended_the_inbound_stream_is_refused() {
     const DRAINED: &str = "link.drained";
     let broker = RedisServer::start().await;
     let server = broker.link();
-    let mut inbound = server.listen(&[Pattern::from(DRAINED)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(DRAINED).into()]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
@@ -158,7 +158,7 @@ async fn a_server_link_dropped_without_close_closes_its_connections() {
     let broker = RedisServer::start().await;
     let relay = Relay::start(broker.server).await;
     let server = Redis::url(format!("redis://{}", relay.addr()));
-    let inbound = server.listen(&[Pattern::from("link.dropped")]).await.expect("the server's link listens");
+    let inbound = server.listen(&[Pattern::from("link.dropped").into()]).await.expect("the server's link listens");
     assert!(relay.open().await > 0, "the listening server's link holds no connection through its relay");
     drop(inbound);
     drop(server);
@@ -194,7 +194,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connections() {
         let pattern = if drained { "link.held.drained" } else { "link.held" };
         let relay = Relay::start(broker.server).await;
         let server = Redis::url(format!("redis://{}", relay.addr()));
-        let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+        let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
         let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
         (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
         let delivery = tokio::time::timeout(PATIENCE, inbound.next())

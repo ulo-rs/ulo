@@ -23,7 +23,7 @@ const LIMIT: u32 = 8;
 pub async fn reply_overflow<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let rpc = fixture.rpc().clone().max_queued_items(Count::Max(LIMIT)).expect("a limit of eight");
@@ -46,7 +46,7 @@ pub async fn reply_overflow<B: Broker>() {
 pub async fn request_overflow<B: Broker>() {
     let fixture = Fixture::<B>::start_queued(Count::Max(LIMIT)).await;
     if !streams(&fixture.capabilities()) {
-        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false }).await;
+        refused_at_startup(&fixture.broker, Mounts { streaming: true, binary: false, every_instance: false }).await;
         return fixture.stop().await;
     }
     let items = stream::iter(0..i64::from(LIMIT) * 4);

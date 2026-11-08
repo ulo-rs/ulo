@@ -18,23 +18,29 @@ use crate::handler::{Kind, RpcHandler};
 use crate::codec::Codec;
 use crate::dispatch::{self, Route, Settling, Shared};
 use crate::frame::PayloadKind;
-use crate::link::{Delivery, Inbound, Link, Pattern};
+use crate::link::{Delivery, Inbound, Instances, Link, Subscription};
 use crate::queue;
 use crate::transport::Rpc;
 
 /// `timeout_grace` at `Bound::Default`, the HTTP server's.
 const DEFAULT_TIMEOUT_GRACE: Duration = Duration::from_secs(1);
 
+/// `shed_retry_after` unset, the HTTP and gRPC servers'.
+const DEFAULT_SHED_RETRY_AFTER: Duration = Duration::from_secs(1);
+
 /// The RPC server over link `L`: `app.bind(ulo_rpc::Server::new(ulo_rpc_tcp::Tcp::new("0.0.0.0:7000")))`.
 ///
 /// `prepare` calls `Link::prepare` and `Link::max_inflight`, and refuses two handlers for one
 /// pattern, a handler whose shape the link's capabilities do not carry (a streamed shape on UDP),
-/// an `#[event]` handler with a streamed shape, a `Binary` payload on a JSON link,
-/// `max_inflight(Count::Max(0))`,
+/// an `#[event]` handler with a streamed shape, a request handler declared `every_instance`, an
+/// event declared `every_instance` on a link declaring `without_every_instance` (TCP, UDP), a
+/// `Binary` payload on a JSON link, `max_inflight(Count::Max(0))`,
 /// `max_queued_items(Count::Max(0))` and `timeout_grace(Bound::After(Duration::ZERO))`.
 /// On a link declaring `without_single_delivery` it logs one `warn` naming how many request
-/// patterns it mounts and the reason, and refuses nothing. `bind` calls `Link::listen` with every
-/// mounted pattern. Over the in-flight limit a call is answered `err` of kind `unavailable`. A pattern is
+/// patterns and how many one-instance event patterns it mounts and the reason, and refuses
+/// nothing. `bind` calls `Link::listen` with every mounted pattern and the [`Instances`] its
+/// handler declares. Over the in-flight limit a call is answered `err` of kind `unavailable` with
+/// a `RetryAfter` detail, [`shed_retry_after`](Self::shed_retry_after). A pattern is
 /// its own, so a controller's `.at(prefix)` does not apply to it, and `wire()` refuses a prefix on
 /// a controller whose handlers are all RPC handlers.
 ///
@@ -51,6 +57,7 @@ pub struct Server<L: Link> {
     pub(crate) max_inflight: Count,
     pub(crate) max_queued_items: Count,
     pub(crate) timeout_grace: Bound,
+    pub(crate) shed_retry_after: Duration,
     /// Set by `prepare`.
     pub(crate) shared: Option<Arc<Shared>>,
     /// Set by `bind`, taken by `serve`.
@@ -66,6 +73,7 @@ impl<L: Link> Server<L> {
             max_inflight: Count::Default,
             max_queued_items: Count::Default,
             timeout_grace: Bound::Default,
+            shed_retry_after: DEFAULT_SHED_RETRY_AFTER,
             shared: None,
             inbound: Mutex::new(None),
             closing: Watch::new(false),
@@ -77,9 +85,20 @@ impl<L: Link> Server<L> {
     /// through `Link::max_inflight`. A link declaring `native_backpressure` stops taking requests
     /// from its broker at the bound, AMQP through its prefetch and Kafka by pausing its
     /// partitions, so they wait in the broker; on every other link a request over the bound is
-    /// refused `unavailable` with a `RetryAfter` detail.
+    /// refused `unavailable` with a `RetryAfter` detail, [`shed_retry_after`](Self::shed_retry_after).
     pub fn max_inflight(mut self, calls: Count) -> Self {
         self.max_inflight = calls;
+        self
+    }
+
+    /// How long a request refused over `max_inflight` is asked to wait before a retry: one second
+    /// unset, the HTTP server's `Retry-After` and the gRPC server's `grpc-retry-pushback-ms`. The
+    /// refusal's `err` carries it as its `RetryAfter` detail, written in whole seconds rounded up,
+    /// as HTTP's `Retry-After` is, which `RpcError::details().retry_after()` reads back. An event
+    /// over the bound gets none: it has no reply, and is left unacknowledged for a broker to
+    /// redeliver.
+    pub fn shed_retry_after(mut self, after: Duration) -> Self {
+        self.shed_retry_after = after;
         self
     }
 
@@ -156,6 +175,28 @@ impl<L: Link> ulo::Server for Server<L> {
                 continue;
             }
             let shape = handler.info().shape();
+            if rpc.instances == Instances::Every && rpc.kind == Kind::Message {
+                let pattern = Arc::clone(&pattern);
+                failures.push(Failure::naming(vec![who.controller], move |names| {
+                    format!(
+                        "{} (pattern `{pattern}`) is a request handler declared `every_instance`; a request reaches one instance, and only an event reaches every instance",
+                        who.text(names)
+                    )
+                }));
+            }
+            if rpc.instances == Instances::Every
+                && rpc.kind == Kind::Event
+                && let Some(reason) = capabilities.why_not_every_instance()
+            {
+                let pattern = Arc::clone(&pattern);
+                failures.push(Failure::naming(vec![who.controller], move |names| {
+                    format!(
+                        "{} (pattern `{pattern}`) is an event declared `every_instance`, which the {} link cannot deliver: {reason}",
+                        who.text(names),
+                        L::NAME
+                    )
+                }));
+            }
             if rpc.kind == Kind::Event && shape != Shape::Unary {
                 let pattern = Arc::clone(&pattern);
                 failures.push(Failure::naming(vec![who.controller], move |names| {
@@ -196,21 +237,23 @@ impl<L: Link> ulo::Server for Server<L> {
                     }));
                 }
                 Entry::Vacant(slot) => {
-                    slot.insert(Route { handler: handler.clone(), call: Arc::clone(&rpc.call), kind: rpc.kind, shape });
+                    slot.insert(Route { handler: handler.clone(), call: Arc::clone(&rpc.call), kind: rpc.kind, shape, instances: rpc.instances });
                 }
             }
         }
         failures.into_result()?;
         let requests = routes.values().filter(|route| route.kind == Kind::Message).count();
+        let events = routes.values().filter(|route| route.kind == Kind::Event && route.instances == Instances::One).count();
         if let Some(reason) = capabilities.why_not_single_delivery()
-            && requests > 0
+            && requests + events > 0
         {
             tracing::warn!(
                 link = L::NAME,
                 request_patterns = requests,
+                event_patterns = events,
                 reason,
-                "the {} link delivers each request to every server instance listening on its pattern, \
-                 each running the handler; run one server instance",
+                "the {} link delivers each request, and each event not declared `every_instance`, to every server instance \
+                 listening on its pattern, each running the handler; run one server instance",
                 L::NAME
             );
         }
@@ -223,7 +266,7 @@ impl<L: Link> ulo::Server for Server<L> {
             codec: Codec::of(&capabilities),
             capabilities,
             link: L::NAME,
-            admission: Admission::new(limit),
+            admission: Admission::new(limit).retry_after(self.shed_retry_after),
             grace: grace_of(self.timeout_grace),
             queued: queue::limit_of(self.max_queued_items),
             calls: Mutex::new(HashMap::new()),
@@ -239,9 +282,10 @@ impl<L: Link> ulo::Server for Server<L> {
         let Some(shared) = &self.shared else {
             return Err("the RPC server was bound before `prepare` built its routes".into());
         };
-        let mut patterns: Vec<Pattern> = shared.routes.keys().map(|pattern| Pattern::from(pattern.as_str())).collect();
-        patterns.sort();
-        let inbound = self.link.listen(&patterns).await?;
+        let mut subscriptions: Vec<Subscription> =
+            shared.routes.iter().map(|(pattern, route)| Subscription::new(pattern.as_str(), route.instances)).collect();
+        subscriptions.sort();
+        let inbound = self.link.listen(&subscriptions).await?;
         *self.inbound.lock().unwrap_or_else(PoisonError::into_inner) = Some(inbound);
         Ok(())
     }

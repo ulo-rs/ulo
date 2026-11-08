@@ -27,8 +27,8 @@ use ulo_runtime_tokio::Tokio;
 use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Link, NoDestination, NoTimer,
-    Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
+    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NoDestination, NoTimer,
+    Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::ordered;
 use ulo_transport::Count;
@@ -107,8 +107,8 @@ pub struct Kafka {
 
 #[derive(Default)]
 pub(crate) struct State {
-    /// The server side and the tasks reading its two consumers.
-    server: Option<(Arc<ServerSide>, [AbortHandle; 2])>,
+    /// The server side and the tasks reading its consumers.
+    server: Option<(Arc<ServerSide>, Vec<AbortHandle>)>,
     client: Option<Arc<ClientSide>>,
 }
 
@@ -261,7 +261,15 @@ impl Link for Kafka {
         self.max_inflight = calls.max_inflight();
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    /// A pattern reaching one instance is a topic of the group's consumer, which Kafka assigns
+    /// each partition of to one member. Those reaching every instance, events declared
+    /// `every_instance`, are read by a consumer of this instance's own, assigned every partition of
+    /// them from its end outside any group's rebalancing, as the control consumer is: its
+    /// `group.id`, `<group>.every.<uuid>`, is this instance's and commits nothing, so the broker
+    /// keeps no group or offset for it, and it reads what is produced from `bind` on. A partition
+    /// added to such a topic after `bind` is not read: an event produced there reaches none of the
+    /// instances already listening, and one started later reads it from its end.
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         let group = self
             .group
             .clone()
@@ -270,15 +278,22 @@ impl Link for Kafka {
         let runtime = self.runtime()?;
         let base = Brokers::parse(&self.brokers)?.config();
         let timer = self.timer.clone().ok_or(NoTimer { link: "Kafka" })?;
-        let topics: Vec<String> = patterns.iter().map(|pattern| pattern.as_str().to_owned()).collect();
+        let (every, shared): (Vec<&Subscription>, Vec<&Subscription>) =
+            subscriptions.iter().partition(|subscription| subscription.instances == Instances::Every);
+        let topics: Vec<String> = shared.iter().map(|subscription| subscription.pattern.as_str().to_owned()).collect();
+        let own: Vec<String> = every.iter().map(|subscription| subscription.pattern.as_str().to_owned()).collect();
         let (partitions, replication) = (self.partitions, self.replication);
-        let (consumer, control, producer) = runtime
+        let (consumer, every, control, producer) = runtime
             .run(async move {
                 // Created here, not on the first produce, so a stopped server's topic still exists
                 // and a miss is the caller's `Timeout` whether or not the broker auto-creates
                 // topics; the consumer also gets its partitions at once rather than after a
                 // metadata refresh.
                 create_topics(&base, &topics, partitions, replication).await?;
+                // The admin API refuses an empty list as an invalid argument.
+                if !own.is_empty() {
+                    create_topics(&base, &own, partitions, replication).await?;
+                }
                 create_topics(&base, &[CONTROL.to_owned()], 1, replication).await?;
                 anchor(&base, &group, &topics, &timer).await?;
 
@@ -292,11 +307,16 @@ impl Link for Kafka {
                 let names: Vec<&str> = topics.iter().map(String::as_str).collect();
                 consumer.subscribe(&names)?;
 
-                let control = control_consumer(&base, &group).await?;
+                let every = if own.is_empty() {
+                    None
+                } else {
+                    Some(own_consumer(&base, format!("{group}.every.{}", uuid::Uuid::new_v4().simple()), &own).await?)
+                };
+                let control = own_consumer(&base, format!("{group}.control.{}", uuid::Uuid::new_v4().simple()), &[CONTROL.to_owned()]).await?;
                 // Detached from its creation, so its drop, wherever the writer ends or the runtime
                 // drops it, runs on a thread of its own rather than on a worker.
                 let producer = Detached::new(producer(&base)?);
-                Ok::<_, BoxError>((consumer, control, producer))
+                Ok::<_, BoxError>((consumer, every, control, producer))
             })
             .await
             .map_err(Permanent::new)??;
@@ -307,6 +327,7 @@ impl Link for Kafka {
         runtime.handle().spawn(server_writer(producer, queued));
         let side = Arc::new(ServerSide {
             consumer,
+            every: every.clone(),
             writes,
             codec: self.codec,
             runtime: runtime.clone(),
@@ -316,10 +337,13 @@ impl Link for Kafka {
             inflight: Arc::new(watch::channel(0).0),
             limit: self.max_inflight,
         });
-        let tasks = [
-            runtime.handle().spawn(request_lane(Arc::clone(&side))).abort_handle(),
+        let mut tasks = vec![
+            runtime.handle().spawn(request_lane(Arc::clone(&side), Arc::clone(&side.consumer))).abort_handle(),
             runtime.handle().spawn(control_lane(Arc::clone(&side), control)).abort_handle(),
         ];
+        if let Some(every) = every {
+            tasks.push(runtime.handle().spawn(request_lane(Arc::clone(&side), every)).abort_handle());
+        }
         lock(&self.state).server = Some((side, tasks));
         Ok(receiver_stream(inbound))
     }
@@ -397,6 +421,9 @@ impl Link for Kafka {
         let Some(side) = server else { return };
         side.phase.send_replace(Phase::Draining);
         pause(&side.consumer);
+        if let Some(every) = &side.every {
+            pause(every);
+        }
         if let Err(error) = side.consumer.commit_consumer_state(CommitMode::Async) {
             tracing::debug!(%error, "the Kafka link had no offset to commit at the drain");
         }
@@ -646,34 +673,35 @@ fn producer(base: &ClientConfig) -> Result<FutureProducer, BoxError> {
     Ok(config.create()?)
 }
 
-/// A consumer of the control topic assigned every partition from its end, outside any group's
-/// rebalancing, so it reads from `bind` on rather than from a first assignment seconds later. Its
-/// `group.id` is this instance's own and it commits nothing.
-async fn control_consumer(base: &ClientConfig, group: &str) -> Result<Arc<Detached<StreamConsumer>>, BoxError> {
+/// A consumer of `topics` assigned every partition of each from its end, outside any group's
+/// rebalancing, so it reads from `bind` on rather than from a first assignment seconds later: the
+/// control topic's, and the one reading the events every instance receives. Its `group.id` is
+/// this instance's own and it commits nothing.
+async fn own_consumer(base: &ClientConfig, group: String, topics: &[String]) -> Result<Arc<Detached<StreamConsumer>>, BoxError> {
     let mut config = base.clone();
-    config
-        .set("group.id", format!("{group}.control.{}", uuid::Uuid::new_v4().simple()))
-        .set("enable.auto.commit", "false")
-        .set("auto.offset.reset", "latest");
+    config.set("group.id", group).set("enable.auto.commit", "false").set("enable.auto.offset.store", "false").set("auto.offset.reset", "latest");
     let consumer: Arc<Detached<StreamConsumer>> = Arc::new(Detached::new(config.create()?));
-    let reader = Arc::clone(&consumer);
-    // `fetch_metadata` blocks the calling thread.
-    let partitions: Vec<i32> = blocking(move || -> Result<Vec<i32>, BoxError> {
-        let metadata = reader.fetch_metadata(Some(CONTROL), Timeout::After(Duration::from_secs(10)))?;
-        Ok(metadata
-            .topics()
-            .iter()
-            .filter(|topic| topic.name() == CONTROL)
-            .flat_map(|topic| topic.partitions().iter().map(|partition| partition.id()))
-            .collect())
-    })
-    .await??;
-    if partitions.is_empty() {
-        return Err(format!("the Kafka link found no partition of `{CONTROL}`").into());
-    }
     let mut assignment = TopicPartitionList::new();
-    for partition in partitions {
-        assignment.add_partition_offset(CONTROL, partition, Offset::End)?;
+    for topic in topics {
+        let reader = Arc::clone(&consumer);
+        let name = topic.clone();
+        // `fetch_metadata` blocks the calling thread.
+        let partitions: Vec<i32> = blocking(move || -> Result<Vec<i32>, BoxError> {
+            let metadata = reader.fetch_metadata(Some(&name), Timeout::After(Duration::from_secs(10)))?;
+            Ok(metadata
+                .topics()
+                .iter()
+                .filter(|found| found.name() == name)
+                .flat_map(|found| found.partitions().iter().map(|partition| partition.id()))
+                .collect())
+        })
+        .await??;
+        if partitions.is_empty() {
+            return Err(format!("the Kafka link found no partition of `{topic}`").into());
+        }
+        for partition in partitions {
+            assignment.add_partition_offset(topic, partition, Offset::End)?;
+        }
     }
     consumer.assign(&assignment)?;
     Ok(consumer)
@@ -683,6 +711,8 @@ async fn control_consumer(base: &ClientConfig, group: &str) -> Result<Arc<Detach
 /// and where deliveries go.
 struct ServerSide {
     consumer: Arc<Detached<StreamConsumer>>,
+    /// The consumer of the topics whose events reach every instance, when the server has any.
+    every: Option<Arc<Detached<StreamConsumer>>>,
     /// The server's writer, which every reply and `opened` is produced through.
     writes: ordered::Sender<Record>,
     codec: Codec,
@@ -715,7 +745,8 @@ impl ServerSide {
         }
     }
 
-    async fn on_request(&self, record: OwnedMessage) {
+    /// One record `consumer` read, whose offset its `Ack` stores there.
+    async fn on_request(&self, consumer: &Arc<Detached<StreamConsumer>>, record: OwnedMessage) {
         let pattern = record.topic().to_owned();
         let headers = record.headers();
         let kind = header(headers, KIND);
@@ -723,7 +754,7 @@ impl ServerSide {
         let correlation = header(headers, CORRELATION);
         let call_headers = call_headers(headers);
         let data = Data::new(record.payload().map(Bytes::copy_from_slice).unwrap_or_default());
-        let consumer = Arc::clone(&self.consumer);
+        let consumer = Arc::clone(consumer);
         let (partition, offset) = (record.partition(), record.offset());
         let topic = pattern.clone();
         // Stored once the handler completes and committed by the next auto-commit, for a
@@ -796,13 +827,12 @@ impl ServerSide {
     }
 }
 
-/// The group consumer's records until the drain, which pauses the partitions and leaves the
-/// consumer to the acknowledgments still owed. At the server's in-flight bound the lane pauses
-/// the assignment until a record settles ([`at_bound`]), so the requests over it wait in their
-/// topics.
-async fn request_lane(side: Arc<ServerSide>) {
+/// `consumer`'s records until the drain, which pauses the partitions and leaves the consumer to
+/// the acknowledgments still owed: the group's consumer, or the one reading the events every
+/// instance receives. At the server's in-flight bound the lane pauses the assignment until a
+/// record settles ([`at_bound`]), so the requests over it wait in their topics.
+async fn request_lane(side: Arc<ServerSide>, consumer: Arc<Detached<StreamConsumer>>) {
     let mut phase = side.phase.subscribe();
-    let consumer = Arc::clone(&side.consumer);
     loop {
         // The borrowed record is detached inside the arm: it borrows the consumer and is not
         // `Send`, so it must not live across an await.
@@ -817,8 +847,8 @@ async fn request_lane(side: Arc<ServerSide>) {
         };
         match record {
             Ok(record) => {
-                side.on_request(record).await;
-                if !at_bound(&side, &mut phase).await {
+                side.on_request(&consumer, record).await;
+                if !at_bound(&side, &consumer, &mut phase).await {
                     break;
                 }
             }
@@ -836,19 +866,19 @@ async fn request_lane(side: Arc<ServerSide>) {
 /// consumer is still read meanwhile, which serves a rebalance; a record from a partition assigned
 /// since the pause is kept here, the new assignment paused in turn, and handed over once there is
 /// room. `false` once the server drains or closes, the partitions left paused for the drain.
-async fn at_bound(side: &ServerSide, phase: &mut watch::Receiver<Phase>) -> bool {
+async fn at_bound(side: &ServerSide, consumer: &Arc<Detached<StreamConsumer>>, phase: &mut watch::Receiver<Phase>) -> bool {
     let Some(limit) = side.limit else { return true };
     if *side.inflight.borrow() < limit {
         return true;
     }
-    pause(&side.consumer);
+    pause(consumer);
     let mut inflight = side.inflight.subscribe();
     let mut kept = VecDeque::new();
     loop {
         if *inflight.borrow_and_update() < limit {
             match kept.pop_front() {
                 Some(record) => {
-                    side.on_request(record).await;
+                    side.on_request(consumer, record).await;
                     continue;
                 }
                 None => break,
@@ -862,11 +892,11 @@ async fn at_bound(side: &ServerSide, phase: &mut watch::Receiver<Phase>) -> bool
                 continue;
             }
             _ = inflight.changed() => continue,
-            record = side.consumer.recv() => record.map(|record| record.detach()),
+            record = consumer.recv() => record.map(|record| record.detach()),
         };
         match record {
             Ok(record) => {
-                pause(&side.consumer);
+                pause(consumer);
                 kept.push_back(record);
             }
             Err(error) => {
@@ -876,9 +906,9 @@ async fn at_bound(side: &ServerSide, phase: &mut watch::Receiver<Phase>) -> bool
         }
     }
     if *phase.borrow() == Phase::Serving {
-        match side.consumer.assignment() {
+        match consumer.assignment() {
             Ok(assignment) => {
-                if let Err(error) = side.consumer.resume(&assignment) {
+                if let Err(error) = consumer.resume(&assignment) {
                     tracing::warn!(%error, "the Kafka link could not resume its partitions");
                 }
             }

@@ -40,7 +40,7 @@ use ulo_transport::sync::Watch;
 use crate::handler::{HandlerFn, Kind};
 use crate::codec::Codec;
 use crate::frame::{Data, ErrorBody, Frame};
-use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Pattern, ReplyPath};
+use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Pattern, ReplyPath};
 use crate::queue::{self, Feed, Halted};
 use crate::trace;
 use crate::transport::{Body, CallHeaders, CxInner, LinkInfo, NoHandler, Reply, Rpc, RpcCx};
@@ -102,6 +102,7 @@ pub(crate) struct Route {
     pub(crate) call: HandlerFn,
     pub(crate) kind: Kind,
     pub(crate) shape: Shape,
+    pub(crate) instances: Instances,
 }
 
 /// A call in flight, by its id: what a `cancel` cancels and where an `in` goes.

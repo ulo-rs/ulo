@@ -1,7 +1,7 @@
 //! The UDP link for `ulo-rpc` (transports DESIGN §5.3): one frame per datagram, replies sent to
 //! the sender's address. Unordered with no delivery guarantee; a payload of at most 65,507 bytes
 //! less the envelope; unary calls and events only, a streamed shape refused at startup;
-//! `Addressed`; at close the server answers `unavailable` every request its socket already holds,
+//! `Addressed`, an event declared `every_instance` refused at startup; at close the server answers `unavailable` every request its socket already holds,
 //! but a datagram arriving after the socket closes reaches no one, and its caller sees its own
 //! `Timeout` (declared without `confirmed_drain`). No TLS: DTLS is not supported, so `Udp::tls` does not
 //! exist.

@@ -69,7 +69,7 @@ async fn a_server_link_dropped_without_close_releases_its_address() {
         .expect("the app connects");
     let mut udp = Udp::new("127.0.0.1:0");
     udp.prepare(&app.handle()).await.expect("the link prepares");
-    let inbound = udp.listen(&[Pattern::from("dropped_link.add")]).await.expect("the link listens");
+    let inbound = udp.listen(&[Pattern::from("dropped_link.add").into()]).await.expect("the link listens");
     let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
     assert!(UdpSocket::bind(addr).is_err(), "the address was bound again while the link listened");
 
@@ -94,7 +94,7 @@ async fn a_reply_queued_as_the_server_link_drops_is_sent() {
         .expect("the app connects");
     let mut udp = Udp::new("127.0.0.1:0");
     udp.prepare(&app.handle()).await.expect("the link prepares");
-    let mut inbound = udp.listen(&[Pattern::from("dropped_link.add")]).await.expect("the link listens");
+    let mut inbound = udp.listen(&[Pattern::from("dropped_link.add").into()]).await.expect("the link listens");
     let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
     let caller = tokio::net::UdpSocket::bind("127.0.0.1:0").await.expect("the caller's socket");
     let request = Frame::Req { id: 7, pattern: "dropped_link.add".to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
@@ -128,7 +128,7 @@ async fn the_writer_times_its_last_sends_with_the_app_s_clock() {
         .expect("the app connects");
     let mut udp = Udp::new("127.0.0.1:0");
     udp.prepare(&app.handle()).await.expect("the link prepares");
-    let inbound = udp.listen(&[Pattern::from("dropped_link.add")]).await.expect("the link listens");
+    let inbound = udp.listen(&[Pattern::from("dropped_link.add").into()]).await.expect("the link listens");
     assert!(!clock.0.lock().unwrap().contains(&CUT_GRACE), "the link asked for its grace before its drop");
 
     drop(inbound);

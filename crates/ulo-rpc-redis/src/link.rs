@@ -14,7 +14,7 @@ use ulo_runtime_tokio::Tokio;
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, Ordering as Order,
-    Outbound, Pattern, ReplyPath, ReplyTo,
+    Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::ordered;
 use ulo_transport::{Details, ErrorKind};
@@ -101,7 +101,7 @@ impl Redis {
 }
 
 /// Pub/Sub has no consumer group: a `PUBLISH` reaches every connection subscribed to the channel.
-const FAN_OUT: &str = "Redis Pub/Sub delivers a request to every server instance subscribed to its pattern's channel";
+const FAN_OUT: &str = "Redis Pub/Sub delivers a request, and an event, to every server instance subscribed to its pattern's channel";
 
 const NO_RUNTIME: &str = "the Redis link has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
 
@@ -138,10 +138,14 @@ impl Link for Redis {
         Ok(())
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    /// Every pattern's channel is subscribed alike: Pub/Sub delivers each message to every
+    /// subscriber, which is [`Instances::Every`](ulo_rpc::Instances::Every), and an
+    /// [`Instances::One`](ulo_rpc::Instances::One) pattern reaches every instance too, as the
+    /// capabilities declare (`without_single_delivery`).
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         let runtime = self.runtime()?;
         let client = client(&self.url)?;
-        let patterns: Vec<String> = patterns.iter().map(|pattern| pattern.as_str().to_owned()).collect();
+        let patterns: Vec<String> = subscriptions.iter().map(|subscription| subscription.pattern.as_str().to_owned()).collect();
         let (publisher, sink, stream) = {
             let (client, channels) = (client.clone(), server_channels(&patterns, true));
             runtime

@@ -478,7 +478,10 @@ impl RpcClient {
         Call { _res: PhantomData, spec: Spec::new(self, pattern, Shape::Unary, Request::One(payload)) }
     }
 
-    /// An event, answered by nothing.
+    /// An event, answered by nothing. It reaches one of the server instances listening on
+    /// `pattern`, or each of them where the pattern's handler is declared `every_instance`
+    /// ([`Instances`](crate::Instances)): the servers decide, and the client publishes alike under
+    /// either.
     pub fn emit<T: Serialize + ?Sized>(&self, pattern: &str, data: &T) -> Emit {
         let payload = encode(self.inner.codec, data);
         Emit { spec: Spec::new(self, pattern, Shape::Unary, Request::One(payload)) }
@@ -1539,7 +1542,7 @@ mod tests {
     use futures_channel::mpsc::{self, UnboundedSender};
 
     use super::*;
-    use crate::link::{Capabilities, DeliveryMode, Inbound};
+    use crate::link::{Capabilities, DeliveryMode, Inbound, Subscription};
 
     /// A JSON link whose client side encodes its frames as CBOR: a JSON payload's opening `{` is
     /// a CBOR text string 27 bytes long, which a short payload cannot fill.
@@ -1552,7 +1555,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -1582,7 +1585,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -1608,7 +1611,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).shapes(crate::link::UNARY_ONLY)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -1635,7 +1638,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -1685,7 +1688,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -1880,7 +1883,7 @@ mod tests {
             self.link.capabilities()
         }
 
-        async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             self.link.listen(patterns).await
         }
 
@@ -2163,7 +2166,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -2302,7 +2305,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -2365,7 +2368,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 
@@ -2580,7 +2583,7 @@ mod tests {
             Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
         }
 
-        async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+        async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
             Err("this link has no server side".into())
         }
 

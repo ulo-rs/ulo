@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::Future;
 use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,8 +29,8 @@ use ulo_rpc::link::{HoldUntil, Inbound};
 use ulo_transport::sync::ordered;
 use ulo_transport::{Count, Details, ErrorKind, SHUTDOWN_MESSAGE};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, NoTimer,
-    Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, Instances, Link, NoDestination,
+    NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 
 /// The header naming a message's frame kind where the message alone does not tell it: `open` on
@@ -49,6 +49,18 @@ const CANCEL: &str = "cancel";
 /// items and every `cancel` travel here: a pattern's queue hands each message to one consumer,
 /// and these have to reach the instance that took the call.
 const CONTROL: &str = "ulo.rpc.control";
+
+/// The prefix of each pattern's fanout exchange, which a client publishes the pattern's events to:
+/// `ulo.rpc.event.<pattern>`. The pattern's own queue is bound to it, which every instance
+/// reaching one instance consumes, and so is a queue of each instance's own for an event declared
+/// `every_instance`, so each such instance receives every event. A request travels the default
+/// exchange to the pattern's queue, and never this one.
+const EVENTS: &str = "ulo.rpc.event.";
+
+/// The fanout exchange of `pattern`'s events.
+fn event_exchange(pattern: &str) -> String {
+    format!("{EVENTS}{pattern}")
+}
 
 /// RabbitMQ's direct reply-to pseudo-queue: the client consumes it, without acknowledgments, on
 /// the channel it publishes requests on.
@@ -332,6 +344,7 @@ impl RabbitMq {
             codec: self.codec,
             id: uuid::Uuid::new_v4().simple().to_string(),
             calls: Mutex::new(HashMap::new()),
+            exchanges: Mutex::new(HashSet::new()),
             runtime: runtime.clone(),
             #[cfg(feature = "conformance-probe")]
             probe: Arc::clone(&self.probe),
@@ -430,10 +443,10 @@ impl Link for RabbitMq {
         };
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         let runtime = self.runtime()?;
         let clock = self.timer.clone().ok_or(NoTimer { link: "RabbitMQ" })?;
-        let (uri, patterns, prefetch) = (uri(&self.url)?, patterns.to_vec(), self.prefetch);
+        let (uri, patterns, prefetch) = (uri(&self.url)?, subscriptions.to_vec(), self.prefetch);
         let timed_out = ConnectTimedOut::new(self.connect_within, address(&uri), "RabbitMQ");
         let connecting = runtime.run(async move {
             // lapin's auto-recovery retries a first connect too, sixteen times on an
@@ -636,23 +649,43 @@ fn address(uri: &AMQPUri) -> String {
     format!("{}:{}", uri.authority.host, uri.authority.port)
 }
 
-/// Declares a queue per pattern and consumes each under the prefetch, one window for every
-/// pattern under RabbitMQ's reading of `global = true`, then this instance's own queue on the
-/// control exchange, on a channel of its own: lapin's topology replay after a reconnect cannot
-/// redeclare a server-named queue, and a failed replay closes its channel. The control consumer
-/// acknowledges nothing and is outside the window, so a request's items and `cancel` reach the
-/// server while the window is full.
-async fn subscribe(connection: &Connection, patterns: &[Pattern], prefetch: u16) -> Result<(Channel, Vec<Consumer>, Consumer), BoxError> {
+/// Declares each pattern's queue and consumes it under the prefetch, one window for every pattern
+/// under RabbitMQ's reading of `global = true`, then this instance's own queue on the control
+/// exchange, on a channel of its own: lapin's topology replay after a reconnect cannot redeclare a
+/// server-named queue, and a failed replay closes its channel. The control consumer acknowledges
+/// nothing and is outside the window, so a request's items and `cancel` reach the server while the
+/// window is full.
+///
+/// A pattern reaching one instance is the queue named after it, which the instances share and the
+/// broker hands each message to one consumer of, bound to the pattern's fanout exchange for its
+/// events. A pattern reaching every instance, an event declared `every_instance`, is a queue of this
+/// instance's own, exclusive to its connection and auto-deleted, so the broker deletes it once the
+/// drain cancels its consumer or the connection closes, bound to the same exchange, which copies
+/// each event to every queue bound to it: an event emitted while no instance consumes such a queue
+/// reaches none. Its name is chosen here rather than by the broker, for the topology replay.
+async fn subscribe(connection: &Connection, patterns: &[Subscription], prefetch: u16) -> Result<(Channel, Vec<Consumer>, Consumer), BoxError> {
     let channel = connection.create_channel().await?;
     channel.basic_qos(prefetch, BasicQosOptions { global: true }).await?;
     let mut consumers = Vec::with_capacity(patterns.len());
-    for pattern in patterns {
-        channel.queue_declare(pattern.as_str().into(), QueueDeclareOptions::default(), FieldTable::default()).await?;
+    for Subscription { pattern, instances, .. } in patterns {
+        let exchange = event_exchange(pattern.as_str());
+        channel.exchange_declare(exchange.as_str().into(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default()).await?;
+        let queue: ShortString = match instances {
+            Instances::Every => {
+                let queue: ShortString = format!("{exchange}.{}", uuid::Uuid::new_v4().simple()).into();
+                let own = QueueDeclareOptions { exclusive: true, auto_delete: true, ..Default::default() };
+                channel.queue_declare(queue.clone(), own, FieldTable::default()).await?;
+                queue
+            }
+            _ => {
+                channel.queue_declare(pattern.as_str().into(), QueueDeclareOptions::default(), FieldTable::default()).await?;
+                pattern.as_str().into()
+            }
+        };
+        channel.queue_bind(queue.clone(), exchange.as_str().into(), "".into(), QueueBindOptions::default(), FieldTable::default()).await?;
         // An empty tag has the broker assign one; a fixed tag would repeat across the patterns
         // sharing the channel, which the broker refuses.
-        let consumer = channel
-            .basic_consume(pattern.as_str().into(), "".into(), BasicConsumeOptions::default(), FieldTable::default())
-            .await?;
+        let consumer = channel.basic_consume(queue, "".into(), BasicConsumeOptions::default(), FieldTable::default()).await?;
         consumers.push(consumer);
     }
 
@@ -1004,6 +1037,9 @@ struct ClientSide {
     codec: Codec,
     id: String,
     calls: Mutex<HashMap<u64, ClientCall>>,
+    /// The event exchanges this channel has declared, so each is declared before its first event
+    /// and once: a publish to an exchange that does not exist closes the channel.
+    exchanges: Mutex<HashSet<String>>,
     /// The link's runtime, on which a held `cancel`'s hold runs out.
     runtime: Tokio,
     #[cfg(feature = "conformance-probe")]
@@ -1072,9 +1108,16 @@ impl ClientSide {
                 if let Some(table) = amqp_headers(&headers, None) {
                     properties = properties.with_headers(table);
                 }
+                let exchange = event_exchange(pattern.as_str());
+                if let Err(error) = self.declare_events(&exchange).await {
+                    let _ = answer.send(Err(error.into()));
+                    return;
+                }
+                // A fanout exchange routes on no key, so the routing key carries the pattern, which
+                // the server reads off the delivery as it does a request's.
                 let published = self
                     .channel
-                    .basic_publish("".into(), pattern.as_str().into(), BasicPublishOptions::default(), data.as_bytes(), properties)
+                    .basic_publish(exchange.as_str().into(), pattern.as_str().into(), BasicPublishOptions::default(), data.as_bytes(), properties)
                     .await;
                 self.settle(published, None, pattern, answer, confirming);
             }
@@ -1118,6 +1161,17 @@ impl ClientSide {
                 let _ = answer.send(Err(format!("a client does not send a `{}` frame", other.kind()).into()));
             }
         }
+    }
+
+    /// Declares `exchange`, a pattern's event exchange, unless this channel already has; the
+    /// declaration matches the server's, so whichever side declares it first, the other's agrees.
+    async fn declare_events(&self, exchange: &str) -> lapin::Result<()> {
+        if lock(&self.exchanges).contains(exchange) {
+            return Ok(());
+        }
+        self.channel.exchange_declare(exchange.into(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default()).await?;
+        lock(&self.exchanges).insert(exchange.to_owned());
+        Ok(())
     }
 
     /// Answers a publish once the broker confirms it: a refusal or a request returned for want of

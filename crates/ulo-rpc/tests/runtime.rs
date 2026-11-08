@@ -25,7 +25,7 @@ use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
 use ulo::{App, Bound, BoxError, ConnectError, FailureReason, Module, ModuleDef, ModuleIdentity, Runtime, RuntimeMissing, StartupError, WiringError};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Codec, Capabilities, DeliveryMode, Link, Outbound, Pattern, RpcClient, RpcClientModule, UnusableLink, ZeroTimeout};
+use ulo_rpc::{Codec, Capabilities, DeliveryMode, Link, Outbound, Subscription, RpcClient, RpcClientModule, UnusableLink, ZeroTimeout};
 use ulo_transport::ErrorKind;
 use ulo_runtime_tokio::Tokio;
 
@@ -53,7 +53,7 @@ impl Link for Observed {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         Ok(Box::pin(futures_util::stream::pending()))
     }
 
@@ -301,7 +301,7 @@ impl Link for Unusable {
         Err(UNUSABLE.into())
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         Err("this link has no server side".into())
     }
 

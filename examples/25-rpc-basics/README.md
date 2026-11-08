@@ -2,6 +2,8 @@
 
 A controller answers calls by pattern over TCP. `#[ulo_rpc::message]` answers its caller, with the handler's value or its error and that error's kind; `#[ulo_rpc::event]` answers nobody. A pattern no handler claims is refused with the reason `pattern_unhandled`.
 
+An event reaches one server instance, as a request does. `#[ulo_rpc::event("pattern", every_instance)]` reaches each instance listening on the pattern over a broker (example [28](../28-rpc-links)); TCP's caller names one server, so the server refuses that option at startup here.
+
 ```
 cargo test -p ex-25-rpc-basics
 PORT=7000 cargo run -p ex-25-rpc-basics

@@ -114,7 +114,7 @@ async fn a_streamed_reply_longer_than_the_channel_arrives_whole() {
     const ITEMS: u32 = 70_000;
     let broker = Mosquitto::start().await;
     let server = prepared(broker.link().group("long_stream")).await;
-    let mut inbound = server.listen(&[Pattern::from(LONG)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(LONG).into()]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
@@ -161,7 +161,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     let broker = Mosquitto::start().await;
     let relay = Parsing::start(broker.server).await;
     let server = Arc::new(prepared(Mqtt::url(format!("mqtt://{}", relay.addr)).group("blocked_stream")).await);
-    let mut inbound = server.listen(&[Pattern::from(BLOCKED)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(BLOCKED).into()]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
@@ -239,7 +239,7 @@ async fn a_server_acknowledges_nothing_after_its_disconnect() {
     let broker = Mosquitto::start().await;
     let relay = Parsing::start(broker.server).await;
     let server = prepared(Mqtt::url(format!("mqtt://{}", relay.addr)).group("after_disconnect")).await;
-    let _inbound = server.listen(&[Pattern::from(LATE)]).await.expect("the server's link listens");
+    let _inbound = server.listen(&[Pattern::from(LATE).into()]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     relay.pause();
@@ -428,7 +428,7 @@ async fn client_close_writes_what_was_queued_before_it() {
     const EVENT: &str = "link.event";
     let broker = Mosquitto::start().await;
     let server = prepared(broker.link().group("client_close")).await;
-    let mut inbound = server.listen(&[Pattern::from(EVENT)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(EVENT).into()]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
@@ -537,7 +537,7 @@ async fn drain_delivers_the_cancel_that_releases_the_last_call() {
     const HELD: &str = "link.held";
     let broker = Mosquitto::start().await;
     let server = prepared(broker.link().group("drain_cancel")).await;
-    let mut inbound = server.listen(&[Pattern::from(HELD)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(HELD).into()]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
@@ -568,7 +568,7 @@ async fn drain_returns_once_the_broker_stops_routing_to_the_server() {
     const DRAINED: &str = "link.drained";
     let broker = Mosquitto::start().await;
     let server = prepared(broker.link().group("drain_confirmed")).await;
-    let mut inbound = server.listen(&[Pattern::from(DRAINED)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(DRAINED).into()]).await.expect("the server's link listens");
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
@@ -600,7 +600,7 @@ async fn a_drain_dropped_before_the_broker_confirms_logs_the_filters() {
     capture();
     let broker = Mosquitto::start().await;
     let server = prepared(broker.link().group("drain_unconfirmed")).await;
-    let _inbound = server.listen(&[Pattern::from(UNCONFIRMED)]).await.expect("the server's link listens");
+    let _inbound = server.listen(&[Pattern::from(UNCONFIRMED).into()]).await.expect("the server's link listens");
 
     assert!(server.drain().now_or_never().is_none(), "the drain returned before the event loop could write its UNSUBSCRIBE");
 
@@ -627,7 +627,7 @@ async fn the_broker_holds_back_no_request_for_flow_control() {
     let broker = Mosquitto::start().await;
     let relay = Muting::start(broker.server).await;
     let server = prepared(Mqtt::url(format!("mqtt://{}", relay.addr)).group("flow_control")).await;
-    let mut inbound = server.listen(&[Pattern::from(FLOODED)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(FLOODED).into()]).await.expect("the server's link listens");
     relay.mute();
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
@@ -660,7 +660,7 @@ async fn a_server_s_connection_ends_at_the_grace_when_the_broker_does_not_close_
     let broker = Mosquitto::start().await;
     let relay = Muting::start(broker.server).await;
     let server = prepared(Mqtt::url(format!("mqtt://{}", relay.addr)).group("grace")).await;
-    let _inbound = server.listen(&[Pattern::from("link.grace")]).await.expect("the server's link listens");
+    let _inbound = server.listen(&[Pattern::from("link.grace").into()]).await.expect("the server's link listens");
     relay.mute();
     server.close().await.expect("the server's link closes");
     let closed = std::time::Instant::now();
@@ -700,7 +700,7 @@ async fn each_side_s_grace_runs_on_the_clock_it_was_given() {
     let server_relay = Muting::start(broker.server).await;
     let mut server = Mqtt::url(format!("mqtt://{}", server_relay.addr)).group("clocked");
     server.prepare(&app.handle()).await.expect("the server's link prepares");
-    let _inbound = server.listen(&[Pattern::from("link.clocked")]).await.expect("the server's link listens");
+    let _inbound = server.listen(&[Pattern::from("link.clocked").into()]).await.expect("the server's link listens");
     let client_relay = Muting::start(broker.server).await;
     let client = Mqtt::url(format!("mqtt://{}", client_relay.addr));
     let _outbound = client.connect(&handed).await.expect("the client's link connects");
@@ -944,7 +944,7 @@ async fn a_server_link_dropped_without_close_closes_its_connection() {
     let broker = Mosquitto::start().await;
     let relay = Relay::start(broker.server).await;
     let server = prepared(Mqtt::url(format!("mqtt://{}", relay.addr())).group("dropped")).await;
-    let inbound = server.listen(&[Pattern::from("link/dropped")]).await.expect("the server's link listens");
+    let inbound = server.listen(&[Pattern::from("link/dropped").into()]).await.expect("the server's link listens");
     assert!(relay.open().await > 0, "the listening server's link holds no connection through its relay");
     drop(inbound);
     drop(server);
@@ -981,7 +981,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
         let pattern = if drained { "link/held/drained" } else { "link/held" };
         let relay = Relay::start(broker.server).await;
         let server = prepared(Mqtt::url(format!("mqtt://{}", relay.addr())).group(if drained { "held_drained" } else { "held" })).await;
-        let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+        let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
         let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
         (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
         let delivery = tokio::time::timeout(PATIENCE, inbound.next())

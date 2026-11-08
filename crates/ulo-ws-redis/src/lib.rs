@@ -111,8 +111,8 @@ impl Redis {
     fn reading(&self) -> redis::RedisResult<Reading> {
         let info = self.url.as_str().into_connection_info()?;
         let (url, tls_verify) = match info.addr() {
-            ConnectionAddr::Tcp(host, port) => (format!("redis://{}:{port}", bracketed(host)), None),
-            ConnectionAddr::TcpTls { host, port, insecure, .. } => (format!("rediss://{}:{port}", bracketed(host)), Some(!insecure)),
+            ConnectionAddr::Tcp(host, port) => (format!("redis://{}:{port}", canonical_host(host)), None),
+            ConnectionAddr::TcpTls { host, port, insecure, .. } => (format!("rediss://{}:{port}", canonical_host(host)), Some(!insecure)),
             ConnectionAddr::Unix(path) => (format!("redis+unix://{}", path.display()), None),
             other => (format!("redis://{}", other), None),
         };
@@ -122,16 +122,30 @@ impl Redis {
             ProtocolVersion::RESP3 => "resp3",
             _ => "other",
         };
-        Ok(Reading { url, database: redis.db(), protocol, tls_verify })
+        // The client authenticates only when the URL carries a password, `AUTH` or `HELLO 3 AUTH`
+        // naming the username or `default`; without one it sends neither, and the connection is
+        // the `default` user whatever username the URL writes.
+        let username = match (redis.password(), redis.username()) {
+            (Some(_), Some(username)) => username.to_owned(),
+            _ => DEFAULT_USER.to_owned(),
+        };
+        Ok(Reading { url, username, database: redis.db(), protocol, tls_verify })
     }
 }
+
+/// The ACL user Redis takes a connection as when it authenticates without a username, or not at
+/// all.
+const DEFAULT_USER: &str = "default";
 
 /// What the redis client reads from an adapter's URL, as its settings report it.
 struct Reading {
     /// Where the client connects: `redis://`, `rediss://` or `redis+unix://` by the connection it
-    /// makes, then the host and port, the default port filled in, or the socket's path. The
-    /// client's reading carries no userinfo, query, fragment or database.
+    /// makes, then the host, its ASCII letters lowercased, and the port, the default port filled
+    /// in, or the socket's path as written. The client's reading carries no userinfo, query,
+    /// fragment or database.
     url: String,
+    /// The ACL user the connection authenticates as.
+    username: String,
     database: i64,
     protocol: &'static str,
     /// Whether a TLS connection verifies the server's certificate, `None` for a connection without
@@ -139,10 +153,15 @@ struct Reading {
     tls_verify: Option<bool>,
 }
 
-/// `host` as a URL writes it: an IPv6 address, which the redis client holds without its
-/// brackets, in brackets.
-fn bracketed(host: &str) -> std::borrow::Cow<'_, str> {
-    if host.contains(':') { format!("[{host}]").into() } else { host.into() }
+/// `host` as the canonical `url` writes it: its ASCII letters lowercased, since DNS compares names
+/// without regard to ASCII case (RFC 4343) and `redis://H` and `redis://h` reach one server, and
+/// an IPv6 address, which the redis client holds without its brackets, in brackets. A non-ASCII
+/// letter keeps its case: a `redis://` URL's host is opaque to the URL parser, which
+/// percent-encodes such a letter and applies no IDNA mapping, and the client resolves the host as
+/// written.
+fn canonical_host(host: &str) -> String {
+    let host = host.to_ascii_lowercase();
+    if host.contains(':') { format!("[{host}]") } else { host }
 }
 
 const NO_RUNTIME: &str = "the Redis broadcast adapter has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
@@ -269,7 +288,15 @@ impl BroadcastAdapter for Redis {
     ///   `unix` as `redis+unix`), then the host and port, the default 6379 filled in, or a Unix
     ///   socket's path. `redis://:key@cache/2` is `redis://cache:6379`, and
     ///   `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`. No
-    ///   userinfo, query, fragment or database reaches it.
+    ///   userinfo, query, fragment or database reaches it. The host's ASCII letters are
+    ///   lowercased, DNS names comparing without regard to ASCII case (RFC 4343), so
+    ///   `redis://Cache` and `redis://cache` compare equal; a socket's path keeps its case.
+    /// - `username`, the ACL user the connection authenticates as, which selects the commands and
+    ///   keys the connection may use: the userinfo's username of a TCP URL and the `user` query
+    ///   parameter of a Unix socket's, `default` when the URL names none. The client sends `AUTH`
+    ///   only with a password, so a username written without one authenticates nothing and is
+    ///   `default` too: `redis://alice@cache` and `redis://cache` compare equal, and
+    ///   `redis://alice:key@cache` and `redis://bob:key@cache` are refused naming `username`.
     /// - `database`, the path of a TCP URL and the `db` query parameter of a Unix socket's, 0 when
     ///   the URL names none, so `redis://a:6379` and `redis://a:6379/0` compare equal.
     /// - `protocol`, `resp2` or `resp3`, from the `protocol` query parameter, `resp2` when the URL
@@ -279,11 +306,15 @@ impl BroadcastAdapter for Redis {
     ///   there are refused rather than resolved to the first, so verification is not switched off
     ///   by a registration nobody sees.
     ///
-    /// Two URLs differing only in their userinfo or in a query parameter the client reads as a
-    /// credential compare equal, and neither credential is printed. A URL the client does not read,
-    /// a `db` that is not a number or a `protocol` it does not know among them, is reported
-    /// through `ulo::secrets::setting_url`, its scheme, host, port and path, with `database` and
-    /// `protocol` `[unreadable]`, and `prepare` refuses it. Then `connect_within`, so a second
+    /// Two URLs differing only in their password, in the userinfo or the `pass` query parameter,
+    /// compare equal, and no password is printed. A password is never a setting, since a setting's
+    /// value is printed in a wiring report, and no value derived from one is either: a hash or a
+    /// keyed fingerprint would still put something computed from the credential in the report, so
+    /// a registration that changes only the password resolves to the first one. A URL the client
+    /// does not read, a `db` that is not a number, a `protocol` it does not know or a username or
+    /// password that is not UTF-8 among them, is reported through `ulo::secrets::setting_url`, its
+    /// scheme, host, port and path, with `username`, `database` and `protocol` `[unreadable]`, and
+    /// `prepare` refuses it. Then `connect_within`, so a second
     /// import with another bound is refused rather than running on the first's. The runtime
     /// `with_handle` names is not compared.
     fn settings(&self) -> ModuleSettings {
@@ -292,6 +323,7 @@ impl BroadcastAdapter for Redis {
             Ok(reading) => {
                 let settings = settings
                     .with("url", format_args!("{}", reading.url))
+                    .with("username", reading.username)
                     .with("database", reading.database)
                     .with("protocol", format_args!("{}", reading.protocol));
                 match reading.tls_verify {
@@ -301,6 +333,7 @@ impl BroadcastAdapter for Redis {
             }
             Err(_) => settings
                 .with("url", format_args!("{}", ulo::secrets::setting_url(&self.url)))
+                .with("username", format_args!("[unreadable]"))
                 .with("database", format_args!("[unreadable]"))
                 .with("protocol", format_args!("[unreadable]")),
         };

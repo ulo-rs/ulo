@@ -24,7 +24,7 @@ use ulo::{
     controller, handlers, injectable,
 };
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, Delivery, Frame, Link, Outbound, Pattern, ReplyPath, RpcClient};
+use ulo_rpc::{Capabilities, Delivery, Frame, Link, Outbound, Subscription, ReplyPath, RpcClient};
 use ulo_rpc_udp::Udp;
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::sync::Watch;
@@ -134,7 +134,7 @@ impl<L: Link> Link for Gated<L> {
         self.link.max_inflight(calls);
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         let inbound = self.link.listen(patterns).await?;
         let gate = (inbound, self.race.clone(), Arc::clone(&self.timer));
         Ok(Box::pin(stream::unfold(gate, |(mut inbound, race, timer)| async move {

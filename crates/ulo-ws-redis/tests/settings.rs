@@ -1,8 +1,9 @@
 //! The Redis adapter's settings, which `WsModule` compares: `redis`, where the URL connects,
-//! canonical and never with its userinfo, query, fragment or database, the database, the protocol
-//! and, for TLS, whether the certificate is verified, each as the redis client reads the URL, and
-//! `connect_within`. Nothing connects: `wire()` reads the settings alone, and `prepare` reads the
-//! URL.
+//! canonical, its host's ASCII letters lowercased, and never with its userinfo, query, fragment or
+//! database, the ACL user it authenticates as, the database, the protocol and, for TLS, whether the
+//! certificate is verified, each as the redis client reads the URL, and `connect_within`. No
+//! password reaches a setting. Nothing connects: `wire()` reads the settings alone, and `prepare`
+//! reads the URL.
 
 use std::time::Duration;
 
@@ -63,6 +64,7 @@ fn the_settings_name_redis_and_the_url_without_its_userinfo_or_query() {
     let expected = ulo::ModuleSettings::new()
         .with("broadcast", format_args!("redis"))
         .with("url", format_args!("redis://cache:6379"))
+        .with("username", "user")
         .with("database", 0)
         .with("protocol", format_args!("resp2"))
         .with("connect_within", Duration::from_secs(30));
@@ -181,6 +183,7 @@ async fn two_unix_socket_databases_under_one_identity_are_refused() {
 async fn a_database_that_is_not_a_number_is_unreadable_and_refused_by_prepare() {
     let adapter = Redis::url("redis+unix:///run/redis.sock?db=one&pass=query-credential-value");
     let settings = format!("{:?}", adapter.settings());
+    assert!(settings.contains("\"username\": \"[unreadable]\""), "{settings}");
     assert!(settings.contains("\"database\": \"[unreadable]\""), "{settings}");
     assert!(settings.contains("\"protocol\": \"[unreadable]\""), "{settings}");
     assert!(settings.contains("\"url\": \"redis+unix:///run/redis.sock\""), "{settings}");
@@ -206,4 +209,82 @@ async fn two_connect_bounds_under_one_identity_are_refused() {
     };
     let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
     assert_eq!(settings, [("connect_within", Some("5s".to_owned()), Some("10s".to_owned()))]);
+}
+
+/// One differing setting: its name, the first registration's value and the second's.
+type Differing = (&'static str, Option<String>, Option<String>);
+
+/// Each differing setting of the one `DifferingSettings` a wiring refused, with the errors.
+fn differing(root: impl Module + 'static, why: &str) -> (Vec<Differing>, WiringErrors) {
+    let errors = match wired(root) {
+        Err(errors) => errors,
+        Ok(()) => panic!("wired; {why}"),
+    };
+    assert_eq!(errors.len(), 1, "{errors}");
+    let Some(WiringError::DifferingSettings { settings, .. }) = errors.iter().next() else {
+        panic!("expected `DifferingSettings`:\n{errors}");
+    };
+    let settings = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
+    (settings, errors)
+}
+
+/// The username selects an ACL identity, so two URLs under one password differing only there are
+/// refused naming `username`, over TCP in the userinfo and over a Unix socket in `?user=`, and the
+/// password appears nowhere in the refusal. Planted breaks: `Redis::settings` without `username`;
+/// `username` carrying the password.
+#[tokio::test]
+async fn two_usernames_under_one_identity_are_refused_without_their_password() {
+    let pairs = [
+        ["redis://alice:userinfo-credential-value@a:6379", "redis://bob:userinfo-credential-value@a:6379"],
+        [
+            "redis+unix:///run/redis.sock?user=alice&pass=query-credential-value",
+            "redis+unix:///run/redis.sock?user=bob&pass=query-credential-value",
+        ],
+    ];
+    for urls in pairs {
+        let (settings, errors) = differing(Root(urls.to_vec()), "two ACL users under one identity should be refused");
+        assert_eq!(settings, [("username", Some("\"alice\"".to_owned()), Some("\"bob\"".to_owned()))], "{urls:?}");
+        for text in [format!("{settings:?}"), errors.to_string(), format!("{errors:?}")] {
+            assert!(!holds_a_password(&text), "{text}");
+        }
+    }
+}
+
+/// Registrations reaching Redis as one ACL user are one module: two passwords for one user, a
+/// username written without a password, which the client sends no `AUTH` for, beside none, and
+/// `default` written out beside a password alone, which authenticates as `default`. Planted
+/// break: `username` reported as the URL writes it, with a password or without.
+#[tokio::test]
+async fn one_acl_user_is_one_module_whatever_its_password() {
+    wired(Root(vec!["redis://alice:one@a:6379", "redis://alice:two@a:6379"])).unwrap_or_else(|errors| panic!("{errors}"));
+    wired(Root(vec!["redis+unix:///run/redis.sock?user=alice&pass=one", "redis+unix:///run/redis.sock?user=alice&pass=two"]))
+        .unwrap_or_else(|errors| panic!("{errors}"));
+    wired(Root(vec!["redis://alice@a:6379", "redis://a:6379"])).unwrap_or_else(|errors| panic!("{errors}"));
+    wired(Root(vec!["redis://default:key@a:6379", "redis://:key@a:6379"])).unwrap_or_else(|errors| panic!("{errors}"));
+    let settings = |url: &str| format!("{:?}", Redis::url(url).settings());
+    assert!(settings("redis://alice@a").contains(r#""username": "\"default\"""#), "{}", settings("redis://alice@a"));
+    assert!(settings("redis://alice:key@a").contains(r#""username": "\"alice\"""#), "{}", settings("redis://alice:key@a"));
+}
+
+/// DNS names compare without regard to ASCII case (RFC 4343), so a host differing only in case is
+/// one module, written lowercase in `url`; the username's case is the ACL user's and is kept.
+/// Planted break: `url` written with the host as given.
+#[tokio::test]
+async fn a_host_differing_only_in_ascii_case_is_one_module() {
+    wired(Root(vec!["redis://Cache.Example:6379", "redis://cache.example"])).unwrap_or_else(|errors| panic!("{errors}"));
+    wired(Root(vec!["rediss://CACHE:6380", "rediss://cache:6380"])).unwrap_or_else(|errors| panic!("{errors}"));
+    let settings = format!("{:?}", Redis::url("redis://Alice:key@CaChE:6379").settings());
+    assert!(settings.contains(r#""url": "redis://cache:6379""#), "{settings}");
+    assert!(settings.contains(r#""username": "\"Alice\"""#), "{settings}");
+}
+
+/// A Unix socket's path is a filesystem path, whose case the filesystem decides: two paths
+/// differing only in case are refused naming `url`. Planted break: the whole `url` lowercased.
+#[tokio::test]
+async fn a_socket_path_keeps_its_case() {
+    let (settings, _) = differing(
+        Root(vec!["redis+unix:///run/Redis.sock", "redis+unix:///run/redis.sock"]),
+        "two socket paths under one identity should be refused",
+    );
+    assert_eq!(settings, [("url", Some("redis+unix:///run/Redis.sock".to_owned()), Some("redis+unix:///run/redis.sock".to_owned()))]);
 }

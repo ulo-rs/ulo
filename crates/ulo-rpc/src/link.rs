@@ -89,11 +89,15 @@ pub trait Link: Send + Sync + 'static {
         let _ = calls;
     }
 
-    /// Server side: subscribe to `patterns`, the mounted handlers' patterns. Called from
-    /// `Server::bind`, all-or-nothing: a failure leaves nothing subscribed. A link that times its
-    /// close or its first connect on the app's clock (TCP, UDP, NATS, MQTT, RabbitMQ, Kafka)
-    /// refuses with [`NoTimer`] before any I/O when `prepare` found the app without one.
-    fn listen(&self, patterns: &[Pattern]) -> impl Future<Output = Result<Inbound, BoxError>> + Send;
+    /// Server side: subscribe to the mounted handlers' patterns, each with the [`Instances`] a
+    /// message on it reaches: [`Instances::One`] for every request and for an event left at its
+    /// default, [`Instances::Every`] for an event whose handler is declared `every_instance`. The
+    /// listening side alone decides it: a client publishes a request or an event the same way
+    /// whichever a server chose. Called from `Server::bind`, all-or-nothing: a failure leaves
+    /// nothing subscribed. A link that times its close or its first connect on the app's clock
+    /// (TCP, UDP, NATS, MQTT, RabbitMQ, Kafka) refuses with [`NoTimer`] before any I/O when
+    /// `prepare` found the app without one.
+    fn listen(&self, subscriptions: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send;
 
     /// Client side: connect. `RpcClient` calls it lazily, on its first call and again after the
     /// connection is lost, passing `runtime`, the runtime the client was built on: its app's inside
@@ -284,6 +288,57 @@ impl From<String> for Pattern {
     }
 }
 
+/// One pattern a server listens on, and how many of the server instances listening on it a
+/// message on it reaches, which [`Link::listen`] receives for each mounted handler.
+///
+/// ```
+/// use ulo_rpc::{Instances, Pattern, Subscription};
+///
+/// let request = Subscription::from(Pattern::from("invoices.create"));
+/// assert_eq!(request.instances, Instances::One);
+/// let invalidation = Subscription::new("cache.invalidated", Instances::Every);
+/// assert_eq!(invalidation.pattern.as_str(), "cache.invalidated");
+/// ```
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Subscription {
+    pub pattern: Pattern,
+    pub instances: Instances,
+}
+
+impl Subscription {
+    pub fn new(pattern: impl Into<Pattern>, instances: Instances) -> Self {
+        Subscription { pattern: pattern.into(), instances }
+    }
+}
+
+/// A pattern reaching one instance, as every request's does.
+impl From<Pattern> for Subscription {
+    fn from(pattern: Pattern) -> Self {
+        Subscription { pattern, instances: Instances::One }
+    }
+}
+
+/// How many of the server instances listening on one pattern receive each message on it.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Instances {
+    /// One instance takes each message: every request, and an event left at its default. A NATS
+    /// queue group, an MQTT shared subscription `$share/<group>/<pattern>`, one AMQP queue the
+    /// instances consume, one Kafka consumer group. A link declared without
+    /// [`single_delivery`](Capabilities::single_delivery), Redis Pub/Sub, delivers it to every
+    /// instance.
+    #[default]
+    One,
+    /// Every instance receives each message: an event whose handler is declared `every_instance`,
+    /// such as a cache invalidation or a configuration reload. A plain NATS subscription, a plain
+    /// MQTT topic filter, an AMQP queue of the instance's own bound to the pattern's fanout
+    /// exchange, a Kafka consumer of the instance's own outside any shared group, Redis Pub/Sub.
+    /// A link declared without [`every_instance`](Capabilities::every_instance), TCP and UDP,
+    /// refuses such a handler in `Server::prepare`.
+    Every,
+}
+
 /// What a link can do and how it is configured, read by `Server::prepare` and by the client, and
 /// asserted by the conformance suite in both directions. Built from [`Capabilities::new`] and its
 /// setters, since the struct is `#[non_exhaustive]`.
@@ -328,6 +383,7 @@ pub struct Capabilities {
     confirmed_drain: Absent,
     ordered_control: Absent,
     single_delivery: Absent,
+    every_instance: Absent,
 }
 
 /// `None` where the link has the capability, and why it has not otherwise.
@@ -356,8 +412,9 @@ impl Capabilities {
     ///     declared.confirmed_drain(),
     ///     declared.ordered_control(),
     ///     declared.single_delivery(),
+    ///     declared.every_instance(),
     /// ];
-    /// assert_eq!(held, [true; 7]);
+    /// assert_eq!(held, [true; 8]);
     /// ```
     pub const fn new(delivery: DeliveryMode) -> Self {
         Capabilities {
@@ -373,6 +430,7 @@ impl Capabilities {
             confirmed_drain: None,
             ordered_control: None,
             single_delivery: None,
+            every_instance: None,
         }
     }
 
@@ -503,14 +561,15 @@ impl Capabilities {
         self.ordered_control
     }
 
-    /// A request reaches one server instance however many listen on its pattern. A link without
-    /// it hands each request to every instance subscribed to its pattern: each runs the handler
-    /// and replies, and the client answers the first reply and drops the rest, so the handler's
-    /// side effects run once per instance. Such a link's request side supports one server
-    /// instance, and `Server::prepare` logs a `warn` saying so, naming
-    /// [`why_not_single_delivery`](Self::why_not_single_delivery), when it mounts a
-    /// request handler; it refuses nothing, since one instance cannot tell itself from many. An
-    /// event is outside it, delivered as [`delivery`](Self::delivery) declares.
+    /// A request, and an event left at [`Instances::One`], reaches one server instance however
+    /// many listen on its pattern. A link without it hands each such message to every instance
+    /// subscribed to its pattern: each runs the handler, a request's handler replies, and the
+    /// client answers the first reply and drops the rest, so the handler's side effects run once
+    /// per instance. Such a link supports one server instance for those patterns, and
+    /// `Server::prepare` logs a `warn` saying so, naming
+    /// [`why_not_single_delivery`](Self::why_not_single_delivery), when it mounts a request
+    /// handler or an event handler left at its default; it refuses nothing, since one instance
+    /// cannot tell itself from many. An event declared `every_instance` is outside it.
     ///
     /// ```
     /// use ulo_rpc::{Capabilities, DeliveryMode};
@@ -532,9 +591,35 @@ impl Capabilities {
     pub const fn why_not_single_delivery(&self) -> Option<&'static str> {
         self.single_delivery
     }
+
+    /// An event whose handler is declared `every_instance` ([`Instances::Every`]) reaches every
+    /// server instance listening on its pattern. A link without it, where a caller addresses one
+    /// server, has no other instance to reach: `Server::prepare` refuses such a handler, naming
+    /// [`why_not_every_instance`](Self::why_not_every_instance).
+    ///
+    /// ```
+    /// use ulo_rpc::{Capabilities, DeliveryMode};
+    ///
+    /// let addressed = Capabilities::new(DeliveryMode::Addressed)
+    ///     .without_every_instance("the caller addresses one server");
+    /// assert!(!addressed.every_instance());
+    /// assert_eq!(addressed.why_not_every_instance(), Some("the caller addresses one server"));
+    /// ```
+    pub const fn every_instance(&self) -> bool {
+        self.every_instance.is_none()
+    }
+
+    pub const fn without_every_instance(self, reason: &'static str) -> Self {
+        Capabilities { every_instance: Some(reason), ..self }
+    }
+
+    pub const fn why_not_every_instance(&self) -> Option<&'static str> {
+        self.every_instance
+    }
 }
 
-/// How a request reaches two server instances listening on one pattern.
+/// How a request reaches two server instances listening on one pattern; an event's reach is its
+/// handler's [`Instances`].
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DeliveryMode {

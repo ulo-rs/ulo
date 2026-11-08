@@ -1,8 +1,9 @@
-//! A link declared without `single_delivery` hands each request to every server instance
-//! listening on its pattern, so `Server::prepare` logs one `warn` per server that mounts a request
-//! handler, naming how many request patterns it mounts and the link's reason, and refuses
-//! nothing. A server mounting only events on such a link, and one on a link delivering once, log
-//! nothing. The links are TCP with the capability changed, so no broker is needed.
+//! A link declared without `single_delivery` hands each request, and each event left at one
+//! instance, to every server instance listening on its pattern, so `Server::prepare` logs one
+//! `warn` per server that mounts such a handler, naming how many request and event patterns it
+//! mounts and the link's reason, and refuses nothing. A server mounting only events declared
+//! `every_instance` on such a link, and one on a link delivering once, log nothing. The links are
+//! TCP with the capabilities changed, so no broker is needed.
 
 use std::error::Error;
 use std::fmt;
@@ -13,7 +14,7 @@ use tracing::span::{Attributes, Id, Record};
 use tracing::{Event as TraceEvent, Level, Metadata};
 use ulo::{App, AppHandle, BoundAddr, BoxError, Module, ModuleDef, ModuleIdentity, Runtime, Signal, controller, handlers};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, Link, Outbound, Pattern, Payload};
+use ulo_rpc::{Capabilities, DeliveryMode, Link, Outbound, Subscription, Payload};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::{Classify, Count, ErrorKind};
@@ -91,6 +92,29 @@ impl Module for EventsRoot {
     }
 }
 
+#[controller]
+struct EveryInstanceOnly;
+
+#[handlers]
+impl EveryInstanceOnly {
+    #[ulo_rpc::event("fan.everyone", every_instance)]
+    async fn everyone(&self, _n: Payload<u32>) -> Result<(), Never> {
+        Ok(())
+    }
+}
+
+struct EveryInstanceRoot;
+
+impl Module for EveryInstanceRoot {
+    fn identity(&self) -> ModuleIdentity {
+        ModuleIdentity::of_type::<Self>()
+    }
+
+    fn register(&self, m: &mut ModuleDef<'_>) {
+        m.controller::<EveryInstanceOnly>();
+    }
+}
+
 /// The TCP link declaring it hands each request to every instance, for `reason`.
 struct Fanned {
     tcp: Tcp,
@@ -124,7 +148,7 @@ macro_rules! tcp_link {
                 self.tcp.max_inflight(calls);
             }
 
-            async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+            async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
                 self.tcp.listen(patterns).await
             }
 
@@ -147,7 +171,9 @@ macro_rules! tcp_link {
     };
 }
 
-tcp_link!(Fanned, "fanned", |this| this.tcp.capabilities().without_single_delivery(this.reason));
+// Declared from `new` rather than from the TCP link's capabilities, which lack `every_instance`:
+// a fanning broker holds it, and the server refuses an `every_instance` event on a link without it.
+tcp_link!(Fanned, "fanned", |this| Capabilities::new(DeliveryMode::FanOut).without_single_delivery(this.reason));
 tcp_link!(Once, "once", |this| this.tcp.capabilities());
 
 /// Binds `link` under `root` and closes the app at once.
@@ -174,15 +200,28 @@ async fn a_server_on_a_link_fanning_out_requests_warns_once_naming_its_request_p
     bind_and_close(MixedRoot, Fanned { tcp: Tcp::new("127.0.0.1:0"), reason: REASON }).await;
     let warned = lines.matching(&format!("reason={REASON:?}"));
     assert_eq!(warned.len(), 1, "{warned:?}");
-    assert!(warned[0].contains("link=\"fanned\"") && warned[0].contains("request_patterns=2"), "{warned:?}");
+    assert!(
+        warned[0].contains("link=\"fanned\"") && warned[0].contains("request_patterns=2") && warned[0].contains("event_patterns=1"),
+        "{warned:?}"
+    );
     assert!(warned[0].contains("every server instance listening on its pattern") && warned[0].contains("run one server instance"), "{warned:?}");
 }
 
 #[tokio::test]
-async fn a_server_mounting_only_events_on_a_link_fanning_out_requests_logs_nothing() {
-    const REASON: &str = "the events-only link fans out its requests";
+async fn a_server_mounting_only_one_instance_events_on_a_fanning_link_warns_naming_its_event_patterns() {
+    const REASON: &str = "the events-only link fans out its events";
     let lines = capture();
     bind_and_close(EventsRoot, Fanned { tcp: Tcp::new("127.0.0.1:0"), reason: REASON }).await;
+    let warned = lines.matching(&format!("reason={REASON:?}"));
+    assert_eq!(warned.len(), 1, "{warned:?}");
+    assert!(warned[0].contains("request_patterns=0") && warned[0].contains("event_patterns=1"), "{warned:?}");
+}
+
+#[tokio::test]
+async fn a_server_mounting_only_every_instance_events_on_a_fanning_link_logs_nothing() {
+    const REASON: &str = "the every-instance link fans out its messages";
+    let lines = capture();
+    bind_and_close(EveryInstanceRoot, Fanned { tcp: Tcp::new("127.0.0.1:0"), reason: REASON }).await;
     let warned = lines.matching(&format!("reason={REASON:?}"));
     assert!(warned.is_empty(), "{warned:?}");
 }

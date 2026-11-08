@@ -3,7 +3,9 @@
 //! partition, the partition key the client instance's id; high latency for request-reply; the
 //! size limit the producer's `message.max.bytes`, 1,000,000 bytes, a broker configured lower
 //! refusing with the same error; `Competing` through the consumer group, the application's root
-//! module's full type path unless `.group(..)` names one; the handler topics created at `bind`, so
+//! module's full type path unless `.group(..)` names one, and an event declared `every_instance`
+//! through a consumer of each instance's own, assigned every partition of its topic from its end
+//! at `bind` and committing nothing, so the broker records no group for it; the handler topics created at `bind`, so
 //! a stopped server's topic exists and a miss is the client's `Timeout` under auto-create; the
 //! group's offsets committed at the topics' end at `bind` where it has none, so a request produced
 //! while no instance consumes, or while a rebalance moves its partition, waits for the next owner

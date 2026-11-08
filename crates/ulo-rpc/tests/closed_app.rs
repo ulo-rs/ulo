@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use ulo::{App, AppHandle, BoundAddr, BoxError, Module, ModuleDef, ModuleIdentity, Runtime, Signal};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, Link, Outbound, Pattern};
+use ulo_rpc::{Capabilities, Link, Outbound, Subscription};
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::Count;
@@ -49,7 +49,7 @@ impl Link for Watched {
         self.tcp.max_inflight(calls);
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         self.tcp.listen(patterns).await
     }
 

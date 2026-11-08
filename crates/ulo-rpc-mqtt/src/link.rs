@@ -25,7 +25,7 @@ use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound, panic_redacted};
 use ulo_rpc::{
     Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
-    Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo,
+    Instances, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::{Detail, Details, ErrorKind, SHUTDOWN_MESSAGE, Turns};
 
@@ -336,7 +336,11 @@ impl Link for Mqtt {
         Ok(())
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    /// A pattern reaching one instance is subscribed through the shared subscription
+    /// `$share/<group>/<pattern>`, which the broker hands each message to one member of; one
+    /// reaching every instance, an event declared `every_instance`, through the plain topic
+    /// filter, which the broker hands every message.
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         let group = self
             .group
             .clone()
@@ -350,7 +354,13 @@ impl Link for Mqtt {
         // unrun, which would read as the broker not answering.
         runtime.run(async {}).await.map_err(Permanent::new)?;
         let (client, eventloop) = AsyncClient::new(target.options(client_id(), tls), SERVER_REQUESTS);
-        let shared: Vec<String> = patterns.iter().map(|pattern| format!("$share/{group}/{pattern}")).collect();
+        let filters: Vec<String> = subscriptions
+            .iter()
+            .map(|Subscription { pattern, instances, .. }| match instances {
+                Instances::Every => pattern.to_string(),
+                _ => format!("$share/{group}/{pattern}"),
+            })
+            .collect();
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
         let side = Arc::new(ServerSide {
@@ -358,7 +368,7 @@ impl Link for Mqtt {
             codec: self.codec,
             qos: self.qos.wire(),
             runtime: runtime.clone(),
-            shared,
+            filters,
             calls: Arc::new(Calls::new()),
             replies: Arc::default(),
             phase,
@@ -450,7 +460,7 @@ impl Link for Mqtt {
         let server = lock(&self.state).server.as_ref().map(|(side, _)| Arc::clone(side));
         let Some(side) = server else { return };
         side.phase.send_replace(Phase::Draining);
-        for filter in &side.shared {
+        for filter in &side.filters {
             side.unsubscribe_queued(filter);
             if let Err(error) = side.client.unsubscribe(filter.clone()).await {
                 side.unsubscribe_refused();
@@ -766,8 +776,9 @@ struct ServerSide {
     qos: MqttQoS,
     /// The link's runtime, which the drain's watcher is spawned on.
     runtime: Tokio,
-    /// The `$share/<group>/<pattern>` filters, unsubscribed by the drain.
-    shared: Vec<String>,
+    /// The filters of the patterns, `$share/<group>/<pattern>` for one reaching one instance and
+    /// the pattern itself for one reaching every instance, unsubscribed by the drain.
+    filters: Vec<String>,
     calls: Arc<Calls>,
     replies: Arc<Replies>,
     phase: watch::Sender<Phase>,
@@ -1207,8 +1218,8 @@ impl Drop for LoopEnded {
 
 /// Polls the server connection until it fails after `close`, which, once the DISCONNECT `close`
 /// queued is written, is the broker closing it, or until [`linger`]'s grace drops it. On every
-/// CONNACK it subscribes again, rumqttc keeping no subscription across a reconnect: the shared
-/// filters while serving, the control topic always.
+/// CONNACK it subscribes again, rumqttc keeping no subscription across a reconnect: the
+/// patterns' filters while serving, the control topic always.
 async fn serve(side: Arc<ServerSide>, mut eventloop: EventLoop, ready: oneshot::Sender<Result<(), BoxError>>, mut written: Written) {
     let _ended = LoopEnded(Arc::clone(&side.replies));
     let mut ready = Some(ready);
@@ -1224,7 +1235,9 @@ async fn serve(side: Arc<ServerSide>, mut eventloop: EventLoop, ready: oneshot::
                 if let Some(max) = properties.and_then(|properties| properties.max_packet_size) {
                     side.max_packet.store(u64::from(max), Ordering::Relaxed);
                 }
-                if properties.and_then(|properties| properties.shared_subscription_available) == Some(0) {
+                // A server whose patterns all reach every instance subscribes no `$share` filter.
+                let shares = side.filters.iter().any(|filter| filter.starts_with("$share/"));
+                if shares && properties.and_then(|properties| properties.shared_subscription_available) == Some(0) {
                     let error = "the MQTT broker's CONNACK announces no shared-subscription support, so the link's \
                                  `Competing` delivery through `$share/<group>/` (the `Mqtt::group` setting) would be false";
                     match ready.take() {
@@ -1240,7 +1253,7 @@ async fn serve(side: Arc<ServerSide>, mut eventloop: EventLoop, ready: oneshot::
                 let serving = *side.phase.borrow() == Phase::Serving;
                 let mut filters: Vec<Filter> = Vec::new();
                 if serving {
-                    filters.extend(side.shared.iter().map(|filter| Filter::new(filter.clone(), side.qos)));
+                    filters.extend(side.filters.iter().map(|filter| Filter::new(filter.clone(), side.qos)));
                 }
                 filters.push(Filter::new(CONTROL, side.qos));
                 if let Err(error) = side.client.try_subscribe_many(filters)
@@ -1254,7 +1267,7 @@ async fn serve(side: Arc<ServerSide>, mut eventloop: EventLoop, ready: oneshot::
                 let Some(pending) = ready.take() else { continue };
                 let refused = suback.return_codes.iter().enumerate().find_map(|(index, code)| match code {
                     SubscribeReasonCode::Success(_) => None,
-                    code => Some((side.shared.get(index).map_or(CONTROL, String::as_str), *code)),
+                    code => Some((side.filters.get(index).map_or(CONTROL, String::as_str), *code)),
                 });
                 match refused {
                     None => {
@@ -2064,7 +2077,7 @@ mod tests {
             codec: Codec::Json,
             qos: MqttQoS::AtLeastOnce,
             runtime: Tokio::current(),
-            shared: Vec::new(),
+            filters: Vec::new(),
             calls: Arc::new(Calls::new()),
             replies: Arc::default(),
             phase: watch::channel(Phase::Serving).0,

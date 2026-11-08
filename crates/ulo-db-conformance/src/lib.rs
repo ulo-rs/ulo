@@ -18,7 +18,7 @@
 //! ulo_db_conformance::conformance_suite!(PostgresHost);
 //! ```
 //!
-//! A store that lacks a capability, [`Capabilities::lazy`] or [`Capabilities::migrations`], declares
+//! A store that lacks a capability, [`Capabilities::lazy_start`] or [`Capabilities::migrations`], declares
 //! it absent with its reason in [`Host::capabilities`], and the scenarios that need it skip from the
 //! declaration, writing the reason to standard error through [`skipped`]. A scenario that cannot
 //! apply to a host for any other reason is declared not applicable with its reason, stamped
@@ -76,7 +76,7 @@ pub const PASSWORD: &str = "hunter2";
 /// use ulo_db_conformance::Capabilities;
 ///
 /// let declared = Capabilities::new();
-/// assert!(declared.lazy() && declared.migrations());
+/// assert!(declared.lazy_start() && declared.migrations());
 /// let redis = declared.without_migrations("Redis has no migrator");
 /// assert!(!redis.migrations());
 /// assert_eq!(redis.why_not_migrations(), Some("Redis has no migrator"));
@@ -93,7 +93,7 @@ pub const PASSWORD: &str = "hunter2";
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
-    lazy: Absent,
+    lazy_start: Absent,
     migrations: Absent,
 }
 
@@ -109,23 +109,23 @@ impl Default for Capabilities {
 impl Capabilities {
     /// A store holding every capability.
     pub const fn new() -> Self {
-        Capabilities { lazy: None, migrations: None }
+        Capabilities { lazy_start: None, migrations: None }
     }
 
     /// The host's options take `.lazy()`: `Store::create_connects` answers false for them, and
     /// `lazy_readiness_waits_for_the_first_ping` runs. On a host declared without it whose options
     /// make `create` connect, the scenario asserts the registration's refusal of `.lazy()` instead,
     /// and on any other host declared without it the scenario skips.
-    pub const fn lazy(&self) -> bool {
-        self.lazy.is_none()
+    pub const fn lazy_start(&self) -> bool {
+        self.lazy_start.is_none()
     }
 
-    pub const fn without_lazy(self, reason: &'static str) -> Self {
-        Capabilities { lazy: Some(reason), ..self }
+    pub const fn without_lazy_start(self, reason: &'static str) -> Self {
+        Capabilities { lazy_start: Some(reason), ..self }
     }
 
-    pub const fn why_not_lazy(&self) -> Option<&'static str> {
-        self.lazy
+    pub const fn why_not_lazy_start(&self) -> Option<&'static str> {
+        self.lazy_start
     }
 
     /// The store offers `.migrate(..)`, and the two migration scenarios run.
@@ -258,7 +258,7 @@ pub trait Host: Sized + Send + Sync + 'static {
     fn restore(&self) -> impl Future<Output = ()> + Send;
 
     /// `module.lazy()`, or `module` unchanged for a store whose options make `create` connect, which
-    /// refuses `.lazy()` at registration; that host declares its capabilities without `lazy`.
+    /// refuses `.lazy()` at registration; that host declares its capabilities without `lazy_start`.
     fn lazily(&self, module: StoreModule<Self::Store>) -> StoreModule<Self::Store>;
 
     /// `module.migrate(..)` with the migrations the lock scenario runs, ordinary DDL that records

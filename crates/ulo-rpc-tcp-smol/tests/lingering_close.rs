@@ -219,7 +219,7 @@ async fn listening(clock: &ScriptedTimer) -> (App<ulo::Connected>, Tcp, ulo_rpc:
         .expect("the app connects");
     let mut tcp = Tcp::new("127.0.0.1:0");
     tcp.prepare(&app.handle()).await.expect("the link prepares");
-    let inbound = tcp.listen(&[Pattern::from(ECHO)]).await.expect("the link listens");
+    let inbound = tcp.listen(&[Pattern::from(ECHO).into()]).await.expect("the link listens");
     let addr = tcp.bound().first().map(|bound| bound.addr).expect("the link's address");
     (app, tcp, inbound, addr)
 }

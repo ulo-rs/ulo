@@ -186,7 +186,7 @@ async fn close_commits_off_the_runtime_thread_polling_it() {
         .expect("the app connects");
     let mut server = broker.link();
     server.prepare(&app.handle()).await.expect("the server's link prepares");
-    let mut inbound = server.listen(&[Pattern::from(PATTERN)]).await.expect("the server's link listens");
+    let mut inbound = server.listen(&[Pattern::from(PATTERN).into()]).await.expect("the server's link listens");
     let client = broker.client_link(&[]);
     let handle = app.handle();
     let outbound = client.connect(handle.runtime().expect("the app has a runtime")).await.expect("the client's link connects");
@@ -269,7 +269,7 @@ async fn a_server_link_dropped_without_close_closes_its_connections() {
         .expect("the app connects");
     let mut server = broker.link().group("dropped");
     server.prepare(&app.handle()).await.expect("the server's link prepares");
-    let inbound = server.listen(&[Pattern::from("link.dropped")]).await.expect("the server's link listens");
+    let inbound = server.listen(&[Pattern::from("link.dropped").into()]).await.expect("the server's link listens");
     assert!(broker.server.open().await > 0, "the listening server's link holds no connection through its relay");
     drop(inbound);
     drop(server);
@@ -318,7 +318,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connections() {
         let (pattern, group) = if drained { ("link.held.drained", "held.drained") } else { ("link.held", "held") };
         let mut server = broker.link().group(group);
         server.prepare(&app.handle()).await.expect("the server's link prepares");
-        let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+        let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
         let mut deliveries = Vec::new();
         for id in [first, first + 1] {
             let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
@@ -417,7 +417,7 @@ fn closing_and_dropping_links_does_not_stall_the_thread() {
             doing("binding a server");
             let mut server = broker.link().group(group);
             server.prepare(&app.handle()).await.expect("the server's link prepares");
-            let mut inbound = server.listen(&[Pattern::from(pattern)]).await.expect("the server's link listens");
+            let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
             doing("answering a call");
             let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
             send(Pattern::from(pattern), request, Some(ReplyTo { id })).await.expect("the request is produced");

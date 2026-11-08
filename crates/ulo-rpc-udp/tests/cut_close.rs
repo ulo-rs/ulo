@@ -48,7 +48,7 @@ async fn the_calls_held_through_a_cut_close_are_answered_unavailable() {
         .expect("the app connects");
     let mut udp = Udp::new("127.0.0.1:0");
     udp.prepare(&app.handle()).await.expect("the link prepares");
-    let mut inbound = udp.listen(&[Pattern::from("cut_close.hold")]).await.expect("the link listens");
+    let mut inbound = udp.listen(&[Pattern::from("cut_close.hold").into()]).await.expect("the link listens");
     let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
     let caller = tokio::net::UdpSocket::bind("127.0.0.1:0").await.expect("the caller's socket");
     let mut buffer = vec![0u8; 65_536];

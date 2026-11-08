@@ -12,7 +12,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use ulo::{AppHandle, BoundAddr, BoxError, Runtime};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Capabilities, Link, Outbound, Pattern, ReplyPath};
+use ulo_rpc::{Capabilities, Link, Outbound, Subscription, ReplyPath};
 use ulo_rpc_conformance::relay::Relay;
 use ulo_rpc_conformance::{Broker, Harness, OnTokio, startup_failed};
 use ulo_rpc_tcp::Tcp;
@@ -59,7 +59,7 @@ impl Link for Gated {
         self.0.max_inflight(calls);
     }
 
-    async fn listen(&self, patterns: &[Pattern]) -> Result<Inbound, BoxError> {
+    async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         let inbound = self.0.listen(patterns).await?;
         Ok(inbound
             .map(|mut delivery| {

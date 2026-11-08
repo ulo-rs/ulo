@@ -20,7 +20,7 @@ use ulo::app::Bound as Listening;
 use ulo::{App, AppHandle, BoxError, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError, controller, handlers, injectable};
 use ulo_rpc::link::Inbound as Deliveries;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, Inbound, Link, Outbound, Pattern, Payload, ReplyPath, RpcClient,
+    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, Inbound, Link, Outbound, Subscription, Payload, ReplyPath, RpcClient,
     RpcClientModule, RpcError, ZeroCount,
 };
 use ulo_rpc_tcp::Tcp;
@@ -537,7 +537,7 @@ impl Link for Fed {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    async fn listen(&self, _patterns: &[Pattern]) -> Result<Deliveries, BoxError> {
+    async fn listen(&self, _patterns: &[Subscription]) -> Result<Deliveries, BoxError> {
         lock(&self.inbound).take().ok_or_else(|| "the fed link listened twice".into())
     }
 
