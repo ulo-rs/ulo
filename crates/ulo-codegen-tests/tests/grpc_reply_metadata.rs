@@ -1,6 +1,8 @@
 //! A reply's metadata never carries a name beginning `grpc-`, which gRPC over HTTP/2 reserves, nor
-//! `te`, `content-type` or `content-length`. The entry is dropped, the rest of the metadata is
-//! kept, and the status, message and details the framework writes still arrive.
+//! `te`, `content-type` or `content-length`. A name near the reserved ones passes beside the
+//! reply's own content type, the status and message the framework writes still arrive, and a
+//! pre-dispatch refusal loses its reserved headers. A `Response` naming a reserved key fails the
+//! reply (`grpc_reply_refusals.rs`).
 
 mod support;
 
@@ -42,19 +44,9 @@ impl Known {
             return Err(Refusal);
         }
         Ok(Response::new(text.0.to_uppercase())
-            // Listed by name before the prefix screen.
-            .metadata("grpc-message-type", "listed")
-            // Under the prefix only.
-            .metadata("grpc-x", "unlisted")
-            .metadata("grpc-retry-pushback-ms", "10")
-            .metadata("GRPC-UPPER", "unlisted")
             // Not a prefix match.
             .metadata("x-grpc-y", "kept")
             .metadata("grpcish", "kept")
-            // HTTP/2's own, which the reply writes.
-            .metadata("te", "trailers")
-            .metadata("content-length", "999")
-            .metadata("content-type", "text/plain")
             .metadata("x-kept", "kept"))
     }
 }
@@ -107,13 +99,10 @@ fn header<'a>(metadata: &'a tonic::metadata::MetadataMap, key: &str) -> Option<&
 }
 
 #[tokio::test]
-async fn a_handler_s_grpc_prefixed_reply_metadata_is_dropped_listed_or_not_and_the_rest_is_kept() {
+async fn a_name_near_the_reserved_ones_reaches_the_caller_beside_the_reply_s_own_content_type() {
     let app = start(false).await;
     let reply = dial(&app, "ada").await.unwrap_or_else(|status| panic!("Upper failed: {status:?}"));
     let metadata = reply.metadata();
-    for dropped in ["grpc-message-type", "grpc-x", "grpc-retry-pushback-ms", "grpc-upper", "te", "content-length"] {
-        assert_eq!(header(metadata, dropped), None, "{dropped} reached the caller: {metadata:?}");
-    }
     let types: Vec<_> = metadata.get_all("content-type").iter().map(|value| value.to_str().unwrap_or("not ASCII")).collect();
     assert_eq!(types, ["application/grpc"], "the reply's own content type alone: {metadata:?}");
     assert_eq!(header(metadata, "x-grpc-y"), Some("kept"), "a name that does not start with grpc- passes");

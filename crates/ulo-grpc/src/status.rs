@@ -47,8 +47,51 @@ pub fn code_for_http(status: StatusCode) -> Code {
     }
 }
 
-/// `err` as a status: its kind's code, or the one `CallError::with_grpc_code` set, its public
-/// message, and its details packed into a `google.rpc.Status` in `grpc-status-details-bin` through
+/// Sends a [`CallError`] over gRPC with a canonical code of its own in place of the one its kind
+/// maps to. A `Conflict` maps to `ABORTED`, and Google's API guidance pairs HTTP 409 with
+/// `ALREADY_EXISTS` too: an error naming a resource that exists writes
+/// `.with_grpc_code(Code::AlreadyExists)`. The kind still decides every other transport's
+/// rendering, the HTTP status, the RPC and WebSocket envelopes' `kind` and a WebSocket connect
+/// refusal's close code, so the error keeps one meaning across transports. `Code::Ok` is not an
+/// error's code and is ignored, logged at `warn` when the error is rendered: an error sent as `OK`
+/// would read as success.
+///
+/// A handler can also return a `tonic::Status` as its error. The error handlers see it as it was
+/// returned, and one none of them claims or replaces is sent unchanged, its code, message and
+/// details as built, with no kind consulted. An `OK` status is no error's and is sent as
+/// [`from_status`] reads it, INTERNAL.
+///
+/// ```
+/// use ulo_grpc::{CallError, ErrorKind, WithGrpcCode, to_status};
+/// use tonic::Code;
+///
+/// let error = CallError::new(ErrorKind::Conflict, "the user exists").with_grpc_code(Code::AlreadyExists);
+/// assert_eq!(error.kind(), ErrorKind::Conflict);
+/// assert_eq!(to_status(&error).code(), Code::AlreadyExists);
+/// ```
+pub trait WithGrpcCode {
+    fn with_grpc_code(self, code: Code) -> Self;
+}
+
+impl WithGrpcCode for CallError {
+    fn with_grpc_code(self, code: Code) -> Self {
+        self.__with_grpc_code(i32::from(code))
+    }
+}
+
+/// The code [`WithGrpcCode`] set on `err`, when it is one of the sixteen error codes. `OK`, or a
+/// number no code has, is logged at `warn` and read as unset.
+fn own_code(err: &CallError) -> Option<Code> {
+    let written = err.__grpc_code()?;
+    if (1..=16).contains(&written) {
+        return Some(Code::from_i32(written));
+    }
+    tracing::warn!(code = written, kind = %err.kind(), "an error's gRPC code is not an error's; it is sent with its kind's");
+    None
+}
+
+/// `err` as a status: its kind's code, or the one [`WithGrpcCode`] set, its public message, and
+/// its details packed into a `google.rpc.Status` in `grpc-status-details-bin` through
 /// tonic-types, a `Detail::Json` as a `google.protobuf.Value` packed in an `Any`. An error with no
 /// details sends no `grpc-status-details-bin`.
 ///
@@ -56,11 +99,7 @@ pub fn code_for_http(status: StatusCode) -> Code {
 /// `Help`: every `FieldViolations` detail's violations are written into the one `BadRequest`, every
 /// `Help` detail's links into the one `Help`, and the first `ErrorInfo` and `RetryAfter` are kept.
 pub fn to_status(err: &CallError) -> Status {
-    let code = err
-        .grpc_code()
-        .filter(|code| (1..=16).contains(code))
-        .map(Code::from_i32)
-        .unwrap_or_else(|| code_for(err.kind()));
+    let code = own_code(err).unwrap_or_else(|| code_for(err.kind()));
     with_details(code, err.message(), err.details())
 }
 
@@ -72,6 +111,9 @@ pub fn to_status(err: &CallError) -> Status {
 ///
 /// The error handlers see a `CallError` whose kind is the code's, `NOT_FOUND` a `NotFound` and a
 /// code no kind names `Internal`, with `status` as its source, `source_as::<tonic::Status>()`.
+/// An `OK` status is not an error: it is read as a server bug, a `CallError` of kind `Internal`
+/// whose message says an OK status was used as an error, sent as INTERNAL, with `status` still its
+/// source.
 /// A `CallError` that names a status as its cause with a kind, message, details or code of its
 /// own renders by those: `CallError::new(ErrorKind::Unavailable, "the upstream failed")
 /// .with_source(status)` is sent as UNAVAILABLE, so a status a handler received from another
@@ -89,17 +131,25 @@ pub fn to_status(err: &CallError) -> Status {
 /// # let _ = items;
 /// ```
 pub fn from_status(status: Status) -> CallError {
+    if status.code() == Code::Ok {
+        return CallError::new(ErrorKind::Internal, OK_AS_ERROR).with_source(status);
+    }
     CallError::new(kind_for(status.code()), status.message().to_owned()).with_source(status)
 }
 
+/// The message of the `Internal` [`from_status`] answers for an `OK` status.
+const OK_AS_ERROR: &str = "an OK status was used as an error";
+
 /// The status `call` is sent as: its source, while `call` is as [`from_status`] built it, the kind
-/// the code reads as and the status's message, with no details, code or challenge of its own.
+/// the code reads as and the status's message, with no details, code or challenge of its own. An
+/// `OK` status is never sent as an error's.
 pub(crate) fn carried(call: &CallError) -> Option<&Status> {
     let status = call.source_as::<Status>()?;
-    let as_built = call.kind() == kind_for(status.code())
+    let as_built = status.code() != Code::Ok
+        && call.kind() == kind_for(status.code())
         && call.message() == status.message()
         && call.details().is_empty()
-        && call.grpc_code().is_none()
+        && call.__grpc_code().is_none()
         && call.challenge().is_none();
     as_built.then_some(status)
 }
@@ -122,8 +172,9 @@ fn kind_for(code: Code) -> ErrorKind {
 }
 
 /// The status a failed call is answered with, `err` being what the error handlers left: the
-/// `tonic::Status` a handler or an error handler returned as it stands, DEADLINE_EXCEEDED when the
-/// call's deadline cancelled it, and otherwise the error as `CallError::from_boxed` recognises it.
+/// `tonic::Status` a handler or an error handler returned as it stands, an `OK` one as
+/// [`from_status`] reads it, DEADLINE_EXCEEDED when the call's deadline cancelled it, and
+/// otherwise the error as `CallError::from_boxed` recognises it.
 pub(crate) fn render(err: BoxError, exec: &ExecutionRef) -> Status {
     if exec.cancel_reason() == Some(CancelReason::Deadline) && !err.is::<Status>() {
         return deadline_exceeded();
@@ -133,11 +184,13 @@ pub(crate) fn render(err: BoxError, exec: &ExecutionRef) -> Status {
 
 /// The status for `err` whatever the execution's cancel reason: what the error handlers of a
 /// passed deadline return, which is the `Timeout` it offered or their reshaping of it. A
-/// `tonic::Status` as it stands, a `CallError` [`from_status`] built as that status, any other error
-/// as `CallError::from_boxed` recognises it; the status's metadata screened by [`screened`].
+/// `tonic::Status` as it stands, an `OK` one as [`from_status`] reads it, a `CallError`
+/// [`from_status`] built as that status, any other error as `CallError::from_boxed` recognises
+/// it; the status's metadata screened by [`screened`].
 pub(crate) fn render_as_is(err: BoxError) -> Status {
     let status = match err.downcast::<Status>() {
-        Ok(status) => *status,
+        Ok(status) if status.code() != Code::Ok => *status,
+        Ok(status) => to_status(&from_status(*status)),
         Err(err) => {
             let call = CallError::from_boxed(err);
             match carried(&call) {
@@ -241,4 +294,48 @@ fn protobuf_value(json: &serde_json::Value) -> prost_types::Value {
         }),
     };
     prost_types::Value { kind: Some(kind) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An `OK` status is a server bug as an error: INTERNAL, saying so, and the status kept.
+    #[test]
+    fn an_ok_status_from_status_builds_is_sent_as_internal() {
+        let call = from_status(Status::ok("done"));
+        assert_eq!((call.kind(), call.message()), (ErrorKind::Internal, OK_AS_ERROR));
+        assert_eq!(call.source_as::<Status>().map(Status::code), Some(Code::Ok), "the status stays the source");
+        let sent = render_as_is(Box::new(call));
+        assert_eq!((sent.code(), sent.message()), (Code::Internal, OK_AS_ERROR));
+    }
+
+    /// A `CallError` shaped as `from_status` would build one from an `OK` status, kind `Internal`
+    /// and the status's message, is still not sent as that status.
+    #[test]
+    fn an_ok_status_is_never_carried_as_an_error_s_status() {
+        let call = CallError::new(ErrorKind::Internal, "done").with_source(Status::ok("done"));
+        assert!(carried(&call).is_none());
+        assert_eq!(render_as_is(Box::new(call)).code(), Code::Internal);
+    }
+
+    /// An `OK` status returned bare as the error, by a handler or an error handler, is the same
+    /// server bug.
+    #[test]
+    fn a_bare_ok_status_is_sent_as_internal() {
+        let sent = render_as_is(Box::new(Status::ok("done")));
+        assert_eq!((sent.code(), sent.message()), (Code::Internal, OK_AS_ERROR));
+        assert_eq!(render_as_is(Box::new(Status::not_found("gone"))).code(), Code::NotFound, "any other status as it stands");
+    }
+
+    /// A number outside 1 to 16 reaches the store only past `WithGrpcCode`, and is read as unset.
+    #[test]
+    fn a_stored_code_that_is_not_an_error_s_is_sent_as_the_kind_s() {
+        for written in [0, -1, 17] {
+            let call = CallError::new(ErrorKind::Conflict, "exists").__with_grpc_code(written);
+            assert_eq!(to_status(&call).code(), Code::Aborted, "{written}");
+        }
+        let named = CallError::new(ErrorKind::Conflict, "exists").with_grpc_code(Code::AlreadyExists);
+        assert_eq!(to_status(&named).code(), Code::AlreadyExists);
+    }
 }

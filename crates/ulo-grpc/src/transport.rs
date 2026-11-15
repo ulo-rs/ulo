@@ -6,10 +6,10 @@ use tonic::Status;
 use tonic::metadata::MetadataMap;
 use ulo::{AppHandle, ExecutionRef, Ext, Extensions, Inputs, LookupError, MountedHandler, Timer, Transport};
 use ulo_http::HttpBody;
-use ulo_transport::{CallError, ExtractError, FromCall};
+use ulo_transport::{CallError, ExtractError, FromCall, IntoReplyError};
 
 use crate::dispatch;
-use crate::metadata::MetadataEntry;
+use crate::metadata::{MetadataEntry, MetadataError};
 
 /// The gRPC transport, key `"grpc"`: one execution per call. `#[guards(grpc = ..)]` scopes an entry
 /// to its handlers. Its inputs, [`GrpcMetadata`] and [`PeerAddr`], are seeded into every call's
@@ -121,26 +121,28 @@ impl GrpcCx {
 
     /// One reply message, or [`Response`] around one with reply metadata, encoded as a handler
     /// returning it is answered: what an error handler claiming an error answers with a message of
-    /// its own.
+    /// its own. A `Response` holding an entry its builder refused fails as `IntoReplyError`, as it
+    /// does when a handler returns it.
     ///
     /// ```ignore
     /// # // reason: a fragment of an error handler: it needs a generated message type
     /// async fn handle(&self, err: BoxError, cx: &GrpcCx) -> Result<Reply, BoxError> {
     ///     match err.downcast_ref::<CallError>().and_then(|call| call.source_as::<NotCached>()) {
-    ///         Some(_) => Ok(cx.reply(Response::new(pb::User::default()).metadata("x-cache", "miss"))),
+    ///         Some(_) => Ok(cx.reply(Response::new(pb::User::default()).metadata("x-cache", "miss"))?),
     ///         None => Err(err),
     ///     }
     /// }
     /// ```
-    pub fn reply<V: IntoGrpcReply>(&self, value: V) -> Reply {
+    pub fn reply<V: IntoGrpcReply>(&self, value: V) -> Result<Reply, IntoReplyError> {
         value.into_grpc_reply()
     }
 
     /// A reply stream, or [`Response`] around one with reply metadata, as a handler returning it is
     /// answered: each `Ok` item written as a message, an `Err` item run through the matched
     /// handler's error handlers on the late path and written in the trailers, which end the
-    /// stream.
-    pub fn reply_stream<S: IntoGrpcStream>(&self, stream: S) -> Reply {
+    /// stream. A `Response` holding an entry its builder refused fails as `IntoReplyError` before
+    /// any message is written.
+    pub fn reply_stream<S: IntoGrpcStream>(&self, stream: S) -> Result<Reply, IntoReplyError> {
         stream.into_grpc_stream(self)
     }
 
@@ -206,6 +208,14 @@ pub struct PeerAddr(pub SocketAddr);
 /// or with the status of an `Err` item, beside that status's own metadata. A stream the server
 /// ends, at the deadline, at the drain's end or after a panic, ends with the status alone.
 ///
+/// [`metadata`](Self::metadata) and [`trailer`](Self::trailer) build their entry as
+/// [`MetadataEntry::ascii`] does, and a key or value it refuses, a reserved name among them, fails
+/// the reply: converting the `Response` answers `IntoReplyError` holding the first refusal's
+/// [`MetadataError`], which names the key and the reason, and nothing is written. The error
+/// handlers see a `CallError` of kind `Internal` with that `IntoReplyError` as its source, and
+/// unclaimed it is sent as INTERNAL with the message withheld, as HTTP sends a reply whose header
+/// does not parse as a 500.
+///
 /// ```
 /// use ulo_grpc::{MetadataEntry, MetadataError, Response};
 ///
@@ -221,18 +231,22 @@ pub struct Response<T> {
     pub(crate) message: T,
     pub(crate) metadata: MetadataMap,
     pub(crate) trailers: MetadataMap,
+    /// The first entry `metadata` or `trailer` refused, which fails the reply.
+    pub(crate) refused: Option<MetadataError>,
 }
 
 impl<T> Response<T> {
     pub fn new(message: T) -> Self {
-        Response { message, metadata: MetadataMap::new(), trailers: MetadataMap::new() }
+        Response { message, metadata: MetadataMap::new(), trailers: MetadataMap::new(), refused: None }
     }
 
     /// One ASCII entry on the reply's headers, built as [`MetadataEntry::ascii`] builds it; a key
-    /// or value it refuses, a reserved name among them, is dropped and logged at `warn`. A key
-    /// written twice carries both values.
+    /// or value it refuses fails the reply. A key written twice carries both values.
     pub fn metadata(mut self, key: &'static str, value: &str) -> Self {
-        append_or_warn(&mut self.metadata, key, value, "reply metadata");
+        match MetadataEntry::ascii(key, value) {
+            Ok(entry) => entry.append_to(&mut self.metadata),
+            Err(refused) => self.refuse(refused),
+        }
         self
     }
 
@@ -243,10 +257,12 @@ impl<T> Response<T> {
     }
 
     /// One ASCII entry on the reply's trailers, built as [`MetadataEntry::ascii`] builds it; a key
-    /// or value it refuses, a reserved name among them, is dropped and logged at `warn`. A key
-    /// written twice carries both values.
+    /// or value it refuses fails the reply. A key written twice carries both values.
     pub fn trailer(mut self, key: &'static str, value: &str) -> Self {
-        append_or_warn(&mut self.trailers, key, value, "reply trailer");
+        match MetadataEntry::ascii(key, value) {
+            Ok(entry) => entry.append_to(&mut self.trailers),
+            Err(refused) => self.refuse(refused),
+        }
         self
     }
 
@@ -259,44 +275,52 @@ impl<T> Response<T> {
     pub fn into_inner(self) -> T {
         self.message
     }
-}
 
-fn append_or_warn(map: &mut MetadataMap, key: &'static str, value: &str, what: &'static str) {
-    match MetadataEntry::ascii(key, value) {
-        Ok(entry) => entry.append_to(map),
-        Err(error) => tracing::warn!(key, %error, "{what} dropped"),
+    fn refuse(&mut self, refused: MetadataError) {
+        self.refused.get_or_insert(refused);
+    }
+
+    /// The message, headers and trailers, or the first refusal as the conversion's failure.
+    fn parts(self) -> Result<(T, MetadataMap, MetadataMap), IntoReplyError> {
+        match self.refused {
+            Some(refused) => Err(IntoReplyError::new(refused)),
+            None => Ok((self.message, self.metadata, self.trailers)),
+        }
     }
 }
 
 /// A reply of one message, what a unary or client-streaming handler returns and
 /// [`GrpcCx::reply`] takes: the message, or [`Response`] around it with reply metadata. `()` is
-/// one too, being prost's `google.protobuf.Empty`.
+/// one too, being prost's `google.protobuf.Empty`. The conversion fails for a `Response` holding
+/// an entry its builder refused.
 pub trait IntoGrpcReply: Send + 'static {
     type Message;
-    fn into_grpc_reply(self) -> Reply;
+    fn into_grpc_reply(self) -> Result<Reply, IntoReplyError>;
 }
 
 impl<T: prost::Message + Default + Send + 'static> IntoGrpcReply for T {
     type Message = T;
 
-    fn into_grpc_reply(self) -> Reply {
-        dispatch::encode_one(self, MetadataMap::new(), MetadataMap::new())
+    fn into_grpc_reply(self) -> Result<Reply, IntoReplyError> {
+        Ok(dispatch::encode_one(self, MetadataMap::new(), MetadataMap::new()))
     }
 }
 
 impl<T: prost::Message + Default + Send + 'static> IntoGrpcReply for Response<T> {
     type Message = T;
 
-    fn into_grpc_reply(self) -> Reply {
-        dispatch::encode_one(self.message, self.metadata, self.trailers)
+    fn into_grpc_reply(self) -> Result<Reply, IntoReplyError> {
+        let (message, metadata, trailers) = self.parts()?;
+        Ok(dispatch::encode_one(message, metadata, trailers))
     }
 }
 
 /// A reply stream, what a server-streaming or bidi handler returns and [`GrpcCx::reply_stream`]
-/// takes: any stream of [`IntoGrpcItem`]s, or [`Response`] around one with reply metadata.
+/// takes: any stream of [`IntoGrpcItem`]s, or [`Response`] around one with reply metadata. The
+/// conversion fails for a `Response` holding an entry its builder refused.
 pub trait IntoGrpcStream: Send + 'static {
     type Message;
-    fn into_grpc_stream(self, cx: &GrpcCx) -> Reply;
+    fn into_grpc_stream(self, cx: &GrpcCx) -> Result<Reply, IntoReplyError>;
 }
 
 impl<S> IntoGrpcStream for S
@@ -306,8 +330,8 @@ where
 {
     type Message = <S::Item as IntoGrpcItem>::Message;
 
-    fn into_grpc_stream(self, cx: &GrpcCx) -> Reply {
-        dispatch::encode_stream(self, MetadataMap::new(), MetadataMap::new(), cx)
+    fn into_grpc_stream(self, cx: &GrpcCx) -> Result<Reply, IntoReplyError> {
+        Ok(dispatch::encode_stream(self, MetadataMap::new(), MetadataMap::new(), cx))
     }
 }
 
@@ -318,8 +342,9 @@ where
 {
     type Message = <S::Item as IntoGrpcItem>::Message;
 
-    fn into_grpc_stream(self, cx: &GrpcCx) -> Reply {
-        dispatch::encode_stream(self.message, self.metadata, self.trailers, cx)
+    fn into_grpc_stream(self, cx: &GrpcCx) -> Result<Reply, IntoReplyError> {
+        let (stream, metadata, trailers) = self.parts()?;
+        Ok(dispatch::encode_stream(stream, metadata, trailers, cx))
     }
 }
 
@@ -341,5 +366,24 @@ where
 
     fn into_grpc_item(self) -> Result<T, CallError> {
         self.map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    fn refusal(converted: Result<Reply, IntoReplyError>) -> MetadataError {
+        let error = converted.err().unwrap_or_else(|| panic!("the reply converted"));
+        error.source().and_then(|source| source.downcast_ref::<MetadataError>()).cloned().unwrap_or_else(|| panic!("no refusal in {error:?}"))
+    }
+
+    /// The first entry refused is the one the reply fails with, whichever position it is in.
+    #[test]
+    fn a_reply_fails_with_its_first_refusal() {
+        let reply = Response::new(()).metadata("x-a", "1").trailer("te", "trailers").metadata("grpc-x", "v");
+        assert_eq!(refusal(reply.into_grpc_reply()), MetadataError::Reserved { key: "te".into() });
     }
 }

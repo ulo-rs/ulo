@@ -65,7 +65,7 @@ struct AnswerOne;
 impl Interceptor<Grpc> for AnswerOne {
     async fn intercept(&self, cx: &GrpcCx, next: Next<'_, Grpc>) -> Result<Reply, BoxError> {
         drop(next.run().await?);
-        Ok(cx.reply(Tick { n: 0 }))
+        Ok(cx.reply(Tick { n: 0 })?)
     }
 }
 
@@ -75,7 +75,7 @@ struct AnswerStream;
 impl Interceptor<Grpc> for AnswerStream {
     async fn intercept(&self, cx: &GrpcCx, next: Next<'_, Grpc>) -> Result<Reply, BoxError> {
         drop(next.run().await?);
-        Ok(cx.reply_stream(stream::iter([Ok::<_, CallError>(Tick { n: 7 }), Ok(Tick { n: 8 })])))
+        Ok(cx.reply_stream(stream::iter([Ok::<_, CallError>(Tick { n: 7 }), Ok(Tick { n: 8 })]))?)
     }
 }
 
@@ -84,7 +84,7 @@ struct EndlessOnTimeout;
 
 impl ErrorHandler<Grpc> for EndlessOnTimeout {
     async fn handle(&self, _err: BoxError, cx: &GrpcCx) -> Result<Reply, BoxError> {
-        Ok(cx.reply_stream(stream::repeat_with(|| Ok::<_, CallError>(Tick { n: 1 }))))
+        Ok(cx.reply_stream(stream::repeat_with(|| Ok::<_, CallError>(Tick { n: 1 })))?)
     }
 }
 

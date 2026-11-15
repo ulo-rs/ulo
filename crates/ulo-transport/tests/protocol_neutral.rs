@@ -1,7 +1,7 @@
 //! The shared base names no protocol (transports DESIGN §1): no crate in `ulo-transport`'s
 //! dependency tree is an HTTP, HTTP/2, WebSocket or gRPC crate, under any of its features. A
-//! transport's typed override of an error's rendering, `ulo_http::WithHttpStatus` or
-//! `ulo_ws::WithCloseCode`, lives in that transport's crate.
+//! transport's typed override of an error's rendering, `ulo_http::WithHttpStatus`,
+//! `ulo_ws::WithCloseCode` or `ulo_grpc::WithGrpcCode`, lives in that transport's crate.
 
 use std::process::Command;
 

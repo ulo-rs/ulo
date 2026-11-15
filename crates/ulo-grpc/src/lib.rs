@@ -80,7 +80,7 @@ pub use metadata::{MetadataEntry, MetadataError};
 pub use method::{Method, Shape};
 pub use pre_dispatch::PreDispatch;
 pub use server::Server;
-pub use status::{code_for, code_for_http, from_status, to_status};
+pub use status::{WithGrpcCode, code_for, code_for_http, from_status, to_status};
 pub use transport::{Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, IntoGrpcReply, IntoGrpcStream, PeerAddr, Reply, Response};
 pub use http;
 pub use ulo_grpc_macros::method;

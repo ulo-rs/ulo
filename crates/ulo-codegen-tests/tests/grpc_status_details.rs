@@ -119,8 +119,8 @@ async fn an_error_without_details_sends_no_details_trailer() {
 }
 
 #[tokio::test]
-async fn an_error_can_name_its_grpc_code_and_a_code_outside_one_to_sixteen_is_ignored() {
-    assert_eq!(fail(-5, 6).await.code(), Code::AlreadyExists, "with_grpc_code(6)");
-    assert_eq!(fail(-5, 99).await.code(), Code::Aborted, "99 is outside 1..=16: the kind's code");
+async fn an_error_can_name_its_grpc_code_and_ok_is_ignored() {
+    assert_eq!(fail(-5, 6).await.code(), Code::AlreadyExists, "with_grpc_code(Code::AlreadyExists)");
+    assert_eq!(fail(-5, 16).await.code(), Code::Unauthenticated, "with_grpc_code(Code::Unauthenticated), the highest code");
     assert_eq!(fail(-5, 0).await.code(), Code::Aborted, "OK is not an error code: the kind's code");
 }

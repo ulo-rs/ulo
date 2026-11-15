@@ -78,7 +78,7 @@ pub(crate) type HandlerFn = Arc<dyn Fn(GrpcCx) -> BoxFuture<'static, Result<Repl
 /// async fn get_user(cx: GrpcCx) -> Result<Reply, BoxError> {
 ///     let Message(request) = <Message<GetUserRequest> as FromCall<Grpc>>::from_call(&cx).await?;
 ///     cx.exec().get::<Users>().await?;
-///     Ok(cx.reply(User { id: request.id }))
+///     Ok(cx.reply(User { id: request.id })?)
 /// }
 ///
 /// impl Controller for Users {}

@@ -9,7 +9,7 @@
 //! | -2 | `BadRequest` with two `FieldViolations`, a `Help` and a `RetryAfter` |
 //! | -3 | `NotFound` with a `Json` detail |
 //! | -4 | `NotFound` with no details |
-//! | -5 | `Conflict` sent with the gRPC code `b` |
+//! | -5 | `Conflict` sent with the gRPC code numbered `b` |
 //! | -6 | `Conflict` with two `ErrorInfo` details |
 
 #![allow(dead_code)]
@@ -21,7 +21,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use ulo::{CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::pb::{self, AddRequest, Sum};
-use ulo_grpc::Message;
+use ulo_grpc::{Message, WithGrpcCode};
 use ulo_transport::{CallError, Detail, Details, ErrorKind, FieldViolation, Link};
 
 use crate::support::Record;
@@ -77,7 +77,7 @@ impl Service {
             -3 => Err(CallError::new(ErrorKind::NotFound, "missing")
                 .with_details(Details::new().with(Detail::Json(serde_json::json!({ "k": [1, true, null], "s": "text" }))))),
             -4 => Err(CallError::new(ErrorKind::NotFound, "missing")),
-            -5 => Err(CallError::new(ErrorKind::Conflict, "exists").with_grpc_code(i32::try_from(b).unwrap_or(0))),
+            -5 => Err(CallError::new(ErrorKind::Conflict, "exists").with_grpc_code(tonic::Code::from(i32::try_from(b).unwrap_or(-1)))),
             -6 => Err(CallError::new(ErrorKind::Conflict, "twice").with_details(
                 Details::new().with(info("FIRST", "d1", &[])).with(info("SECOND", "d2", &[])),
             )),
