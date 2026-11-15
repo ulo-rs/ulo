@@ -1,6 +1,6 @@
-//! A gateway's limits: `max_connections` closing the next connection with 1013, `max_inflight`
-//! of one holding the next message unread, and `max_outbound` of one closing a slow consumer while
-//! a streamed answer waits for room instead.
+//! A gateway's limits: `max_connections` closing the next connection with 1013 as `Unavailable`,
+//! `max_inflight` of one holding the next message unread, and `max_outbound` of one closing a slow
+//! consumer while a streamed answer waits for room instead.
 
 use serde_json::json;
 use ulo_ws::DisconnectReason;
@@ -17,7 +17,7 @@ pub async fn max_connections<H: Host>() {
     let mut first = app.connect("/small", &[]).await;
     assert_eq!(first.exchange(json!({ "event": "echo", "id": 1, "data": "first" })).await, json!({ "id": 1, "data": "first" }));
     let mut second = app.connect("/small", &[]).await;
-    assert_eq!(second.close_frame().await, Some((1013, "too many connections".to_owned())), "the connection over the limit");
+    assert_eq!(second.close_frame().await, Some((1013, "unavailable: too many connections".to_owned())), "the connection over the limit");
     second.hang_up().await;
     let still = first.exchange(json!({ "event": "echo", "id": 2, "data": "still here" })).await;
     assert_eq!(still, json!({ "id": 2, "data": "still here" }), "the admitted connection after the refusal");

@@ -1,5 +1,5 @@
-//! Support for the code `ulo-http-macros` generates. Not part of the public API: names and shapes
-//! here change with the macros.
+//! Support for the code `ulo-http-macros` generates, and for `ulo-ws`'s refused handshake. Not
+//! part of the public API: names and shapes here change with their users.
 
 use std::marker::PhantomData;
 
@@ -7,8 +7,24 @@ use serde::de::DeserializeOwned;
 
 pub use ulo_transport as transport;
 
+use http::{HeaderMap, StatusCode};
+use ulo_transport::CallError;
+
 use crate::extract::{Host, Path};
 use crate::handler::HttpHandler;
+use crate::render;
+
+/// The status and the headers HTTP answers `error` with: the status `WithHttpStatus` set when it is
+/// 400 to 599, otherwise the kind's, and the headers that status calls for, `WWW-Authenticate`
+/// with the error's own challenge or `default_challenge` on a 401, `Retry-After` from a
+/// `RetryAfter` detail on a 429 or a 503. A WebSocket handshake refused under
+/// `refuse = handshake` is answered with them.
+pub fn error_head(error: &CallError, default_challenge: &str) -> (StatusCode, HeaderMap) {
+    let status = render::status_for(error);
+    let mut headers = HeaderMap::new();
+    render::status_headers(error, status, default_challenge, &mut headers);
+    (status, headers)
+}
 
 /// The seal of [`HttpCarried`](crate::HttpCarried): implemented for `Http` here and for
 /// `ulo_grpc::Grpc` in `ulo-grpc`, and by no other transport.

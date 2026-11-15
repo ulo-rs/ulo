@@ -242,10 +242,19 @@ impl Module for Root {
     }
 }
 
+/// A gate the server's `drain` waits at before it drains its table: the app is draining by then,
+/// so no execution opens, while the table still takes handshakes.
+#[derive(Clone, Default)]
+struct DrainHold {
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
 /// A server with no socket: the table it builds in `prepare` is handed to the test.
 struct TableServer {
     table: Arc<Mutex<Option<GatewayTable>>>,
     defaults: GatewayDefaults,
+    hold: Option<DrainHold>,
 }
 
 impl TableServer {
@@ -277,6 +286,10 @@ impl ulo::Server for TableServer {
     }
 
     async fn drain(&self, token: DrainToken) {
+        if let Some(hold) = &self.hold {
+            hold.entered.notify_one();
+            hold.release.notified().await;
+        }
         if let Some(table) = self.table() {
             table.drain(token).await;
         }
@@ -303,6 +316,10 @@ async fn start() -> Running {
 }
 
 async fn start_with(defaults: GatewayDefaults) -> Running {
+    start_on(defaults, None).await
+}
+
+async fn start_on(defaults: GatewayDefaults, hold: Option<DrainHold>) -> Running {
     let slot = Arc::new(Mutex::new(None));
     let joined = Joined::default();
     let hooks = Hooks::default();
@@ -314,7 +331,7 @@ async fn start_with(defaults: GatewayDefaults) -> Running {
         .connect()
         .await
         .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
-        .bind(TableServer { table: Arc::clone(&slot), defaults })
+        .bind(TableServer { table: Arc::clone(&slot), defaults, hold })
         .listen()
         .await
         .unwrap_or_else(|error| panic!("the app did not listen: {error}"));
@@ -606,6 +623,26 @@ async fn a_handshake_once_the_drain_has_begun_is_refused_503_before_the_connecti
         assert_eq!(refusal.reason(), ulo_transport::SHUTDOWN_MESSAGE, "{path}");
     }
     assert_eq!(hooks.all(), Vec::new(), "the connection phase ran once the drain had begun");
+}
+
+/// A handshake that passes the table's drain check while the app is already draining runs its
+/// connection phase under `refuse = handshake` and opens no execution: the drain's 503, as the
+/// table's own drain refusal is, with no hook run. The server's `drain` is held so the app's
+/// phase has advanced and the table's has not.
+#[tokio::test]
+async fn a_connection_phase_that_meets_the_drain_is_refused_503() {
+    let hold = DrainHold::default();
+    let app = start_on(GatewayDefaults::default(), Some(hold.clone())).await;
+    let (table, hooks) = (app.table.clone(), app.hooks.clone());
+    let stopping = tokio::spawn(app.stop());
+    within("the server's drain", hold.entered.notified()).await;
+    let Handshake::Refuse(refusal) = within("the handshake", table.handshake(head("/paired", |_| {}), None)).await else {
+        panic!("a handshake whose connection phase met the drain was accepted");
+    };
+    assert_eq!((refusal.status(), refusal.reason()), (StatusCode::SERVICE_UNAVAILABLE, ulo_transport::SHUTDOWN_MESSAGE));
+    hold.release.notify_one();
+    within("the app's close", stopping).await.expect("the close task panicked");
+    assert_eq!(hooks.all(), Vec::new(), "the connection phase ran a hook once the app was draining");
 }
 
 /// How long the probe holds `first`'s answer when `second` does not reach its own queueing.

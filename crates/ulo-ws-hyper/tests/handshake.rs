@@ -236,7 +236,7 @@ async fn a_handshake_refusal_counts_against_no_connection_limit() {
 
     // One the guards admit over the limit is accepted and closed with 1013, before `OnConnect`.
     let mut over = app.connect("/strict", &[("x-token", "open"), ("x-user", "bob")]).await;
-    assert_eq!(close_frame(&mut over).await, Some((1013, "too many connections".to_owned())));
+    assert_eq!(close_frame(&mut over).await, Some((1013, "unavailable: too many connections".to_owned())));
     hang_up(over).await;
     hang_up(admitted).await;
     app.stop().await;

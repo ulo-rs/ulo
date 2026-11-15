@@ -22,4 +22,5 @@ allow ulo-rpc ulo_transport::__derive  # re-exported for the derives, as in `ulo
 allow ulo-ws ulo_transport::__derive  # re-exported for the derives, as in `ulo-http`
 allow ulo-grpc ulo_transport::__derive  # re-exported for the derives, as in `ulo-http`
 
+allow ulo-ws ulo_http::__private::error_head  # the status and headers HTTP answers an error with, which a handshake refused under `refuse = handshake` answers with; one function the problem document's rendering also calls, so the two cannot disagree
 allow ulo-grpc ulo_http::__private::Carried  # the seal of `ulo_http::HttpCarried`, which `Grpc` implements so a gRPC call runs HTTP's pre-dispatch stage; a doc-hidden supertrait is what seals it to the two transports

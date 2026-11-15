@@ -1,6 +1,7 @@
 //! The upgrade handshake: the 101 and its `Sec-WebSocket-Accept`, the refusals RFC 6455 §4.2.1
 //! names and the drain's 503, the subprotocol the 101 echoes, and the connection phase refusing
-//! before the upgrade under `refuse = handshake`.
+//! before the upgrade under `refuse = handshake`, with the status and headers HTTP answers the
+//! refusal's error with.
 //!
 //! A request that carries no `Upgrade` header at all is no upgrade request: on the HTTP server's
 //! port the HTTP application answers it, so no refusal scenario sends one. Each refusal here keeps
@@ -13,7 +14,9 @@ use ulo::StartupError;
 use ulo_ws::Port;
 
 use super::{Served, suite_app};
-use crate::app::{Probe, TOKEN, USER, WHO, within_for};
+use crate::app::{
+    AS_NOT_FOUND, AS_PRECONDITION, AS_RATE_LIMITED, AS_UNAVAILABLE, BY_ERROR, Probe, REFUSE, RETRY_AFTER, TOKEN, USER, WHO, within_for,
+};
 use crate::{DRAIN, Host, report};
 use crate::client::{Answer, Request, read_answer, read_response, write};
 
@@ -243,5 +246,29 @@ pub async fn refused_before_upgrade<H: Host>() {
     let mut admitted = app.connect("/strict", &[TOKEN, (USER, "ada")]).await;
     assert_eq!(admitted.exchange(json!({ "event": "echo", "id": 1, "data": "in" })).await, json!({ "id": 1, "data": "in" }));
     admitted.hang_up().await;
+    app.stop().await;
+}
+
+/// A connect guard's error under `refuse = handshake`, answered as HTTP answers it: the kind's
+/// status, `NotFound` 404; `TooManyRequests` 429 and `Unavailable` 503, each with `Retry-After`
+/// from its `RetryAfter` detail; and the status `WithHttpStatus` names, a `Conflict` sent as 412.
+/// The body is the refusal's reason, the kind ahead of the message since each of the four kinds
+/// shares its close code with another.
+pub async fn refused_by_status<H: Host>() {
+    let app = Served::<H>::start().await;
+    let retry_after = RETRY_AFTER.as_secs().to_string();
+    let cases: [(&str, &str, u16, Option<&str>, String); 4] = [
+        ("`NotFound`", AS_NOT_FOUND, 404, None, format!("not_found: {BY_ERROR}")),
+        ("`TooManyRequests`", AS_RATE_LIMITED, 429, Some(&retry_after), format!("too_many_requests: {BY_ERROR}")),
+        ("`Unavailable`", AS_UNAVAILABLE, 503, Some(&retry_after), format!("unavailable: {BY_ERROR}")),
+        ("`WithHttpStatus`", AS_PRECONDITION, 412, None, format!("conflict: {BY_ERROR}")),
+    ];
+    for (what, how, status, after, body) in cases {
+        let request = Request::upgrade("/strict").header(TOKEN.0, TOKEN.1).header(USER, "ada").header(REFUSE, how);
+        let answer = app.upgrade(&request).await;
+        refused(what, &answer, status);
+        assert_eq!(answer.header("retry-after"), after, "{what}: `Retry-After`");
+        assert_eq!(answer.body, body, "{what}: the refusal's reason");
+    }
     app.stop().await;
 }
