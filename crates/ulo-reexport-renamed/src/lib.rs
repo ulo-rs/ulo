@@ -7,12 +7,29 @@
 //! `#[ulo::guards]`; `#[framework::guards]` is refused at the attribute, since `ulo` is the one
 //! qualifier the generated code names.
 //!
+//! Rust resolves the attributes themselves, and each compiles under the manifest's name,
+//! `#[framework::controller]`.
+//!
 //! The crate also re-exports `framework` whole, so `ulo-reexport-facade` reaches the macros
-//! through it without listing `ulo` at all.
+//! through it without listing `ulo` at all, and [`service!`] writes `#[controller]` and
+//! `#[handlers]` through `$crate` for it.
 
 extern crate framework as ulo;
 
 pub use framework::*;
+
+/// A controller declared through this crate: `service!(struct X; impl X { .. })` writes
+/// `#[controller]` on the struct and `#[handlers]` on the impl, both reached through `$crate`.
+#[macro_export]
+macro_rules! service {
+    ($controller:item $handlers:item) => {
+        #[$crate::controller]
+        $controller
+
+        #[$crate::handlers]
+        $handlers
+    };
+}
 
 #[cfg(test)]
 mod markers {
@@ -61,5 +78,38 @@ mod markers {
         controller::<Orders>();
         constructs::<Orders>();
         constructs::<Built>();
+    }
+
+    #[framework::controller]
+    struct Renamed {
+        #[controller(default)]
+        seen: u32,
+    }
+
+    #[framework::handlers]
+    #[guards(value = Deny)]
+    impl Renamed {
+        #[ulo_http::get("/renamed")]
+        fn get(&self) -> String {
+            self.seen.to_string()
+        }
+    }
+
+    struct Ledger;
+
+    #[framework::injectable]
+    impl Ledger {
+        #[ulo::construct]
+        fn open() -> Self {
+            Ledger
+        }
+    }
+
+    #[test]
+    fn the_attributes_compile_under_the_manifests_name() {
+        fn controller<T: Handlers>() {}
+        fn constructs<T: Construct>() {}
+        controller::<Renamed>();
+        constructs::<Ledger>();
     }
 }

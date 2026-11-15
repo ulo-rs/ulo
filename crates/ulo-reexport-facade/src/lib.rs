@@ -3,7 +3,9 @@
 //! no `ulo` in its manifest.
 //!
 //! The generated code, the hidden import for an editor included, names `::ulo`, which the
-//! `extern crate` alias below provides.
+//! `extern crate` alias below provides. The attributes also compile under the re-exporting
+//! crate's own name, `#[ulo_reexport_renamed::controller]`, and as its `service!` macro writes
+//! them.
 
 extern crate ulo_reexport_renamed as ulo;
 
@@ -54,5 +56,51 @@ mod markers {
         controller::<Orders>();
         constructs::<Orders>();
         constructs::<Built>();
+    }
+
+    #[ulo_reexport_renamed::controller]
+    struct Facade {
+        #[controller(default)]
+        seen: u32,
+    }
+
+    #[ulo_reexport_renamed::handlers]
+    #[guards(value = Deny)]
+    impl Facade {
+        #[ulo_http::get("/facade")]
+        fn get(&self) -> String {
+            self.seen.to_string()
+        }
+    }
+
+    struct Ledger;
+
+    #[ulo_reexport_renamed::injectable]
+    impl Ledger {
+        #[construct]
+        fn open() -> Self {
+            Ledger
+        }
+    }
+
+    ulo_reexport_renamed::service! {
+        struct Served;
+
+        impl Served {
+            #[ulo_http::get("/served")]
+            #[ulo::guards(value = Deny)]
+            fn get(&self) -> &'static str {
+                "served"
+            }
+        }
+    }
+
+    #[test]
+    fn the_attributes_compile_under_the_reexporting_crates_name_and_its_macro() {
+        fn controller<T: Handlers>() {}
+        fn constructs<T: Construct>() {}
+        controller::<Facade>();
+        controller::<Served>();
+        constructs::<Ledger>();
     }
 }
