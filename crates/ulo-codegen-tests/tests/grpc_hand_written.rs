@@ -139,12 +139,12 @@ async fn add(cx: GrpcCx) -> Result<Reply, BoxError> {
         return Err(CallError::from(Refusal).into());
     }
     let echo = req.metadata().get(ECHO).unwrap_or("").to_owned();
-    Ok(cx.reply(Response::new(Sum { sum: a + b }).metadata(ECHO, &echo)))
+    Ok(cx.reply(Response::new(Sum { sum: a + b }).metadata(ECHO, &echo))?)
 }
 
 async fn count(cx: GrpcCx) -> Result<Reply, BoxError> {
     let Message(req) = <Message<CountRequest> as FromCall<Grpc>>::from_call(&cx).await?;
-    Ok(cx.reply_stream(stream::iter((1..=i64::from(req.up_to)).map(|value| Ok::<_, Refusal>(Number { value })))))
+    Ok(cx.reply_stream(stream::iter((1..=i64::from(req.up_to)).map(|value| Ok::<_, Refusal>(Number { value }))))?)
 }
 
 async fn total(cx: GrpcCx) -> Result<Reply, BoxError> {
@@ -153,12 +153,12 @@ async fn total(cx: GrpcCx) -> Result<Reply, BoxError> {
     while let Some(item) = items.next().await {
         sum += item.map_err(|_| CallError::from(Refusal))?.value;
     }
-    Ok(cx.reply(Sum { sum }))
+    Ok(cx.reply(Sum { sum })?)
 }
 
 async fn double(cx: GrpcCx) -> Result<Reply, BoxError> {
     let items = <Streaming<Number> as FromCall<Grpc>>::from_call(&cx).await?;
-    Ok(cx.reply_stream(items.map(|item| item.map(|n| Number { value: n.value * 2 }).map_err(|_| Refusal))))
+    Ok(cx.reply_stream(items.map(|item| item.map(|n| Number { value: n.value * 2 }).map_err(|_| Refusal)))?)
 }
 
 impl Controller for HandCounter {}

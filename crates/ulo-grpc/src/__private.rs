@@ -264,7 +264,7 @@ impl<M: Method, V: IntoGrpcReply> Value<M> for ReplyProbe<M, V> {
 
 /// A handler's output as its reply, built once the call's context is known: a stream needs it for
 /// the late path its `Err` items take.
-pub struct Answer(Box<dyn FnOnce(&GrpcCx) -> Reply + Send>);
+pub struct Answer(Box<dyn FnOnce(&GrpcCx) -> Result<Reply, IntoReplyError> + Send>);
 
 impl Answer {
     fn value<V: IntoGrpcReply>(value: V) -> Answer {
@@ -278,6 +278,6 @@ impl Answer {
 
 impl IntoReply<Grpc> for Answer {
     fn into_reply(self, cx: &GrpcCx) -> Result<Reply, IntoReplyError> {
-        Ok((self.0)(cx))
+        (self.0)(cx)
     }
 }

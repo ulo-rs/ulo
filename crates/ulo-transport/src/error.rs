@@ -91,7 +91,8 @@ pub struct CallError {
     details: Details,
     /// The `WWW-Authenticate` challenge an `Unauthorized` carries, overriding the server's default.
     challenge: Option<String>,
-    /// The gRPC status code this error is sent with in place of its kind's.
+    /// The gRPC status code this error is sent with in place of its kind's, which `ulo-grpc`'s
+    /// `WithGrpcCode` writes from a typed code.
     grpc_code: Option<i32>,
     /// The HTTP status this error is sent with in place of its kind's, which `ulo-http`'s
     /// `WithHttpStatus` writes from a typed status.
@@ -220,22 +221,17 @@ impl CallError {
         self.challenge.as_deref()
     }
 
-    /// Sends this error over gRPC with the canonical status code `code`, `google.rpc.Code`'s number,
-    /// in place of the one its kind maps to. A `Conflict` maps to `ABORTED`, and Google's API
-    /// guidance pairs HTTP 409 with `ALREADY_EXISTS` too: an error naming a resource that exists
-    /// writes `.with_grpc_code(6)`. The kind still decides every other transport's rendering. The
-    /// gRPC transport ignores a code outside 1 to 16, `OK` included.
-    ///
-    /// A gRPC handler can also return a `tonic::Status` as its error. The error handlers see it as
-    /// it was returned, and one none of them claims or replaces is sent unchanged, its code,
-    /// message and details as built, with no kind consulted.
-    pub fn with_grpc_code(mut self, code: i32) -> Self {
+    /// The store behind `ulo_grpc::WithGrpcCode`, which takes a typed code and writes its number
+    /// here. gRPC's renderer reads it back through [`__grpc_code`](Self::__grpc_code), and no other
+    /// transport reads it.
+    #[doc(hidden)]
+    pub fn __with_grpc_code(mut self, code: i32) -> Self {
         self.grpc_code = Some(code);
         self
     }
 
-    /// The gRPC status code [`with_grpc_code`](Self::with_grpc_code) set.
-    pub fn grpc_code(&self) -> Option<i32> {
+    #[doc(hidden)]
+    pub fn __grpc_code(&self) -> Option<i32> {
         self.grpc_code
     }
 

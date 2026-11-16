@@ -113,7 +113,7 @@ impl ErrorHandler<Grpc> for Substitute {
         if !refused(&err) {
             return Err(err);
         }
-        Ok(cx.reply(Response::new(SUBSTITUTE).metadata("x-substituted", "yes")))
+        Ok(cx.reply(Response::new(SUBSTITUTE).metadata("x-substituted", "yes"))?)
     }
 }
 
@@ -125,7 +125,7 @@ impl ErrorHandler<Grpc> for SubstituteStream {
         if !refused(&err) {
             return Err(err);
         }
-        Ok(cx.reply_stream(ticks(3)))
+        Ok(cx.reply_stream(ticks(3))?)
     }
 }
 

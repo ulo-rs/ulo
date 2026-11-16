@@ -1,8 +1,8 @@
 //! Trailing metadata in each position a reply carries it, read by a tonic client: after a unary
 //! reply's message, in a trailers-only error, at the end of a server stream and of a bidi stream,
 //! and with the status of a stream's `Err` item. A `-bin` value arrives as the bytes it was built
-//! from, and a name gRPC over HTTP/2 reserves never arrives, whether a `Response` or a handler's
-//! `tonic::Status` carried it.
+//! from, and a name gRPC over HTTP/2 reserves in a handler's `tonic::Status` never arrives. An
+//! entry a `Response`'s builder refuses fails the reply instead (`grpc_reply_refusals.rs`).
 //!
 //! A unary method is also called as a server stream, the same bytes on the wire, so the client
 //! reports its headers and its trailers apart: tonic's unary call merges the two.
@@ -23,18 +23,13 @@ use support::{Running, within};
 /// Bytes no ASCII value can carry: NUL, DEL, the high half, a newline and a colon.
 const RAW: &[u8] = &[0x00, 0x01, 0x7f, 0x80, 0xfe, 0xff, b'\n', b':'];
 
-/// The headers and trailers every reply here carries, with three entries the builder drops: a
-/// reserved name, a connection-specific name h2 refuses in trailers, and an ASCII value under a
-/// `-bin` key.
+/// The headers and trailers every reply here carries.
 fn with_metadata<T>(response: Response<T>) -> Response<T> {
     response
         .metadata_entry(MetadataEntry::binary("x-head-bin", RAW).expect("a binary key"))
         .metadata("x-head", "h")
         .trailer("x-rows", "3")
         .trailer_entry(MetadataEntry::binary("x-digest-bin", RAW).expect("a binary key"))
-        .trailer("grpc-x", "dropped")
-        .trailer("connection", "dropped")
-        .trailer("x-bad-bin", "dropped")
 }
 
 /// A status carrying metadata of its own, a reserved name and a forged details trailer among it.
@@ -104,13 +99,10 @@ fn binary(metadata: &MetadataMap, key: &str) -> Option<Vec<u8>> {
     metadata.get_bin(key).map(|value| value.to_bytes().unwrap_or_else(|error| panic!("{key} is not base64: {error}")).to_vec())
 }
 
-/// The trailers the reply set, and neither entry its builder dropped.
+/// The trailers the reply set.
 fn assert_trailers(trailers: &MetadataMap) {
     assert_eq!(ascii(trailers, "x-rows"), Some("3"), "{trailers:?}");
     assert_eq!(binary(trailers, "x-digest-bin").as_deref(), Some(RAW), "{trailers:?}");
-    assert_eq!(trailers.get("grpc-x"), None, "a reserved name reached the trailers: {trailers:?}");
-    assert!(!trailers.contains_key("connection"), "a connection-specific name reached the trailers: {trailers:?}");
-    assert!(!trailers.contains_key("x-bad-bin"), "an ASCII value under a `-bin` key reached the trailers: {trailers:?}");
 }
 
 /// The headers the reply set, and none of its trailers.

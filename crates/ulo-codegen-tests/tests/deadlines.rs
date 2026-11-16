@@ -106,7 +106,7 @@ impl ErrorHandler<Grpc> for OneOnTimeout {
         if !timed_out(&err) {
             return Err(err);
         }
-        Ok(cx.reply(Tick { n: 7 }))
+        Ok(cx.reply(Tick { n: 7 })?)
     }
 }
 
@@ -118,7 +118,7 @@ impl ErrorHandler<Grpc> for EndlessOnTimeout {
         if !timed_out(&err) {
             return Err(err);
         }
-        Ok(cx.reply_stream(stream::repeat_with(|| Ok::<_, CallError>(Tick { n: 1 }))))
+        Ok(cx.reply_stream(stream::repeat_with(|| Ok::<_, CallError>(Tick { n: 1 })))?)
     }
 }
 
@@ -130,7 +130,7 @@ impl ErrorHandler<Grpc> for TrickleOnTimeout {
         if !timed_out(&err) {
             return Err(err);
         }
-        Ok(cx.reply_stream(stream::once(future::ready(Ok::<_, CallError>(Tick { n: 1 }))).chain(stream::pending())))
+        Ok(cx.reply_stream(stream::once(future::ready(Ok::<_, CallError>(Tick { n: 1 }))).chain(stream::pending()))?)
     }
 }
 
