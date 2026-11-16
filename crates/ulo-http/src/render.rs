@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use http::header::{ACCEPT, ALLOW, CONNECTION, CONTENT_TYPE, HeaderValue, RETRY_AFTER, WWW_AUTHENTICATE};
-use http::StatusCode;
+use http::{HeaderMap, StatusCode};
 use serde::Serialize;
 use ulo::{AppHandle, BoxError, CancelReason, ExecutionRef};
 use ulo_transport::{CallError, Details, ErrorKind, ExtractError};
@@ -239,8 +239,16 @@ fn document(error: &CallError, status: StatusCode, config: &HttpConfig) -> Respo
     *response.status_mut() = status;
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/problem+json"));
+    status_headers(error, status, &config.challenge, headers);
+    response
+}
+
+/// The headers `status` calls for when it answers `error`: `WWW-Authenticate` on a 401, the
+/// error's own challenge or `default_challenge`, and `Retry-After` on a 429 or a 503 from a
+/// `RetryAfter` detail. `ulo-ws` writes a refused handshake's headers through it.
+pub(crate) fn status_headers(error: &CallError, status: StatusCode, default_challenge: &str, headers: &mut HeaderMap) {
     if status == StatusCode::UNAUTHORIZED {
-        let challenge = error.challenge().unwrap_or(&*config.challenge);
+        let challenge = error.challenge().unwrap_or(default_challenge);
         let value = HeaderValue::from_str(challenge).unwrap_or_else(|_| {
             tracing::warn!(challenge, "a `WWW-Authenticate` challenge is not a valid header value; `Bearer` is sent instead");
             HeaderValue::from_static("Bearer")
@@ -252,7 +260,6 @@ fn document(error: &CallError, status: StatusCode, config: &HttpConfig) -> Respo
             headers.insert(RETRY_AFTER, retry_after(after));
         }
     }
-    response
 }
 
 /// `Retry-After` as delay-seconds (RFC 9110 §10.2.3), a fraction of a second rounded up so a client

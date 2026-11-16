@@ -13,7 +13,8 @@ use event_listener::Event;
 use futures_util::future::{Either, select};
 use futures_util::{Stream, stream};
 use ulo::{BoxError, ExecutionRef, Guard, Interceptor, Module, ModuleDef, ModuleIdentity, Next, StreamOutcome, Timer};
-use ulo_transport::{CallError, Classify, ErrorKind};
+use ulo_http::{StatusCode, WithHttpStatus};
+use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind};
 use ulo_ws::{CloseCode, ConnectCx, ConnectRefused, DisconnectReason, Frame, Port, Reply, WithCloseCode, Ws, WsConnect, WsCx, WsModule};
 
 use crate::PATIENCE;
@@ -29,13 +30,24 @@ pub(crate) const WHO: &str = "who are you?";
 
 /// The upgrade header naming how `/refused` refuses the connection: [`BY_GUARD`], [`BUSY`],
 /// [`FAULT`], [`PANIC`] or [`OWN_CODE`] in its connection phase, or a connect guard failing with
-/// [`AS_UNAUTHORIZED`], [`AS_TIMEOUT`], [`AS_NOT_FOUND`] or [`AS_OWN_CODE`]. Absent, it admits.
+/// one of the `AS_` values. Absent, it admits. `/strict` reads the `AS_` values too, before the
+/// upgrade.
 pub(crate) const REFUSE: &str = "x-refuse";
 pub(crate) const BY_GUARD: &str = "guard";
 pub(crate) const AS_UNAUTHORIZED: &str = "unauthorized";
 pub(crate) const AS_TIMEOUT: &str = "timeout";
 pub(crate) const AS_NOT_FOUND: &str = "not-found";
 pub(crate) const AS_OWN_CODE: &str = "error-code";
+/// `TooManyRequests` with a [`RETRY_AFTER`] detail.
+pub(crate) const AS_RATE_LIMITED: &str = "rate-limited";
+/// `Unavailable` with a [`RETRY_AFTER`] detail.
+pub(crate) const AS_UNAVAILABLE: &str = "unavailable";
+pub(crate) const AS_UNIMPLEMENTED: &str = "unimplemented";
+/// `Conflict` sent over HTTP as 412 through `WithHttpStatus`.
+pub(crate) const AS_PRECONDITION: &str = "precondition";
+
+/// The `RetryAfter` detail [`AS_RATE_LIMITED`] and [`AS_UNAVAILABLE`] carry.
+pub(crate) const RETRY_AFTER: Duration = Duration::from_secs(30);
 
 /// The message every error [`RefusedByError`] fails with, which the connection's close reason
 /// carries.
@@ -252,7 +264,8 @@ impl Guard<WsConnect> for NotRefusedByGuard {
 }
 
 /// Fails an upgrade whose [`REFUSE`] header names one of the `AS_` values, with a `CallError` of
-/// that kind, or of kind `Forbidden` closing with [`ERROR_CODE`].
+/// that kind, or of kind `Forbidden` closing with [`ERROR_CODE`], or of kind `Conflict` sent over
+/// HTTP as 412.
 pub(crate) struct RefusedByError;
 
 impl Guard<WsConnect> for RefusedByError {
@@ -262,6 +275,14 @@ impl Guard<WsConnect> for RefusedByError {
             AS_UNAUTHORIZED => CallError::new(ErrorKind::Unauthorized, BY_ERROR),
             AS_TIMEOUT => CallError::new(ErrorKind::Timeout, BY_ERROR),
             AS_NOT_FOUND => CallError::new(ErrorKind::NotFound, BY_ERROR),
+            AS_RATE_LIMITED => {
+                CallError::new(ErrorKind::TooManyRequests, BY_ERROR).with_details(Details::new().with(Detail::RetryAfter(RETRY_AFTER)))
+            }
+            AS_UNAVAILABLE => {
+                CallError::new(ErrorKind::Unavailable, BY_ERROR).with_details(Details::new().with(Detail::RetryAfter(RETRY_AFTER)))
+            }
+            AS_UNIMPLEMENTED => CallError::new(ErrorKind::Unimplemented, BY_ERROR),
+            AS_PRECONDITION => CallError::new(ErrorKind::Conflict, BY_ERROR).with_http_status(StatusCode::PRECONDITION_FAILED),
             AS_OWN_CODE => {
                 let code = CloseCode::new(ERROR_CODE).unwrap_or_else(|error| panic!("{ERROR_CODE} is an application's code: {error}"));
                 CallError::new(ErrorKind::Forbidden, BY_ERROR).with_close_code(code)
@@ -355,7 +376,8 @@ macro_rules! gateways {
             }
         }
 
-        /// Refuses before the upgrade: no token is 403, a token without a user is 401.
+        /// Refuses before the upgrade: no token is 403, a token without a user is 401, and a
+        /// token with an `x-refuse` header the error it names, at that error's HTTP status.
         #[controller]
         pub(crate) struct Strict;
 
@@ -364,7 +386,7 @@ macro_rules! gateways {
             path = "/strict",
             port = $port,
             refuse = handshake,
-            connect_guards(value = HeaderIs { name: TOKEN.0, value: TOKEN.1 })
+            connect_guards(value = HeaderIs { name: TOKEN.0, value: TOKEN.1 }, value = RefusedByError)
         )]
         impl Strict {
             #[ulo_ws::message("echo")]

@@ -286,7 +286,8 @@ impl GatewayTable {
     /// version other than 13), 503 once the drain has begun (on the HTTP server's port that
     /// server's own drain answers first), and the first of the gateway's subprotocols the client
     /// offered. Under `refuse = handshake` the connection phase runs
-    /// here, its connect guards and `OnConnect`, and a refusal is its 401 or 403.
+    /// here, its connect guards and `OnConnect`, and a refusal answers the status and headers HTTP
+    /// answers its error with, as [`ConnectRefused`](crate::ConnectRefused) states.
     ///
     /// `peer` is the client's address, which `ConnectionInfo::peer` reports.
     pub async fn handshake(&self, head: Parts, peer: Option<SocketAddr>) -> Handshake {

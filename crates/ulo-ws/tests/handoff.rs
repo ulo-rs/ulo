@@ -275,7 +275,7 @@ async fn ws_module_limits_govern_the_gateways_on_the_http_port() {
     let first = app.connect("/lobby", &[]).await;
     let second = app.connect("/lobby", &[]).await;
     let mut third = app.connect("/lobby", &[]).await;
-    assert_eq!(close_frame(&mut third).await, Some((1013, "too many connections".to_owned())));
+    assert_eq!(close_frame(&mut third).await, Some((1013, "unavailable: too many connections".to_owned())));
     hang_up(third).await;
     // The limit is per gateway: the annex still admits.
     let mut annex = app.connect("/annex", &[]).await;

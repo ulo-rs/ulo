@@ -46,6 +46,15 @@
 //! until `shutdown_timeout`, which `run` sets to the drain window, and is then reset; while one is
 //! open, the app's `close` takes the whole window.
 //!
+//! A call whose connection the peer closes, or whose HTTP/2 stream it resets, before the response's
+//! head runs on to its answer: actix-http keeps running it, reading an HTTP/1 end of stream as a
+//! half-close, which `h1_allow_half_closed` admits by default, and running each HTTP/2 request in a
+//! task of its own. `HttpRequest` carries no signal of the close; a request body still arriving
+//! ends with an error, and a body already read leaves none. The execution is not cancelled
+//! `Disconnected` while the call runs, and observes the disconnect at the response body's next
+//! failed write. No watcher stands in for the signal, since a watcher needs one to watch for. The
+//! adapter declares `without_pending_close` and `without_pending_reset` with that reason.
+//!
 //! The `conformance-http2` feature is for the conformance suite; it enables actix-web's `http2`
 //! and changes nothing in the adapter. An application serving HTTP/2 enables actix-web's `http2`
 //! itself.
@@ -80,8 +89,12 @@ impl Embed for Actix {
             )
             .without_tls_info("the adapter reads no TLS state off actix's request, so `ConnInfo::tls` is `None`")
             .without_strips_prefix("`web::scope` leaves `req.path()` whole, with the rest in `match_info`")
-            .without_pending_close("actix-http keeps running a call whose connection the peer closed until the call answers")
-            .without_pending_reset("actix-http keeps running a call whose HTTP/2 stream the peer reset until the call answers")
+            .without_pending_close(
+                "actix-http keeps running a call whose connection the peer closed until the call answers, and gives a handler no signal of the close",
+            )
+            .without_pending_reset(
+                "actix-http keeps running a call whose HTTP/2 stream the peer reset until the call answers, and gives a handler no signal of the reset",
+            )
             .disconnect(Disconnect::AtNextWrite)
             .drain_pending(DrainPending::Closed)
             .drain_http2(DrainHttp2::Reset)

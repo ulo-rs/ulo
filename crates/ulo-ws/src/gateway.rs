@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
 
-use http::StatusCode;
+use http::{HeaderMap, StatusCode};
 use ulo::{
     BoxError, BoxFuture, Bound, Construct, EnhancerSpec, ExecOptions, Execution, ExecutionRef, ModuleRef, Mount,
     MountedHandler, TypeName, Unreached,
@@ -24,7 +24,7 @@ use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{CallError, Count, ErrorKind};
 
 use crate::handler::{GatewayHooks, HandlerFn, WsHandler};
-use crate::close::{CloseCode, CloseCodeError, check_reason, truncated};
+use crate::close::{CloseCode, CloseCodeError, REASON_LIMIT, check_reason, truncated, truncated_to};
 use crate::codec::Codec;
 use crate::connection::Connection;
 use crate::envelope::Frame;
@@ -229,8 +229,9 @@ impl GatewaySettings {
 }
 
 /// Where a connect refusal happens: after the 101 with a close code, the one refusal a browser
-/// can read (the default), or before it with 401 or 403, `refuse = handshake`, for non-browser
-/// clients and proxy logs.
+/// can read (the default), or before it with an HTTP status, `refuse = handshake`, for non-browser
+/// clients and proxy logs: the status HTTP answers the refusal's error with, as
+/// [`ConnectRefused`] states.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Refuse {
     #[default]
@@ -324,12 +325,38 @@ pub enum DisconnectReason {
 /// A connection refused in the connect phase, with the close code it ends with: by kind, as
 /// [`CloseCode::of_kind`] maps it, or one set with [`code`](Self::code), as graphql-transport-ws
 /// sets 4401.
+///
+/// Under `refuse = handshake` the refusal is answered before the upgrade with the status and
+/// headers HTTP answers its error with, the status [`WithHttpStatus`](ulo_http::WithHttpStatus)
+/// set or the kind's: `Unauthorized` 401 with `WWW-Authenticate`, the error's own challenge or
+/// `Bearer`; `Forbidden` 403; `TooManyRequests` 429 and `Unavailable` 503, each with
+/// `Retry-After` from a `RetryAfter` detail; `Timeout` 504; and so on through HTTP's table. The
+/// body is the reason as plain text. A refusal written as a close code alone,
+/// [`code`](Self::code), has no kind and is answered 403.
+///
+/// ```
+/// use std::time::Duration;
+/// use ulo_ws::{CallError, ConnectRefused, Detail, Details, ErrorKind};
+///
+/// let busy = CallError::new(ErrorKind::TooManyRequests, "slow down")
+///     .with_details(Details::new().with(Detail::RetryAfter(Duration::from_secs(30))));
+/// let refused = ConnectRefused::from(busy);
+/// assert_eq!(refused.close_code().get(), 1013);
+/// assert_eq!(refused.reason(), "too_many_requests: slow down");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectRefused {
     pub(crate) close_code: CloseCode,
     pub(crate) reason: String,
     pub(crate) kind: Option<ErrorKind>,
+    /// The answer under `refuse = handshake`.
+    pub(crate) status: StatusCode,
+    pub(crate) headers: HeaderMap,
 }
+
+/// The `WWW-Authenticate` challenge a handshake's 401 carries when its error names none, the HTTP
+/// server's own default.
+const DEFAULT_CHALLENGE: &str = "Bearer";
 
 impl ConnectRefused {
     /// A refusal with the close code `code` and `reason`. Refused: a reason over 123 bytes of
@@ -337,24 +364,19 @@ impl ConnectRefused {
     pub fn code(code: CloseCode, reason: impl Into<String>) -> Result<Self, CloseCodeError> {
         let reason = reason.into();
         check_reason(&reason)?;
-        Ok(ConnectRefused { close_code: code, reason, kind: None })
+        Ok(ConnectRefused { close_code: code, reason, kind: None, status: StatusCode::FORBIDDEN, headers: HeaderMap::new() })
     }
 
-    /// A refusal of kind `kind`, closing with the code [`CloseCode::of_kind`] gives; under
-    /// `refuse = handshake`, answered 401 for `Unauthorized` and 403 otherwise. A reason over 123
-    /// bytes is cut at the last character boundary within them.
+    /// A refusal of kind `kind`, closing with the code [`CloseCode::of_kind`] gives;
+    /// `ConnectRefused::from(CallError::new(kind, reason))`.
     ///
-    /// `BadRequest`, `NotFound`, `Conflict` and `Unprocessable` share 1008, so their reason
-    /// starts with the kind as the envelope spells it, then `: ` and `reason`:
-    /// `not_found: no such room`. A client reads the kind back from the reason.
+    /// A code that more than one kind closes with, 1008, 1011 and 1013, carries the kind in its
+    /// reason, spelled as the envelope spells it, then `: ` and `reason`: `not_found: no such
+    /// room`, `too_many_requests: slow down`. A client reads the kind back from the reason. A code
+    /// one kind owns, 3000, 3003 and 3008, carries `reason` alone. A reason over 123 bytes is cut
+    /// at the last character boundary within them, from `reason`'s end: the kind is never cut.
     pub fn kind(kind: ErrorKind, reason: impl Into<String>) -> Self {
-        let close_code = CloseCode::of_kind(kind);
-        let reason = if close_code == CloseCode::POLICY_VIOLATION {
-            format!("{kind}: {}", reason.into())
-        } else {
-            reason.into()
-        };
-        ConnectRefused { close_code, reason: truncated(reason), kind: Some(kind) }
+        ConnectRefused::from(CallError::new(kind, reason))
     }
 
     pub fn close_code(&self) -> CloseCode {
@@ -365,26 +387,49 @@ impl ConnectRefused {
         &self.reason
     }
 
-    /// The handshake's answer under `refuse = handshake`.
-    pub(crate) fn status(&self) -> StatusCode {
-        match self.kind {
-            Some(ErrorKind::Unauthorized) => StatusCode::UNAUTHORIZED,
-            _ => StatusCode::FORBIDDEN,
+    /// The drain's refusal of a connection whose phase began as the drain did: 1001 and the
+    /// shutdown phrase, and 503 under `refuse = handshake`, as a handshake the drain refuses.
+    pub(crate) fn shutting_down() -> Self {
+        ConnectRefused {
+            close_code: CloseCode::GOING_AWAY,
+            reason: ulo_transport::SHUTDOWN_MESSAGE.to_owned(),
+            kind: None,
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            headers: HeaderMap::new(),
         }
     }
 
-    /// An error the connect phase's error handlers left unclaimed, refused by its kind, or with
-    /// the close code [`WithCloseCode`](crate::WithCloseCode) set on it and its message as the
-    /// reason. A stored code no [`CloseCode`] accepts, which only the doc-hidden store can write,
-    /// is read as unset.
+    /// An error the connect phase's error handlers left unclaimed, refused as `From<CallError>`
+    /// refuses it.
     pub(crate) fn of_error(err: BoxError) -> Self {
-        let error = CallError::from_boxed(err);
-        match error.__close_code().map(CloseCode::new) {
-            Some(Ok(close_code)) => {
-                ConnectRefused { close_code, reason: truncated(error.message().to_owned()), kind: Some(error.kind()) }
+        ConnectRefused::from(CallError::from_boxed(err))
+    }
+}
+
+/// A refusal by the error's kind, as [`ConnectRefused::kind`] refuses with its message, or with the
+/// close code [`WithCloseCode`](crate::WithCloseCode) set on it and its message alone as the
+/// reason. A stored code no [`CloseCode`] accepts, which only the doc-hidden store can write, is
+/// read as unset. Under `refuse = handshake` the error's status and headers are HTTP's for it,
+/// [`WithHttpStatus`](ulo_http::WithHttpStatus) and a `RetryAfter` detail read as HTTP reads them.
+impl From<CallError> for ConnectRefused {
+    fn from(error: CallError) -> Self {
+        let (status, headers) = ulo_http::__private::error_head(&error, DEFAULT_CHALLENGE);
+        let kind = error.kind();
+        let (close_code, reason) = match error.__close_code().map(CloseCode::new) {
+            Some(Ok(close_code)) => (close_code, truncated(error.message().to_owned())),
+            _ => {
+                let close_code = CloseCode::of_kind(kind);
+                let reason = if close_code.is_shared() {
+                    let prefix = format!("{kind}: ");
+                    let message = truncated_to(error.message().to_owned(), REASON_LIMIT - prefix.len());
+                    prefix + &message
+                } else {
+                    truncated(error.message().to_owned())
+                };
+                (close_code, reason)
             }
-            _ => ConnectRefused::kind(error.kind(), error.message()),
-        }
+        };
+        ConnectRefused { close_code, reason, kind: Some(kind), status, headers }
     }
 }
 
@@ -836,5 +881,87 @@ pub(crate) fn normalized(path: &str) -> &str {
     match path.strip_suffix('/') {
         Some(stripped) if !stripped.is_empty() => stripped,
         _ => path,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use http::header::{RETRY_AFTER, WWW_AUTHENTICATE};
+    use ulo_http::WithHttpStatus;
+    use ulo_transport::{Detail, Details};
+
+    use super::*;
+
+    fn retry(kind: ErrorKind) -> CallError {
+        CallError::new(kind, "later").with_details(Details::new().with(Detail::RetryAfter(Duration::from_millis(1500))))
+    }
+
+    fn header<'a>(refused: &'a ConnectRefused, name: http::HeaderName) -> Option<&'a str> {
+        refused.headers.get(name).map(|value| value.to_str().expect("an ASCII header"))
+    }
+
+    /// Under `refuse = handshake` a refusal by kind answers HTTP's status for the kind.
+    #[test]
+    fn a_handshake_refusal_answers_the_kind_s_http_status() {
+        let cases = [
+            (ErrorKind::BadRequest, 400),
+            (ErrorKind::Unauthorized, 401),
+            (ErrorKind::Forbidden, 403),
+            (ErrorKind::NotFound, 404),
+            (ErrorKind::Conflict, 409),
+            (ErrorKind::Unprocessable, 422),
+            (ErrorKind::TooManyRequests, 429),
+            (ErrorKind::Timeout, 504),
+            (ErrorKind::Unavailable, 503),
+            (ErrorKind::Unimplemented, 501),
+            (ErrorKind::Internal, 500),
+        ];
+        for (kind, status) in cases {
+            assert_eq!(ConnectRefused::kind(kind, "why").status.as_u16(), status, "{kind:?}");
+        }
+    }
+
+    /// A 429 and a 503 carry `Retry-After` from a `RetryAfter` detail, rounded up to whole
+    /// seconds, and carry none without one.
+    #[test]
+    fn a_handshake_refusal_carries_retry_after_from_the_detail() {
+        for kind in [ErrorKind::TooManyRequests, ErrorKind::Unavailable] {
+            assert_eq!(header(&ConnectRefused::from(retry(kind)), RETRY_AFTER), Some("2"), "{kind:?}");
+            assert_eq!(header(&ConnectRefused::kind(kind, "later"), RETRY_AFTER), None, "{kind:?} without a detail");
+        }
+    }
+
+    /// The status `WithHttpStatus` names wins over the kind's, and the headers follow it: a
+    /// `Conflict` sent as 429 carries `Retry-After`, a `TooManyRequests` sent as 409 does not.
+    #[test]
+    fn a_handshake_refusal_honours_with_http_status() {
+        let precondition =
+            ConnectRefused::from(CallError::new(ErrorKind::Conflict, "gone").with_http_status(StatusCode::PRECONDITION_FAILED));
+        assert_eq!(precondition.status, StatusCode::PRECONDITION_FAILED);
+        assert_eq!(precondition.close_code, CloseCode::POLICY_VIOLATION, "the close code stays the kind's");
+        let as_429 = ConnectRefused::from(retry(ErrorKind::Conflict).with_http_status(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(header(&as_429, RETRY_AFTER), Some("2"));
+        let as_409 = ConnectRefused::from(retry(ErrorKind::TooManyRequests).with_http_status(StatusCode::CONFLICT));
+        assert_eq!((as_409.status, header(&as_409, RETRY_AFTER)), (StatusCode::CONFLICT, None));
+        let ignored = ConnectRefused::from(CallError::new(ErrorKind::Forbidden, "no").with_http_status(StatusCode::OK));
+        assert_eq!(ignored.status, StatusCode::FORBIDDEN, "a 200 is not an error's status");
+    }
+
+    /// A 401 carries `Bearer` unless its error names its own challenge.
+    #[test]
+    fn a_handshake_401_carries_the_error_s_challenge() {
+        assert_eq!(header(&ConnectRefused::kind(ErrorKind::Unauthorized, "who"), WWW_AUTHENTICATE), Some("Bearer"));
+        let basic = ConnectRefused::from(CallError::unauthorized("Basic realm=\"ws\""));
+        assert_eq!(header(&basic, WWW_AUTHENTICATE), Some("Basic realm=\"ws\""));
+    }
+
+    /// A refusal written as a close code alone has no kind and answers 403.
+    #[test]
+    fn a_handshake_refusal_by_code_alone_is_403() {
+        let code = CloseCode::new(4406).expect("an application's code");
+        let refused = ConnectRefused::code(code, "no subprotocol").expect("the reason fits");
+        assert_eq!((refused.status, refused.headers.len()), (StatusCode::FORBIDDEN, 0));
     }
 }

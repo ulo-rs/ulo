@@ -38,16 +38,17 @@ impl CloseCode {
     /// gateway.
     pub const UNSUPPORTED_DATA: CloseCode = CloseCode(1003);
     /// 1008: a message violated the endpoint's policy, and no more specific code fits. The
-    /// connect refusal of `BadRequest`, `NotFound`, `Conflict` and `Unprocessable`, and a slow
-    /// consumer.
+    /// connect refusal of `BadRequest`, `NotFound`, `Conflict` and `Unprocessable`, its reason
+    /// starting with the kind, and a slow consumer.
     pub const POLICY_VIOLATION: CloseCode = CloseCode(1008);
     /// 1009: a message too large to process.
     pub const MESSAGE_TOO_BIG: CloseCode = CloseCode(1009);
     /// 1011: the server met a condition that kept it from fulfilling the request. The connect
-    /// refusal of `Internal` and `Unimplemented`.
+    /// refusal of `Internal` and `Unimplemented`, its reason starting with the kind.
     pub const INTERNAL_ERROR: CloseCode = CloseCode(1011);
-    /// 1013: try again later. The connect refusal of `TooManyRequests` and `Unavailable`, and of a
-    /// connection over `max_connections`.
+    /// 1013: try again later. The connect refusal of `TooManyRequests` and `Unavailable`, its
+    /// reason starting with the kind, a connection over `max_connections` among them as
+    /// `unavailable: too many connections`.
     pub const TRY_AGAIN_LATER: CloseCode = CloseCode(1013);
     /// 3000, the registry's `Unauthorized`: the connect refusal of `Unauthorized`.
     pub const UNAUTHORIZED: CloseCode = CloseCode(3000);
@@ -88,7 +89,29 @@ impl CloseCode {
             _ => CloseCode::INTERNAL_ERROR,
         }
     }
+
+    /// More than one kind closes with this code under [`of_kind`](Self::of_kind), so a refusal by
+    /// kind with it carries the kind in its reason.
+    pub(crate) fn is_shared(self) -> bool {
+        KINDS.iter().filter(|kind| CloseCode::of_kind(**kind) == self).count() > 1
+    }
 }
+
+/// Every kind [`CloseCode::of_kind`] names. A kind added later closes with 1011, which
+/// `Internal` and `Unimplemented` already share.
+const KINDS: [ErrorKind; 11] = [
+    ErrorKind::BadRequest,
+    ErrorKind::Unauthorized,
+    ErrorKind::Forbidden,
+    ErrorKind::NotFound,
+    ErrorKind::Conflict,
+    ErrorKind::Unprocessable,
+    ErrorKind::TooManyRequests,
+    ErrorKind::Timeout,
+    ErrorKind::Unavailable,
+    ErrorKind::Unimplemented,
+    ErrorKind::Internal,
+];
 
 impl fmt::Display for CloseCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -164,9 +187,14 @@ pub(crate) fn check_reason(reason: &str) -> Result<(), CloseCodeError> {
 }
 
 /// `reason` cut to at most 123 bytes at a character boundary.
-pub(crate) fn truncated(mut reason: String) -> String {
-    if reason.len() > REASON_LIMIT {
-        let mut end = REASON_LIMIT;
+pub(crate) fn truncated(reason: String) -> String {
+    truncated_to(reason, REASON_LIMIT)
+}
+
+/// `reason` cut to at most `limit` bytes at a character boundary.
+pub(crate) fn truncated_to(mut reason: String, limit: usize) -> String {
+    if reason.len() > limit {
+        let mut end = limit;
         while !reason.is_char_boundary(end) {
             end -= 1;
         }
@@ -206,5 +234,46 @@ mod tests {
         assert_eq!(refused.close_code(), CloseCode::POLICY_VIOLATION);
         assert!(refused.reason().starts_with("not_found: "), "{}", refused.reason());
         assert_eq!(refused.reason().len(), "not_found: ".len() + 3 * 37, "{}", refused.reason());
+    }
+
+    /// The prefix is kept whole and the message cut: `too_many_requests: ` is 19 bytes, leaving
+    /// 104 for the message, 34 three-byte characters.
+    #[test]
+    fn a_long_reason_keeps_the_kind_whole() {
+        let refused = crate::ConnectRefused::kind(ErrorKind::TooManyRequests, "\u{20ac}".repeat(60));
+        assert_eq!(refused.reason(), format!("too_many_requests: {}", "\u{20ac}".repeat(34)));
+        let ascii = crate::ConnectRefused::kind(ErrorKind::Internal, "x".repeat(200));
+        assert_eq!(ascii.reason(), format!("internal: {}", "x".repeat(REASON_LIMIT - "internal: ".len())));
+    }
+
+    /// Every code more than one kind closes with carries the kind; a code one kind owns carries
+    /// the message alone.
+    #[test]
+    fn a_shared_code_carries_the_kind_and_an_owned_one_does_not() {
+        let cases = [
+            (ErrorKind::BadRequest, 1008, "bad_request: why"),
+            (ErrorKind::NotFound, 1008, "not_found: why"),
+            (ErrorKind::Conflict, 1008, "conflict: why"),
+            (ErrorKind::Unprocessable, 1008, "unprocessable: why"),
+            (ErrorKind::TooManyRequests, 1013, "too_many_requests: why"),
+            (ErrorKind::Unavailable, 1013, "unavailable: why"),
+            (ErrorKind::Internal, 1011, "internal: why"),
+            (ErrorKind::Unimplemented, 1011, "unimplemented: why"),
+            (ErrorKind::Unauthorized, 3000, "why"),
+            (ErrorKind::Forbidden, 3003, "why"),
+            (ErrorKind::Timeout, 3008, "why"),
+        ];
+        for (kind, code, reason) in cases {
+            let refused = crate::ConnectRefused::kind(kind, "why");
+            assert_eq!((refused.close_code().get(), refused.reason()), (code, reason), "{kind:?}");
+        }
+    }
+
+    /// A code an error names through `WithCloseCode` carries the message alone, whatever the kind.
+    #[test]
+    fn an_error_s_own_code_carries_the_message_alone() {
+        let code = CloseCode::new(4013).expect("an application's code");
+        let refused = crate::ConnectRefused::from(CallError::new(ErrorKind::Unavailable, "why").with_close_code(code));
+        assert_eq!((refused.close_code(), refused.reason()), (code, "why"));
     }
 }
