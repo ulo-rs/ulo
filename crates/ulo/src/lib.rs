@@ -39,6 +39,7 @@ mod transport;
 mod type_name;
 
 pub mod app;
+pub mod panic;
 pub mod scope;
 pub mod secrets;
 pub mod testing;

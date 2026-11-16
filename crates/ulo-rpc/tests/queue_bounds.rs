@@ -1,7 +1,8 @@
 //! The per-call queues (transports DESIGN §5.2, flow control): the client's queue of one call's
 //! reply items and the server's of one streamed request's items, each held to `max_queued_items`
 //! and `max_queued_bytes` with no window on the wire. An item past either bound ends that call
-//! `Unavailable` with the reason `overflow`, and whoever was producing is told to stop: the client
+//! `Unavailable` with the reason `overflow`, an item over the byte bound on its own `BadRequest`
+//! with the reason `payload_too_large`, and whoever was producing is told to stop: the client
 //! sends `cancel` to a streaming server, the server's `err` ends a client's pump.
 //!
 //! The end-to-end tests run over the TCP link. The one that counts a server's queue exactly runs
@@ -370,11 +371,16 @@ async fn a_client_s_default_limit_is_1024_reply_items() {
 /// What a reply stream of `width`-character strings yields: the items read before its end, and
 /// the error it ends with, which is an overflow.
 fn overflowed_reply(items: Vec<Result<String, RpcError>>, width: usize) -> (usize, RpcError) {
+    ended_reply(items, width, (ErrorKind::Unavailable, "overflow"))
+}
+
+/// [`overflowed_reply`] for a stream that ends with an error of `expected` kind and reason.
+fn ended_reply(items: Vec<Result<String, RpcError>>, width: usize, expected: (ErrorKind, &str)) -> (usize, RpcError) {
     let read = items.iter().take_while(|item| item.is_ok()).count();
     assert!(items.iter().take(read).all(|item| item.as_ref().is_ok_and(|text| text.len() == width)), "an item arrived altered");
-    assert_eq!(items.len(), read + 1, "the stream did not end at its overflow: {} items", items.len());
-    let error = items.into_iter().last().and_then(Result::err).expect("the stream ends with the overflow");
-    assert_eq!((error.kind(), error.reason()), (ErrorKind::Unavailable, Some("overflow")), "{error}");
+    assert_eq!(items.len(), read + 1, "the stream did not end at its refused item: {} items", items.len());
+    let error = items.into_iter().last().and_then(Result::err).expect("the stream ends with the refusal");
+    assert_eq!((error.kind(), error.reason()), (expected.0, Some(expected.1)), "{error}");
     (read, error)
 }
 
@@ -409,14 +415,19 @@ async fn a_client_s_default_byte_bound_is_4_mib() {
     running.stop().await;
 }
 
-/// F584: a reply item over the client's byte bound on its own ends the call at its arrival, the
-/// message naming the item's size, rather than waiting for room no read can make.
+/// F584, Q29-15: a reply item over the client's byte bound on its own ends the call at its
+/// arrival, `BadRequest` with the reason `payload_too_large` and the message naming the item's
+/// size, rather than waiting for room no read can make; its producer is cancelled as at an
+/// overflow.
 #[tokio::test]
 async fn a_reply_item_over_the_client_s_byte_bound_on_its_own_ends_the_call_at_once() {
     let running = start(Count::Default).await;
     let client = running.client.clone().max_queued_bytes(100).expect("a bound of 100 bytes");
     let items = client.stream::<_, String>(WIDE, &300usize).await.expect("the stream opens");
-    let (read, error) = overflowed_reply(drained(items).await, 300);
+    let seen = running.seen.clone();
+    eventually("the producer's cancellation", || seen.dropped().is_some()).await;
+    assert_eq!(seen.dropped().flatten(), Some(CancelReason::ClientCancelled), "how the producer ended");
+    let (read, error) = ended_reply(drained(items).await, 300, (ErrorKind::BadRequest, "payload_too_large"));
     assert_eq!(read, 0, "an item over the bound on its own was held");
     assert!(error.message().contains("the stream's next reply item, of 302 bytes, is over the client's `max_queued_bytes` of 100 on its own"), "{error}");
     running.stop().await;
@@ -867,12 +878,17 @@ async fn a_relayed_reply_ends_overflow_and_not_cleanly() {
 /// The one answer call 1 received, an `err` of kind `unavailable` with the reason `overflow`, and
 /// its message.
 fn overflow_message(answers: &[Frame]) -> String {
+    answer_message(answers, (ErrorKind::Unavailable, "overflow"))
+}
+
+/// The one answer call 1 received, an `err` of `expected` kind and reason, and its message.
+fn answer_message(answers: &[Frame], expected: (ErrorKind, &str)) -> String {
     let [Frame::Err { error, .. }] = answers else { panic!("the call's one answer is an `err`: {answers:?}") };
     let reason = error.details.iter().find_map(|detail| match detail {
         ulo_transport::Detail::ErrorInfo { reason, .. } => Some(reason.as_str()),
         _ => None,
     });
-    assert_eq!((error.kind, reason), (ErrorKind::Unavailable, Some("overflow")), "{error:?}");
+    assert_eq!((error.kind, reason), (expected.0, Some(expected.1)), "{error:?}");
     error.message.clone()
 }
 
@@ -908,17 +924,73 @@ async fn a_server_s_queue_holds_exactly_its_byte_bound() {
     feeding.stop().await;
 }
 
-/// F584: a request item over the server's byte bound on its own ends the call at once, on an empty
-/// queue, the answer naming the item's size.
+/// F584, Q29-15: a request item over the server's byte bound on its own ends the call at once, on
+/// an empty queue, answered `bad_request` with the reason `payload_too_large` and the item's size,
+/// its handler cancelled `Explicit` as at an overflow.
 #[tokio::test]
 async fn a_request_item_over_the_server_s_byte_bound_on_its_own_ends_the_call_at_once() {
     let feeding = Feeding::start_with(|server| server.max_queued_bytes(100)).await;
     feeding.open(IGNORE);
+    let seen = feeding.seen.clone();
+    eventually("the handler's start", || seen.ignoring() == 1).await;
     feeding.wide_items(0..1, 101);
-    eventually("the overflow's answer", || !feeding.answers().is_empty()).await;
-    let message = overflow_message(&feeding.answers());
+    eventually("the refusal's answer", || !feeding.answers().is_empty()).await;
+    eventually("the handler's end", || seen.dropped().is_some()).await;
+    assert_eq!(seen.dropped(), Some(Some(CancelReason::Explicit)), "how the handler's execution ended");
+    let message = answer_message(&feeding.answers(), (ErrorKind::BadRequest, "payload_too_large"));
     assert!(message.contains("the streamed request's next item, of 101 bytes, is over the server's `max_queued_bytes` of 100 on its own"), "{message}");
     feeding.stop().await;
+}
+
+/// Q29-15: an item that passes the byte bound only with the bytes already waiting is an overflow,
+/// `unavailable`, even at the bound's whole size, since the handler's reads make room for it.
+#[tokio::test]
+async fn an_item_of_the_whole_byte_bound_behind_waiting_bytes_is_an_overflow() {
+    let feeding = Feeding::start_with(|server| server.max_queued_bytes(100)).await;
+    feeding.open(IGNORE);
+    let seen = feeding.seen.clone();
+    eventually("the handler's start", || seen.ignoring() == 1).await;
+    feeding.wide_items(0..1, 10);
+    feeding.wide_items(1..2, 100);
+    eventually("the overflow's answer", || !feeding.answers().is_empty()).await;
+    let message = overflow_message(&feeding.answers());
+    assert!(message.contains("the next one, of 100 bytes, would have passed 100 bytes, the server's `max_queued_bytes`"), "{message}");
+    feeding.stop().await;
+}
+
+/// Q29-15: a reader on another task reads an item over the byte bound on its own as `TooLarge`
+/// naming the bound, a `BadRequest` failure, and the call is answered `payload_too_large`.
+#[tokio::test]
+async fn a_request_cut_short_by_an_item_over_its_byte_bound_ends_failing_with_too_large() {
+    let feeding = Feeding::start_with(|server| server.max_queued_bytes(100)).await;
+    feeding.open(STRICT);
+    feeding.items(0..1);
+    let seen = feeding.seen.clone();
+    eventually("the reader's first item", || seen.0.read.load(Ordering::SeqCst) == 1).await;
+    feeding.wide_items(1..2, 101);
+    eventually("the call's answer", || !feeding.answers().is_empty()).await;
+    answer_message(&feeding.answers(), (ErrorKind::BadRequest, "payload_too_large"));
+    let failures = lock(&seen.0.failures).clone();
+    assert_eq!(
+        failures,
+        vec![(ErrorKind::BadRequest, "TooLarge { param: \"payload\", limit: 100 }".to_owned())],
+        "the reader read the refused item once, as a `BadRequest` failure"
+    );
+    feeding.stop().await;
+}
+
+/// Q29-15: over the TCP link, a caller whose streamed request carries an item over the server's
+/// byte bound on its own is answered the server's `BadRequest` with the reason
+/// `payload_too_large`, the message naming the server's bound.
+#[tokio::test]
+async fn a_caller_is_told_the_server_refused_an_item_over_its_byte_bound() {
+    let running = started(ulo_rpc::Server::new(Tcp::new("127.0.0.1:0")).max_queued_bytes(100)).await;
+    let source = stream::iter(["x".repeat(200)]);
+    let answer = tokio::time::timeout(PATIENCE, running.client.send_stream::<_, u64>(IGNORE, source)).await.expect("answered in time");
+    let error = answer.expect_err("the item over the bound ends the call");
+    assert_eq!((error.kind(), error.reason()), (ErrorKind::BadRequest, Some("payload_too_large")), "{error}");
+    assert!(error.message().contains("of 202 bytes, is over the server's `max_queued_bytes` of 100 on its own"), "{error}");
+    running.stop().await;
 }
 
 /// F584: a reader on another task reads a byte overflow once, as `OverflowedBytes` naming the

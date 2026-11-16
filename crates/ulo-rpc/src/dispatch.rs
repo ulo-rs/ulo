@@ -622,8 +622,9 @@ async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &R
 
 /// What a cancelled call writes: nothing to a caller that left or cancelled, `timeout` at the
 /// deadline, `unavailable` at the drain's end (the shutdown phrase every refusal carries) or an
-/// explicit cancel, and `unavailable` with the reason `overflow` for a call cancelled because its
-/// streamed request's queue overflowed.
+/// explicit cancel, and, for a call cancelled because its streamed request's queue refused an
+/// item, `unavailable` with the reason `overflow` or, for an item over the byte bound on its own,
+/// `bad_request` with `payload_too_large`.
 async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Option<CancelReason>, halted: Option<&Halted>) {
     // A queue is halted only at an overflow, which records the bound it passed.
     let overflow = halted.filter(|halted| halted.get()).and_then(Halted::overflow);
@@ -652,20 +653,33 @@ fn cut_short(exec: &ExecutionRef) -> Option<CancelReason> {
 }
 
 /// The answer to a call whose streamed request's next item passed `passed`, one of the bounds on
-/// the items waiting for its handler.
+/// the items waiting for its handler: `unavailable` with `overflow` for a bound the handler's
+/// reads make room under, `bad_request` with `payload_too_large` for an item no read makes room
+/// for, which a retry would send again.
 fn overflow_answer(passed: Overflow) -> ErrorBody {
-    let message = match passed {
-        Overflow::Items { limit } => format!(
-            "the streamed request had {limit} items waiting for its handler, the server's `max_queued_items`, and the next one ended the call"
+    match passed {
+        Overflow::Items { limit } => ErrorBody::new(
+            ErrorKind::Unavailable,
+            format!(
+                "the streamed request had {limit} items waiting for its handler, the server's `max_queued_items`, and the next one ended the call"
+            ),
+            Details::new().with(reason("overflow")),
         ),
-        Overflow::Bytes { limit, item } if item > limit => format!(
-            "the streamed request's next item, of {item} bytes, is over the server's `max_queued_bytes` of {limit} on its own, and ended the call"
+        Overflow::Bytes { limit, item } => ErrorBody::new(
+            ErrorKind::Unavailable,
+            format!(
+                "the streamed request's items waiting for its handler and the next one, of {item} bytes, would have passed {limit} bytes, the server's `max_queued_bytes`, and it ended the call"
+            ),
+            Details::new().with(reason("overflow")),
         ),
-        Overflow::Bytes { limit, item } => format!(
-            "the streamed request's items waiting for its handler and the next one, of {item} bytes, would have passed {limit} bytes, the server's `max_queued_bytes`, and it ended the call"
+        Overflow::TooLarge { limit, item } => ErrorBody::new(
+            ErrorKind::BadRequest,
+            format!(
+                "the streamed request's next item, of {item} bytes, is over the server's `max_queued_bytes` of {limit} on its own, and ended the call"
+            ),
+            Details::new().with(reason("payload_too_large")),
         ),
-    };
-    ErrorBody::new(ErrorKind::Unavailable, message, Details::new().with(reason("overflow")))
+    }
 }
 
 /// Sends one frame; `false` when it did not reach the caller. A frame over the link's limit, or

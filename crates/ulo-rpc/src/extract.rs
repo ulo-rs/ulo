@@ -75,7 +75,9 @@ fn decode<T: DeserializeOwned>(cx: &RpcCx, data: &Data) -> Result<T, ExtractErro
 /// the same way, with [`ExtractError::Overflowed`], and one whose items overflow its
 /// `max_queued_bytes` with [`ExtractError::OverflowedBytes`], the items not yet read dropped, on
 /// whatever task reads it; the call is answered `unavailable` with the reason `overflow` whatever
-/// the handler returns.
+/// the handler returns. An item over `max_queued_bytes` on its own ends the request with
+/// [`ExtractError::TooLarge`] naming the bound, and the call is answered `bad_request` with the
+/// reason `payload_too_large`.
 pub struct Inbound<T> {
     pub(crate) items: BoxStream<'static, Result<T, ExtractError>>,
 }
@@ -98,6 +100,7 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Inbound<T> {
                             ExtractError::Overflowed { param: PAYLOAD, limit: u64::try_from(limit).unwrap_or(u64::MAX) }
                         }
                         Overflow::Bytes { limit, .. } => ExtractError::OverflowedBytes { param: PAYLOAD, limit },
+                        Overflow::TooLarge { limit, .. } => ExtractError::TooLarge { param: PAYLOAD, limit },
                     };
                     return Some((Err(failed), None));
                 };

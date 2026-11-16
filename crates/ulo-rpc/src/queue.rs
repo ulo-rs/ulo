@@ -61,9 +61,12 @@ impl Default for Limits {
 pub(crate) enum Overflow {
     /// `limit` items waited unread.
     Items { limit: usize },
-    /// The bytes waiting unread and the next item's `item` bytes would have passed `limit`. An
-    /// `item` past `limit` on its own is one no queue under this bound holds.
+    /// The bytes waiting unread and the next item's `item` bytes, no more than `limit` on their
+    /// own, would have passed `limit`.
     Bytes { limit: u64, item: u64 },
+    /// The next item's `item` bytes are past `limit` on their own: no queue under this bound holds
+    /// it, however much its reader has read.
+    TooLarge { limit: u64, item: u64 },
 }
 
 struct State {
@@ -115,20 +118,27 @@ impl<T> Clone for Feed<T> {
 }
 
 impl<T> Feed<T> {
-    /// Queues `item`, which carries `bytes`, unless the item limit's worth of items already wait
-    /// unread or the bytes waiting and `bytes` would pass the byte limit: the bound passed then,
-    /// also recorded for [`Halted::overflow`], and `item` is dropped. An item over the byte limit
-    /// on its own never fits. An item offered once the reader has gone is dropped too, and answers
-    /// `Ok`, since nothing is left to bound.
+    /// Queues `item`, which carries `bytes`, unless `bytes` is over the byte limit on its own, the
+    /// item limit's worth of items already wait unread, or the bytes waiting and `bytes` would
+    /// pass the byte limit, checked in that order: the bound passed then, also recorded for
+    /// [`Halted::overflow`], and `item` is dropped. An item offered once the reader has gone is
+    /// dropped too, and answers `Ok`, since nothing is left to bound.
     pub(crate) fn offer(&self, item: T, bytes: u64) -> Result<(), Overflow> {
         // A reader that has gone has released its counts and bounds nothing, an item over the
         // byte limit on its own included.
         if self.sender.is_closed() {
             return Ok(());
         }
+        let limits = self.state.limits;
+        // Ahead of the count, so an item no read can make room for is named as such when the
+        // count is full too.
+        if bytes > limits.bytes {
+            let passed = Overflow::TooLarge { limit: limits.bytes, item: bytes };
+            *self.state.overflow.lock().unwrap_or_else(PoisonError::into_inner) = Some(passed);
+            return Err(passed);
+        }
         let held = self.state.held.fetch_add(1, Ordering::AcqRel);
         let carried = self.state.bytes.fetch_add(bytes, Ordering::AcqRel);
-        let limits = self.state.limits;
         let passed = match limits.items {
             Some(limit) if held >= limit => Some(Overflow::Items { limit }),
             _ if carried.saturating_add(bytes) > limits.bytes => Some(Overflow::Bytes { limit: limits.bytes, item: bytes }),
@@ -317,14 +327,26 @@ mod tests {
         assert_eq!(feed.offer(1024, 8), Err(Overflow::Items { limit: 1024 }), "the 1,025th item fitted");
     }
 
-    /// F584: an item over the byte bound on its own is refused at once, on an empty queue, rather
-    /// than waiting for room that never comes.
+    /// F584: an item over the byte bound on its own is refused at once, on an empty queue, as too
+    /// large rather than as an overflow, since no read makes room for it.
     #[test]
     fn an_item_over_the_byte_bound_on_its_own_is_refused_on_an_empty_queue() {
         let (feed, _drain) = queue::<u32>(Limits { items: Some(1024), bytes: 100 });
-        assert_eq!(feed.offer(1, 101), Err(Overflow::Bytes { limit: 100, item: 101 }), "an item of 101 bytes fitted a bound of 100");
+        assert_eq!(feed.offer(1, 101), Err(Overflow::TooLarge { limit: 100, item: 101 }), "an item of 101 bytes fitted a bound of 100");
         assert_eq!(feed.held(), (0, 0));
         assert!(fits(&feed, 2, 100), "an item of exactly the bound fits an empty queue");
+    }
+
+    /// Q29-15: an item over the byte bound on its own is too large whatever else the queue holds:
+    /// with bytes waiting under the bound and with the count full, it is named too large, never
+    /// the overflow of either bound.
+    #[test]
+    fn an_item_over_the_byte_bound_on_its_own_is_too_large_on_a_queue_holding_items() {
+        let (feed, _drain) = queue::<u32>(Limits { items: Some(1), bytes: 100 });
+        assert!(fits(&feed, 1, 60), "60 bytes fit a bound of 100");
+        assert_eq!(feed.offer(2, 101), Err(Overflow::TooLarge { limit: 100, item: 101 }), "with the count full and 60 bytes waiting");
+        assert_eq!(feed.held(), (1, 60), "the refused item left its count and its bytes behind");
+        assert_eq!(feed.offer(3, 50), Err(Overflow::Items { limit: 1 }), "an item under the byte bound meets the full count");
     }
 
     /// F584: the counts return to zero once the items are read, once the reader drops with items
@@ -393,7 +415,7 @@ mod tests {
         feed.halt();
         assert!(woken.0.load(Ordering::SeqCst), "the halt left a waiting reader asleep");
         assert_eq!(Pin::new(&mut drain).poll_next(&mut cx), Poll::Ready(None));
-        assert_eq!(drain.halted_at(), Some(Overflow::Bytes { limit: 10, item: 11 }));
+        assert_eq!(drain.halted_at(), Some(Overflow::TooLarge { limit: 10, item: 11 }));
     }
 
     #[derive(Default)]
