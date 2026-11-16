@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::{Future, pending};
 use std::io;
 use std::net::SocketAddr;
@@ -20,7 +20,12 @@ use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
 use ulo_transport::sync::{Watch, ordered};
-use ulo_transport::{Details, ErrorKind, TaskSet};
+use ulo_transport::{Detail, Details, ErrorKind, TaskSet};
+
+use crate::leading::{self, Calling};
+
+/// The `ErrorInfo` domain of every reason `ulo-rpc` and its links write.
+const DOMAIN: &str = "ulo.rpc";
 
 /// The largest frame unless `max_frame` sets one: 1 MiB. A server holds the request frame of each
 /// call it admits, so the frames it holds are bounded by this times its `max_inflight`, 1 GiB at
@@ -195,14 +200,14 @@ impl Core {
     }
 
     /// The largest frame read or written: `max_frame`, 1 MiB unset, bounded by the 4-byte prefix.
-    pub fn limit(&self) -> u64 {
+    pub fn max_frame(&self) -> u64 {
         self.max_frame.unwrap_or(DEFAULT_MAX_FRAME).min(u64::from(u32::MAX))
     }
 
     pub fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::Addressed)
             .codec(self.codec)
-            .max_frame(Some(self.limit()))
+            .max_frame(Some(self.max_frame()))
             .ordering(ulo_rpc::Ordering::PerConnection)
             .without_native_backpressure(
                 "a TCP server reads each request off its connection as it arrives, and no broker holds one over the server's bound, which the server refuses",
@@ -281,7 +286,7 @@ impl Core {
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", local).tls(prepared.tls.is_some())];
         let (deliveries, received) = mpsc::channel(DELIVERY_QUEUE);
         let (forwarded, inbound) = mpsc::channel(DELIVERY_QUEUE);
-        let server = Server { codec: self.codec, limit: self.limit(), state: Arc::clone(&self.state), runtime: Arc::clone(&runtime), timer };
+        let server = Server { codec: self.codec, limit: self.max_frame(), state: Arc::clone(&self.state), runtime: Arc::clone(&runtime), timer };
         *accept = Some(Owned(runtime.spawn(Box::pin(server.accept(listener, deliveries)))));
         *lock(&self.forward) = Some(Owned(runtime.spawn(Box::pin(forward(Arc::clone(&self.state), received, forwarded, Arc::clone(&runtime))))));
         Ok(Box::pin(inbound))
@@ -336,7 +341,7 @@ impl Core {
             };
             drop(runtime.spawn(Box::pin(run_connection(writer, queued, end, Some(shut), handed, ended, timer))));
         }
-        let (codec, limit) = (self.codec, self.limit());
+        let (codec, limit) = (self.codec, self.max_frame());
         let (frames, replies) = mpsc::channel(REPLY_QUEUE);
         let (lane, dropped) = oneshot::channel::<()>();
         drop(runtime.spawn(Box::pin(read_replies(Reading::new(reader), Arc::clone(state), at, codec, limit, frames, lane, lingering, released))));
@@ -460,8 +465,12 @@ async fn read_replies(
     let end = loop {
         let delivered = async {
             let bytes = match reading.frame(limit).await {
-                Ok(Some(bytes)) => bytes,
-                Ok(None) => return Some(LaneEnd::Lost),
+                Ok(Read::Frame(bytes)) => bytes,
+                Ok(Read::End) => return Some(LaneEnd::Lost),
+                Ok(Read::Over(len)) => {
+                    tracing::debug!(len, limit, "a reply frame was over the link's `max_frame`; the TCP connection is dropped");
+                    return Some(LaneEnd::Lost);
+                }
                 Err(error) => {
                     tracing::debug!(%error, "the TCP connection's reply lane ended");
                     return Some(LaneEnd::Lost);
@@ -524,6 +533,19 @@ struct Reading {
     reads: usize,
 }
 
+/// What [`Reading::frame`] read.
+enum Read {
+    Frame(Vec<u8>),
+    /// A length prefix over the limit, its body unread.
+    Over(u64),
+    /// A clean end between frames.
+    End,
+}
+
+/// How many of an over-limit frame's first bytes a server reads for the call the frame names: room
+/// for `t` and `id` behind a pattern and headers written ahead of them, and no more of the body.
+const LEADING: usize = 4096;
+
 impl Reading {
     fn new(reader: Reader) -> Reading {
         Reading { reader, reads: 0 }
@@ -537,23 +559,42 @@ impl Reading {
         }
     }
 
-    /// One length-prefixed frame; `None` at a clean end between frames. A prefix over `limit`
-    /// fails before the body is read.
-    async fn frame(&mut self, limit: u64) -> io::Result<Option<Vec<u8>>> {
+    /// One length-prefixed frame. A prefix over `limit` is `Over`, its body left unread.
+    async fn frame(&mut self, limit: u64) -> io::Result<Read> {
         self.turn().await;
         let mut prefix = [0u8; 4];
         match self.reader.read_exact(&mut prefix).await {
             Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(Read::End),
             Err(error) => return Err(error),
         }
         let len = u64::from(u32::from_be_bytes(prefix));
         if len > limit {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("a frame of {len} bytes is over the limit of {limit} bytes")));
+            return Ok(Read::Over(len));
         }
         let mut body = vec![0; len as usize];
         self.reader.read_exact(&mut body).await?;
-        Ok(Some(body))
+        Ok(Read::Frame(body))
+    }
+
+    /// The call an over-limit frame of `len` bytes names in its first [`LEADING`] bytes, read as
+    /// they arrive and no further than the call; `None` when they name none or the connection
+    /// ends first.
+    async fn leading(&mut self, codec: Codec, len: u64) -> Option<(Calling, u64)> {
+        let mut leading = vec![0u8; usize::try_from(len).map_or(LEADING, |len| len.min(LEADING))];
+        let mut filled = 0;
+        loop {
+            if let Some(call) = leading::call(codec, &leading[..filled]) {
+                return Some(call);
+            }
+            if filled == leading.len() {
+                return None;
+            }
+            match self.reader.read(&mut leading[filled..]).await {
+                Ok(read) if read > 0 => filled += read,
+                _ => return None,
+            }
+        }
     }
 
     /// Reads and discards until the peer closes its half or a read fails.
@@ -570,10 +611,11 @@ impl Reading {
 }
 
 /// A server connection's reader, handed to the connection's writer task if the connection's task
-/// is dropped while it holds it, as `close` and the link's drop abort it, so the connection reads
-/// and discards what the peer still sends until the peer closes its half, the read fails, or
-/// `CUT_GRACE` after `close` ends (transports DESIGN §5.2). A socket closed with the peer's bytes unread closes with a
-/// reset, which discards what the server wrote and the peer has not read (F484).
+/// is dropped while it holds it, as `close` and the link's drop abort it, or once the task has
+/// answered a frame over the limit, so the connection reads and discards what the peer still
+/// sends until the peer closes its half, the read fails, or `CUT_GRACE` after `close` ends
+/// (transports DESIGN §5.2). A socket closed with the peer's bytes unread closes with a reset,
+/// which discards what the server wrote and the peer has not read (F484).
 struct Lingering {
     /// `None` once `release` has let go of it.
     reading: Option<Reading>,
@@ -717,14 +759,15 @@ impl Server {
             let _ = queue.try_send(goaway);
         }
         let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&self.state))));
-        let path = reply_path(queue, self.codec, self.limit, Arc::clone(&ids), peer);
-        loop {
+        let path = reply_path(queue.clone(), self.codec, self.limit, Arc::clone(&ids), peer);
+        let answered = loop {
             let bytes = match reader.get().frame(self.limit).await {
-                Ok(Some(bytes)) => bytes,
-                Ok(None) => break,
+                Ok(Read::Frame(bytes)) => bytes,
+                Ok(Read::End) => break false,
+                Ok(Read::Over(len)) => break self.over(reader.get(), len, &queue, &ids, peer).await,
                 Err(error) => {
                     tracing::debug!(%error, %peer, "a TCP connection ended");
-                    break;
+                    break false;
                 }
             };
             let frame = match self.codec.decode_frame(&bytes) {
@@ -732,7 +775,7 @@ impl Server {
                 Err(error) => {
                     // Without its id nothing can be answered: the connection is dropped.
                     tracing::warn!(%error, %peer, "a frame did not decode; the TCP connection is dropped");
-                    break;
+                    break false;
                 }
             };
             let Some(frame) = self.inward(frame, &ids) else { continue };
@@ -742,10 +785,16 @@ impl Server {
             };
             let delivery = Delivery { frame, reply: Some(path.clone()), ack };
             if deliveries.send(delivery).await.is_err() {
-                break;
+                break false;
             }
+        };
+        if answered {
+            // Handed over: closed with the rest of the frame unread, the socket would reset, and
+            // the reset can discard the answer before the peer reads it.
+            drop(reader);
+        } else {
+            reader.release();
         }
-        reader.release();
         lock(&self.state.connections).remove(&connection);
         let orphaned = lock(&ids).drain();
         let count = orphaned.len();
@@ -754,6 +803,38 @@ impl Server {
         }
         // Released once their `cancel`s are queued, so the inbound stream cannot end before them.
         self.state.held.modify(|held| *held = held.saturating_sub(count));
+    }
+
+    /// A frame of `len` bytes, over the limit: answered `bad_request` with `payload_too_large`
+    /// under its call's `id` when its leading bytes name a request, a streamed request's `open`,
+    /// or an item of a streamed request in flight on this connection. `true` once the answer is
+    /// queued. The connection ends either way, and no frame after this one is read.
+    async fn over(&self, reading: &mut Reading, len: u64, queue: &ordered::Sender<Bytes>, ids: &Mutex<Ids>, peer: SocketAddr) -> bool {
+        let limit = self.limit;
+        let call = match reading.leading(self.codec, len).await {
+            Some((Calling::Req | Calling::Open, id)) => Some(id),
+            Some((Calling::In, id)) => lock(ids).server(id).map(|_| id),
+            None => None,
+        };
+        let Some(id) = call else {
+            tracing::debug!(len, limit, %peer, "a frame naming no call in its leading bytes was over the link's `max_frame`; the TCP connection is dropped");
+            return false;
+        };
+        let error = ErrorBody::new(
+            ErrorKind::BadRequest,
+            format!("a frame of {len} bytes is over the server's `max_frame` of {limit} bytes; the connection is closed"),
+            Details::new().with(Detail::ErrorInfo { reason: "payload_too_large".to_owned(), domain: DOMAIN.to_owned(), metadata: BTreeMap::new() }),
+        );
+        match encode(self.codec, limit, &Frame::Err { id, error }) {
+            // Queued at the call; the writer sends it once it has room.
+            Ok(answer) => drop(queue.send(answer)),
+            Err(error) => {
+                tracing::debug!(%error, %peer, "the answer to an over-limit frame did not encode; the TCP connection is dropped");
+                return false;
+            }
+        }
+        tracing::debug!(len, limit, id, %peer, "a frame was over the link's `max_frame`; it is answered and the TCP connection is closed");
+        true
     }
 
     /// A caller's frame with its id mapped to the server's; `None` for one the server takes no

@@ -7,7 +7,9 @@
 //! what the links need and change with them.
 //!
 //! What lives here is everything the wire decides: each frame a 4-byte big-endian length then the
-//! frame, bounded by `max_frame`; a server mapping each connection's call ids to ids of its own;
+//! frame, bounded by `max_frame`; a server answering a frame over it `bad_request` with
+//! `payload_too_large` where the frame's leading bytes name its call, and closing the connection
+//! either way; a server mapping each connection's call ids to ids of its own;
 //! the writer queue each connection's frames go out through in the order their sends were called;
 //! `goaway` at the drain, a connection registered after it included; the inbound stream ending
 //! once the draining server holds no call, the link answering later requests `unavailable`; and
@@ -20,6 +22,7 @@
 //! traits. Every task the core starts is spawned on the runtime the link hands it, and every wait
 //! goes through the app's `Timer`, that runtime's timer, or a channel that needs none.
 
+mod leading;
 mod link;
 
 pub use link::{ACCEPT_BACKOFF, Accept, CUT_GRACE, Core, DEFAULT_MAX_FRAME, Incoming, Reader, Writer};
