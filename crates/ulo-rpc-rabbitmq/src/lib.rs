@@ -26,7 +26,8 @@
 //! ```
 //!
 //! On the wire a request is the payload published to the pattern's queue with `reply_to` and
-//! `correlation_id`, an event the same without them. The client receives replies through
+//! `correlation_id`, and an event the payload without them, published to the pattern's event
+//! exchange with the pattern as its routing key. The client receives replies through
 //! RabbitMQ's direct reply-to, each message one envelope frame, `res`, `err`, `item` or `end`. A
 //! streamed request opens with an empty body and the header `ulo-t: open`; the server answers it
 //! with `ulo-t: opened` before the caller sends anything more, and the request's items, its end and
@@ -34,6 +35,23 @@
 //! server instance, carrying the call's `correlation_id`. A queue outlives the server that
 //! declared it, so a request sent while no instance consumes waits in the queue, and a caller sees
 //! its own `Timeout` rather than `Unavailable`: the link declares `unserved_hold`.
+//!
+//! AMQP caps an exchange's name, a queue's, a routing key and a header's name at 255 bytes, so
+//! the link serves a pattern of at most 241 bytes, whose event exchange `ulo.rpc.event.<pattern>`
+//! is then 255, and an event declared `every_instance` on one of at most 208, whose queue of the
+//! instance's own, `ulo.rpc.event.<pattern>.<uuid>`, is then 255. A server's `listen` refuses a
+//! longer pattern, and a longer one whose event is declared `every_instance`, before it connects,
+//! as a permanent `StartupError::Bind` naming each such pattern, its length in bytes and the
+//! limit. A client fails an event whose exchange name, a request or a stream whose routing key, or
+//! a call carrying a header whose name, would be longer, before publishing it, and the connection
+//! carries the frames after it.
+//!
+//! Upgrade the servers before the clients. A client publishes each event to the pattern's
+//! exchange, which a server of `ulo-rpc-rabbitmq` 0.1.0-alpha.2 or earlier binds no queue to:
+//! until a server of this release has declared the pattern, the client's events are dropped at the
+//! broker with no error at the client. A client of 0.1.0-alpha.2 or earlier publishes events to the
+//! default exchange, which reaches a pattern's shared queue and no queue of an instance's own, so
+//! its events reach no handler declared `every_instance`.
 
 mod link;
 
