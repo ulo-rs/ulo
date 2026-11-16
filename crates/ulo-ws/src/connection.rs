@@ -26,7 +26,7 @@ use futures_core::stream::BoxStream;
 use futures_io::{AsyncRead, AsyncWrite};
 use futures_util::future::{self, Either};
 use futures_util::{FutureExt, SinkExt, StreamExt};
-use http::header::{CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE, WWW_AUTHENTICATE};
+use http::header::{CONNECTION, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION, UPGRADE};
 use http::request::Parts;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Version};
 use serde::{Deserialize, Serialize};
@@ -517,7 +517,7 @@ pub enum Handshake {
 
 /// An upgrade request the handshake refused: its status, a reason for the body, and the headers
 /// the status calls for (`Allow` on a 405, `Sec-WebSocket-Version` on a 426, `WWW-Authenticate`
-/// on a 401).
+/// on a 401, `Retry-After` on a 429 or a 503 whose error carries a `RetryAfter` detail).
 #[derive(Debug)]
 pub struct Refusal {
     status: StatusCode,
@@ -661,7 +661,8 @@ pub(crate) async fn handshake(accept: Accept, head: Parts, peer: Option<SocketAd
 }
 
 /// The connection phase before the 101: a `Switch` carrying the admitted connection, or the
-/// connection the guards admitted with no slot free, or the phase's refusal as a 401 or 403.
+/// connection the guards admitted with no slot free, or the phase's refusal with the status and
+/// headers HTTP answers its error with.
 async fn connection_phase(
     accept: Accept,
     head: Arc<Parts>,
@@ -675,11 +676,8 @@ async fn connection_phase(
         }
         Connected::Full => Handshake::Switch(Switch { accept, head, peer, protocol, headers, decided: Decided::Full }),
         Connected::Refused(refused) => {
-            let mut headers = Vec::new();
-            if refused.status() == StatusCode::UNAUTHORIZED {
-                headers.push((WWW_AUTHENTICATE, HeaderValue::from_static("Bearer")));
-            }
-            Handshake::Refuse(Refusal { status: refused.status(), reason: refused.reason().to_owned(), headers })
+            let headers = refused.headers.iter().map(|(name, value)| (name.clone(), value.clone())).collect();
+            Handshake::Refuse(Refusal { status: refused.status, reason: refused.reason, headers })
         }
     }
 }
@@ -714,19 +712,31 @@ async fn run<Io, U>(
     let mut ws = WebSocketStream::from_raw_socket(io, Role::Server, Some(config)).await;
     let admitted = match decided {
         Decided::Admitted(admitted) => admitted,
-        Decided::Full => return refuse(&mut ws, &accept, 1013, TOO_MANY).await,
+        Decided::Full => return refuse_refused(&mut ws, &accept, &over_capacity()).await,
         Decided::Later => match connect(&accept, head, peer, protocol).await {
             Connected::Admitted(admitted) => admitted,
-            Connected::Full => return refuse(&mut ws, &accept, 1013, TOO_MANY).await,
-            Connected::Refused(refused) => return refuse(&mut ws, &accept, refused.close_code().get(), refused.reason()).await,
+            Connected::Full => return refuse_refused(&mut ws, &accept, &over_capacity()).await,
+            Connected::Refused(refused) => return refuse_refused(&mut ws, &accept, &refused).await,
         },
     };
     let why = serve(ws, &admitted, &accept).await;
     admitted.end(&accept, why).await;
 }
 
-/// The close reason of a connection over `max_connections`.
+/// The message of a connection over `max_connections`, refused as `Unavailable`.
 const TOO_MANY: &str = "too many connections";
+
+/// The refusal of a connection over `max_connections`: 1013, `unavailable: too many connections`.
+fn over_capacity() -> ConnectRefused {
+    ConnectRefused::kind(ErrorKind::Unavailable, TOO_MANY)
+}
+
+async fn refuse_refused<Io>(ws: &mut WebSocketStream<Io>, accept: &Accept, refused: &ConnectRefused)
+where
+    Io: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    refuse(ws, accept, refused.close_code().get(), refused.reason()).await;
+}
 
 /// A connection's place under its gateway's `max_connections`.
 struct Slot(Arc<GatewayRuntime>);
@@ -859,7 +869,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
         opts = opts.trace(ctx);
     }
     let Ok(exec) = Execution::open(connect.module(), opts) else {
-        return Connected::Refused(ConnectRefused { close_code: CloseCode::GOING_AWAY, reason: ulo_transport::SHUTDOWN_MESSAGE.to_owned(), kind: None });
+        return Connected::Refused(ConnectRefused::shutting_down());
     };
     let id = accept.hub.next_id();
     let info = ConnectionInfo { peer, path: Arc::clone(&gateway.path), id };
@@ -917,7 +927,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
                 }
                 None => {
                     full.store(true, Ordering::Release);
-                    Box::pin(future::ready(Ok(ConnectReply::Refused(ConnectRefused::kind(ErrorKind::Unavailable, TOO_MANY)))))
+                    Box::pin(future::ready(Ok(ConnectReply::Refused(over_capacity()))))
                 }
             }
         }

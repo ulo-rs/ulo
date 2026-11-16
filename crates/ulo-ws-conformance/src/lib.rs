@@ -280,6 +280,7 @@ macro_rules! ws_conformance_suite {
             handshake_refuses_during_the_drain => handshake::draining,
             subprotocol_choice => handshake::subprotocol,
             refuse_handshake_answers_401_or_403 => handshake::refused_before_upgrade,
+            refuse_handshake_answers_the_error_s_http_status => handshake::refused_by_status,
             event_round_trip => messages::round_trip,
             unknown_event_is_unimplemented => messages::unknown_event,
             frame_naming_no_event_is_bad_request => messages::no_event,

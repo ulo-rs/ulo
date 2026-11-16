@@ -38,6 +38,16 @@
 //! whole window, and no longer. An idle keep-alive connection is closed when the drain begins, as
 //! on the other hosts.
 //!
+//! A call whose connection the peer closes, or whose HTTP/2 stream it resets, before the response's
+//! head runs on to its answer: rocket runs each request's handler in a task of its own, spawned in
+//! `hyper_service_fn`, which neither ends. What the close reaches in that task is the sender of the
+//! channel its response goes back on, whose receiver hyper drops with the connection, and rocket
+//! keeps the sender to itself, so a handler has no signal of the close beyond a request body still
+//! arriving ending with an error. The execution is not cancelled `Disconnected` while the call
+//! runs, and observes the disconnect at the response body's next failed write. No watcher stands in
+//! for the signal, since a watcher needs one to watch for. The adapter declares
+//! `without_pending_close` and `without_pending_reset` with that reason.
+//!
 //! The upgrade carries one limit no declaration states. WebSocket requires HTTP/1.1 (RFC 6455
 //! §4.2.1), and rocket 0.5 keeps no request's protocol version, so the adapter hands the app every
 //! request as HTTP/1.1: a gateway on the HTTP port answers an HTTP/1.0 upgrade request with 101,
@@ -77,10 +87,10 @@ impl Embed for Rocket {
             .without_strips_prefix("`mount` leaves `req.uri()` whole, with the tail in a `<path..>` segment")
             .request_body(RequestBody::Buffered(HttpConfig::default().body_limit))
             .without_pending_close(
-                "rocket runs each request's handler in a task of its own, spawned in `hyper_service_fn`, which a closed connection does not end",
+                "rocket runs each request's handler in a task of its own, spawned in `hyper_service_fn`, which a closed connection does not end, and gives a handler no signal of the close",
             )
             .without_pending_reset(
-                "rocket runs each request's handler in a task of its own, spawned in `hyper_service_fn`, which a reset stream does not end",
+                "rocket runs each request's handler in a task of its own, spawned in `hyper_service_fn`, which a reset stream does not end, and gives a handler no signal of the reset",
             )
             .disconnect(Disconnect::AtNextWrite)
             .drain_abandoned(DrainAbandoned::Window)

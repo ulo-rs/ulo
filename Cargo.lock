@@ -9991,6 +9991,7 @@ dependencies = [
  "futures-util",
  "serde_json",
  "ulo",
+ "ulo-http",
  "ulo-transport",
  "ulo-ws",
 ]

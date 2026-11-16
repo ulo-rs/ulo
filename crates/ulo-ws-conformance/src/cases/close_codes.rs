@@ -1,8 +1,9 @@
 //! The close codes a connection ends with: a refused connect by its kind, 3003 for a connect
-//! guard's `Ok(false)`, 3000 and 3008 for `Unauthorized` and `Timeout`, 1008 with the kind in the
-//! reason for the client's other mistakes, 1013 for `TooManyRequests`, 1011 for a fault or a
-//! panic, a code `OnConnect` or an error sets itself, and the drain's 1001. A refused connect is
-//! answered with the Close frame alone.
+//! guard's `Ok(false)`, 3000 and 3008 for `Unauthorized` and `Timeout`, 1008 for the client's
+//! other mistakes, 1013 for `TooManyRequests` and `Unavailable`, 1011 for a fault, a panic or
+//! `Unimplemented`, a code `OnConnect` or an error sets itself, and the drain's 1001. A code more
+//! than one kind closes with carries the kind ahead of the reason, and a code one kind owns the
+//! reason alone. A refused connect is answered with the Close frame alone.
 
 use serde_json::json;
 use ulo_ws::DisconnectReason;
@@ -10,7 +11,8 @@ use ulo_ws::DisconnectReason;
 use super::Served;
 use crate::Host;
 use crate::app::{
-    AS_NOT_FOUND, AS_OWN_CODE, AS_TIMEOUT, AS_UNAUTHORIZED, BUSY, BY_ERROR, BY_GUARD, ERROR_CODE, FAULT, OWN, OWN_CODE, PANIC, REFUSE,
+    AS_NOT_FOUND, AS_OWN_CODE, AS_TIMEOUT, AS_UNAUTHORIZED, AS_UNAVAILABLE, AS_UNIMPLEMENTED, BUSY, BY_ERROR, BY_GUARD, ERROR_CODE,
+    FAULT, OWN, OWN_CODE, PANIC, REFUSE,
 };
 
 /// The close code and reason a connection to `/refused` refused `how` ends with.
@@ -39,16 +41,24 @@ pub async fn by_kind<H: Host>() {
     app.stop().await;
 }
 
+/// 1013 for both kinds that share it, each reason naming its kind.
 pub async fn rate_limited<H: Host>() {
     let app = Served::<H>::start().await;
-    assert_eq!(refused_with(&app, BUSY).await, Some((1013, "try again later".to_owned())), "`TooManyRequests`");
+    assert_eq!(refused_with(&app, BUSY).await, Some((1013, "too_many_requests: try again later".to_owned())), "`TooManyRequests`");
+    assert_eq!(refused_with(&app, AS_UNAVAILABLE).await, Some((1013, format!("unavailable: {BY_ERROR}"))), "`Unavailable`");
     app.stop().await;
 }
 
+/// 1011 for `Internal`, a panic among them, and `Unimplemented`, each reason naming its kind.
 pub async fn faulted<H: Host>() {
     let app = Served::<H>::start().await;
-    assert_eq!(refused_with(&app, FAULT).await.map(|(code, _)| code), Some(1011), "`Internal`");
-    assert_eq!(refused_with(&app, PANIC).await.map(|(code, _)| code), Some(1011), "a panic in `OnConnect`");
+    assert_eq!(refused_with(&app, FAULT).await, Some((1011, "internal: the connect hook failed".to_owned())), "`Internal`");
+    let panicked = refused_with(&app, PANIC).await;
+    assert!(
+        panicked.as_ref().is_some_and(|(code, reason)| *code == 1011 && reason.starts_with("internal: ")),
+        "a panic in `OnConnect`: {panicked:?}"
+    );
+    assert_eq!(refused_with(&app, AS_UNIMPLEMENTED).await, Some((1011, format!("unimplemented: {BY_ERROR}"))), "`Unimplemented`");
     app.stop().await;
 }
 
