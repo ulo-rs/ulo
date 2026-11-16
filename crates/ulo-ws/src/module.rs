@@ -39,7 +39,7 @@ use crate::table::GatewayDefaults;
 /// Its identity is its type, so two imports are one module, and its settings are the broadcast
 /// adapter's [`BroadcastAdapter::settings`] followed by the gateway defaults: a second import over
 /// an adapter answering other settings, `redis` beside `local` or another Redis URL, or with
-/// another default, a `message_limit` or a `ping_interval`, is refused at `wire()` as
+/// another default, a `max_message` or a `ping_interval`, is refused at `wire()` as
 /// `ulo::WiringError::DifferingSettings`.
 #[derive(Clone)]
 pub struct WsModule {
@@ -61,8 +61,8 @@ impl WsModule {
     }
 
     /// Bytes per message after reassembly: 64 MiB at the default. Zero is refused in `prepare`.
-    pub fn message_limit(mut self, bytes: u64) -> Self {
-        self.defaults.message_limit = Some(bytes);
+    pub fn max_message(mut self, bytes: u64) -> Self {
+        self.defaults.max_message = Some(bytes);
         self
     }
 
@@ -121,7 +121,7 @@ impl Module for WsModule {
         let defaults = &self.defaults;
         self.adapter
             .settings()
-            .with("message_limit", defaults.message_limit)
+            .with("max_message", defaults.max_message)
             .with("max_connections", defaults.max_connections)
             .with("max_inflight", defaults.max_inflight)
             .with("server_max_inflight", defaults.server_max_inflight)

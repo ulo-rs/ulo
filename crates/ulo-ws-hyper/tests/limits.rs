@@ -1,5 +1,5 @@
 //! The gateway attribute's limits past what the WebSocket conformance suite pins, each on a gateway
-//! of its own on the standalone server: one frame over `message_limit`, `max_inflight` of two,
+//! of its own on the standalone server: one frame over `max_message`, `max_inflight` of two,
 //! `max_outbound` under both overflow policies, the slow consumer's Close written before anything
 //! queued, and the two in-flight bounds' own values: a connection's 64 by default, and the
 //! server's across its connections. The suite (`tests/conformance.rs`) runs a message over the limit after reassembly,
@@ -192,7 +192,7 @@ struct Small {
 }
 
 #[handlers]
-#[ulo_ws::gateway(path = "/small", port = own, message_limit = 128, max_connections = 1)]
+#[ulo_ws::gateway(path = "/small", port = own, max_message = 128, max_connections = 1)]
 impl Small {
     #[ulo_ws::message("echo")]
     fn echo(&self, text: Payload<String>) -> String {

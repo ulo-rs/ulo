@@ -8,7 +8,7 @@
 //! # #[ulo::module]
 //! # struct AppModule;
 //! # async fn f() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//! let server = ulo_http_axum::Embedded::new().nested_at("/api").body_limit(4 * MB);
+//! let server = ulo_http_axum::Embedded::new().nested_at("/api").max_body(4 * MB);
 //! let embedded = server.handle();
 //! let app = App::builder(AppModule).runtime(ulo_runtime_tokio::Tokio::current()).wire()?.connect().await?.bind(server).listen().await?;
 //! let router = axum::Router::new().nest_service("/api", embedded.service());
@@ -486,9 +486,9 @@ impl<A: Embed> Embedded<A> {
         Handle { shared: Arc::clone(&self.shared), copies: Arc::clone(&self.copies) }
     }
 
-    /// The body limit of a route without `#[meta(BodyLimit(..))]`.
-    pub fn body_limit(self, bytes: u64) -> Self {
-        self.configure(|config| config.body_limit = bytes)
+    /// The body limit of a route without `#[meta(MaxBody(..))]`.
+    pub fn max_body(self, bytes: u64) -> Self {
+        self.configure(|config| config.max_body = bytes)
     }
 
     /// The app's in-flight bound; see [`Server::max_inflight`](crate::Server::max_inflight).
@@ -992,8 +992,8 @@ impl<A: Embed> Handle<A> {
 
     /// The request body limit the embedding was configured with, under which an adapter that
     /// buffers the body reads it.
-    pub fn body_limit(&self) -> u64 {
-        self.shared.state().config().body_limit
+    pub fn max_body(&self) -> u64 {
+        self.shared.state().config().max_body
     }
 
     /// Hands the app the host's server future, which `Embedded::serve` polls: no task is spawned.

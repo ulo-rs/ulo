@@ -153,8 +153,8 @@ impl<L: Listener> ServerOn<L> {
     }
 
     /// Bytes per message after reassembly: 64 MiB at the default. Zero is refused in `prepare`.
-    pub fn message_limit(mut self, bytes: u64) -> Self {
-        self.defaults = self.defaults.message_limit(bytes);
+    pub fn max_message(mut self, bytes: u64) -> Self {
+        self.defaults = self.defaults.max_message(bytes);
         self
     }
 

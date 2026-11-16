@@ -109,7 +109,7 @@ pub trait Gateway: GatewayConfig {
 }
 
 /// What a gateway attribute declares. A limit left at `Count::Default` or `Bound::Default`, and a
-/// `message_limit` left `None`, takes the standalone server's default for a gateway on its own
+/// `max_message` left `None`, takes the standalone server's default for a gateway on its own
 /// port (its [`GatewayDefaults`](crate::GatewayDefaults)) and `WsModule`'s for one on the HTTP
 /// server's port.
 #[non_exhaustive]
@@ -125,7 +125,7 @@ pub struct GatewaySettings {
     pub subprotocols: Vec<Cow<'static, str>>,
     pub refuse: Refuse,
     /// Bytes per message after reassembly.
-    pub message_limit: Option<u64>,
+    pub max_message: Option<u64>,
     pub max_connections: Count,
     /// Messages in flight per connection, over which the connection stops reading.
     /// Answers to different messages, a stream's items among them, may interleave, each carrying
@@ -151,7 +151,7 @@ impl GatewaySettings {
             codec: Codec::Json,
             subprotocols: Vec::new(),
             refuse: Refuse::Close,
-            message_limit: None,
+            max_message: None,
             max_connections: Count::Default,
             max_inflight: Count::Default,
             max_outbound: Count::Default,
@@ -187,8 +187,8 @@ impl GatewaySettings {
         self
     }
 
-    pub fn message_limit(mut self, bytes: u64) -> Self {
-        self.message_limit = Some(bytes);
+    pub fn max_message(mut self, bytes: u64) -> Self {
+        self.max_message = Some(bytes);
         self
     }
 
@@ -595,7 +595,7 @@ pub(crate) fn mount<G: GatewayConfig>(m: &mut Mount<'_>, handler: ConnectHandler
 }
 
 /// 64 MiB, tungstenite's own message ceiling.
-const DEFAULT_MESSAGE_LIMIT: u64 = 64 * 1024 * 1024;
+const DEFAULT_MAX_MESSAGE: u64 = 64 * 1024 * 1024;
 /// tungstenite's frame ceiling, lowered to the message limit when that is smaller.
 const FRAME_LIMIT: u64 = 16 * 1024 * 1024;
 const DEFAULT_MAX_OUTBOUND: usize = 1024;
@@ -607,7 +607,7 @@ const DEFAULT_KEEPALIVE: Duration = Duration::from_secs(30);
 /// A gateway's limits with the server's or the module's defaults applied.
 #[derive(Clone, Debug)]
 pub(crate) struct Limits {
-    pub(crate) message_limit: usize,
+    pub(crate) max_message: usize,
     pub(crate) frame_limit: usize,
     /// `None`: unbounded.
     pub(crate) max_connections: Option<usize>,
@@ -623,10 +623,10 @@ pub(crate) struct Limits {
 
 impl Limits {
     fn resolve(settings: &GatewaySettings, defaults: &GatewayDefaults) -> Self {
-        let message_limit = settings.message_limit.or(defaults.message_limit).unwrap_or(DEFAULT_MESSAGE_LIMIT);
+        let max_message = settings.max_message.or(defaults.max_message).unwrap_or(DEFAULT_MAX_MESSAGE);
         Limits {
-            message_limit: usize::try_from(message_limit).unwrap_or(usize::MAX),
-            frame_limit: usize::try_from(message_limit.min(FRAME_LIMIT)).unwrap_or(usize::MAX),
+            max_message: usize::try_from(max_message).unwrap_or(usize::MAX),
+            frame_limit: usize::try_from(max_message.min(FRAME_LIMIT)).unwrap_or(usize::MAX),
             max_connections: count(settings.max_connections, defaults.max_connections, None),
             max_inflight: count(settings.max_inflight, defaults.max_inflight, Some(DEFAULT_CONNECTION_INFLIGHT)).unwrap_or(usize::MAX),
             max_outbound: count(settings.max_outbound, defaults.max_outbound, Some(DEFAULT_MAX_OUTBOUND)),
@@ -800,7 +800,7 @@ pub(crate) fn build_table(
 /// The zero refusals of a server's or a module's defaults, `owner` naming which.
 pub(crate) fn check_defaults(owner: &str, defaults: &GatewayDefaults, failures: &mut Failures) {
     let settings = GatewaySettings {
-        message_limit: defaults.message_limit,
+        max_message: defaults.max_message,
         max_connections: defaults.max_connections,
         max_inflight: defaults.max_inflight,
         max_outbound: defaults.max_outbound,
@@ -837,9 +837,9 @@ fn zero_settings(settings: &GatewaySettings) -> Vec<String> {
     .flatten()
     .map(|failure| failure.text(&names))
     .collect();
-    if settings.message_limit == Some(0) {
+    if settings.max_message == Some(0) {
         texts.push(
-            "`.message_limit(0)` would close every connection with 1009 at its first message; leave it unset for the 64 MiB \
+            "`.max_message(0)` would close every connection with 1009 at its first message; leave it unset for the 64 MiB \
              default"
                 .to_owned(),
         );

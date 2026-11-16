@@ -707,7 +707,7 @@ async fn run<Io, U>(
     };
     let limits = &accept.gateway.limits;
     let config = WebSocketConfig::default()
-        .max_message_size(Some(limits.message_limit))
+        .max_message_size(Some(limits.max_message))
         .max_frame_size(Some(limits.frame_limit));
     let mut ws = WebSocketStream::from_raw_socket(io, Role::Server, Some(config)).await;
     let admitted = match decided {

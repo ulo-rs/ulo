@@ -807,7 +807,7 @@ impl StageCx {
             handler: target.handler.clone(),
             pattern: Arc::clone(&target.pattern),
             params: params.clone(),
-            body_limit: target.body_limit,
+            max_body: target.max_body,
         });
         let cx = self.service.context(&self.exec, Arc::clone(&self.head), self.conn.clone(), route, None, None);
         let handler = self.route.as_ref().map(|(target, _)| &target.handler);

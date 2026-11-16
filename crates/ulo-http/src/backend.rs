@@ -156,8 +156,8 @@ impl BackendLimits {
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct HttpConfig {
-    /// The body limit a route without `#[meta(BodyLimit(..))]` takes: 2 MiB unset.
-    pub body_limit: u64,
+    /// The body limit a route without `#[meta(MaxBody(..))]` takes: 2 MiB unset.
+    pub max_body: u64,
     /// The server's in-flight bound; over it a request is answered 503 with `Retry-After`.
     /// `Count::Default`, the value unset, is `Count::DEFAULT_MAX_INFLIGHT` requests, 1,024;
     /// `Count::Unlimited` bounds nothing.
@@ -236,7 +236,7 @@ fn connection_timeout(bound: Bound) -> Option<Duration> {
 impl Default for HttpConfig {
     fn default() -> Self {
         HttpConfig {
-            body_limit: 2 * MB,
+            max_body: 2 * MB,
             max_inflight: Count::Default,
             max_concurrent_streams: Count::Default,
             shed_retry_after: Duration::from_secs(1),

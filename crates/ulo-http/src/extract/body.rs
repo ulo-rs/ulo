@@ -212,7 +212,7 @@ impl FromCall<Http> for BodyStream {
     fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
         async move {
             let body = take::<Self>(cx)?;
-            let limit = body_limit(cx);
+            let limit = max_body(cx);
             refuse_declared_excess(cx, limit)?;
             Ok(BodyStream { body, limit, read: 0 })
         }
@@ -250,7 +250,7 @@ impl FromCall<Http> for Multipart {
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| multer::parse_boundary(value).ok())
                 .ok_or(ExtractError::UnsupportedMediaType { param: BODY, expected: "multipart/form-data" })?;
-            let limit = body_limit(cx);
+            let limit = max_body(cx);
             refuse_declared_excess(cx, limit)?;
             Ok(Multipart { inner: multer::Multipart::new(BodyStream { body, limit, read: 0 }, boundary) })
         }
@@ -258,8 +258,8 @@ impl FromCall<Http> for Multipart {
 }
 
 /// The route's body limit; the server's for a request that matched no route.
-fn body_limit(cx: &HttpCx) -> u64 {
-    cx.matched().map_or(cx.inner.config.body_limit, |route| route.body_limit)
+fn max_body(cx: &HttpCx) -> u64 {
+    cx.matched().map_or(cx.inner.config.max_body, |route| route.max_body)
 }
 
 /// The body for extractor `E`. One taken before `E` ran is `BodyTaken`, logged at `warn` naming
@@ -335,7 +335,7 @@ fn refuse_declared_excess(cx: &HttpCx, limit: u64) -> Result<(), ExtractError> {
 /// The whole body, counted against the route's limit as it arrives: `TooLarge` the moment it
 /// passes, whatever `Content-Length` claimed. A failed read is `Malformed`.
 async fn collect(cx: &HttpCx, mut body: HttpBody) -> Result<Bytes, ExtractError> {
-    let limit = body_limit(cx);
+    let limit = max_body(cx);
     refuse_declared_excess(cx, limit)?;
     let mut buffer = BytesMut::new();
     while let Some(frame) = body.frame().await {

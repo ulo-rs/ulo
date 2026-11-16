@@ -66,7 +66,7 @@ impl Handler for RocketHandler {
         let (body, demand, fill) = BufferedBody::new();
         let app_req = ulo_http::Request { head, body: HttpBody::new(body), conn, upgrade };
         let answer = self.handle.service().respond(request, app_req);
-        let (response, data) = answer_reading(answer, data, demand, fill, self.handle.body_limit()).await;
+        let (response, data) = answer_reading(answer, data, demand, fill, self.handle.max_body()).await;
         if response.extensions().get::<Forwardable>().is_some()
             && let Some(data) = data
         {
@@ -140,7 +140,7 @@ struct Buffered {
 /// The app's body on rocket: it asks for the read on its first poll, then yields the buffered bytes
 /// as one frame.
 ///
-/// A body longer than the embedding's `body_limit` arrives as `body_limit + 1` bytes, which a route
+/// A body longer than the embedding's `max_body` arrives as `max_body + 1` bytes, which a route
 /// on the default limit answers with the same 413 as on every host; on a route whose own limit is
 /// higher, the frame after them is an error, so the app never takes the truncated body for the
 /// whole one.

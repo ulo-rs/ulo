@@ -54,7 +54,7 @@ const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 /// gateways on the HTTP server's port, a standalone server's for those on its own.
 #[derive(Clone, Debug, Default)]
 pub struct GatewayDefaults {
-    pub(crate) message_limit: Option<u64>,
+    pub(crate) max_message: Option<u64>,
     pub(crate) max_connections: Count,
     pub(crate) max_inflight: Count,
     pub(crate) server_max_inflight: Count,
@@ -149,8 +149,8 @@ impl GatewayDefaults {
     }
 
     /// Bytes per message after reassembly: 64 MiB at the default. Zero is refused in `prepare`.
-    pub fn message_limit(mut self, bytes: u64) -> Self {
-        self.message_limit = Some(bytes);
+    pub fn max_message(mut self, bytes: u64) -> Self {
+        self.max_message = Some(bytes);
         self
     }
 
