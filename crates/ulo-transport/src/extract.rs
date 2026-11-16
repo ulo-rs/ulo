@@ -101,6 +101,8 @@ pub enum ExtractError {
     /// past 128. `source`, redacted as `Malformed`'s is, names what did not fit.
     Mismatched { param: &'static str, source: Redacted },
     UnsupportedMediaType { param: &'static str, expected: &'static str },
+    /// Larger than `limit` bytes, the transport's bound on one body or one item: an HTTP body, a
+    /// gRPC message, an RPC streamed request's item over `max_queued_bytes` on its own.
     TooLarge { param: &'static str, limit: u64 },
     /// Validation rules failed.
     Invalid { param: &'static str, violations: Vec<FieldViolation> },
@@ -125,8 +127,9 @@ pub enum ExtractError {
     /// returns.
     Overflowed { param: &'static str, limit: u64 },
     /// A streamed body's items arrived faster than its reader took them, and the next one would
-    /// have taken the bytes waiting unread past `limit`, the transport's byte bound, or was past it
-    /// on its own. It ends the stream and classifies as `Overflowed` does.
+    /// have taken the bytes waiting unread past `limit`, the transport's byte bound. It ends the
+    /// stream and classifies as `Overflowed` does. An item past the bound on its own is
+    /// `TooLarge`, which no read makes room for.
     OverflowedBytes { param: &'static str, limit: u64 },
 }
 

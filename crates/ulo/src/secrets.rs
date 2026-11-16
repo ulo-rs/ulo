@@ -8,6 +8,13 @@
 //! writes it through [`setting_url`], so the comparison and the text of `DifferingSettings` carry
 //! no credential (DESIGN §8.3).
 //!
+//! A panic's message is printed by the process's panic hook before ulo catches the panic, and the
+//! default hook prints it raw: a registered secret or a connection string's password in the
+//! message reaches stderr unredacted, whatever ulo reports of the panic afterwards. An application
+//! calling [`install_redacting_hook`](crate::panic::install_redacting_hook) at the start of `main`
+//! replaces the default hook with one that prints the message through the secrets the process's
+//! apps registered; ulo never replaces the hook itself.
+//!
 //! Semver applies to this module as to the rest of the crate's public API: from 0.1.0, a change
 //! that breaks a caller is released under a new breaking version (`0.x` to `0.(x+1)` before 1.0).
 //! A pre-release of 0.1.0 may break it, and Cargo takes a later pre-release of the same version
@@ -37,8 +44,12 @@ pub fn setting_url(url: &str) -> String {
 /// each deserialisation it runs; `Secret<T>: Deserialize`, behind the `serde` feature, writes into
 /// it, under `#[serde(flatten)]` and `#[serde(untagged)]` too. A collection open around this one
 /// receives nothing of it. Without the `serde` feature nothing writes, and the answer is empty.
+/// What it collects is also recorded for the hook
+/// [`install_redacting_hook`](crate::panic::install_redacting_hook) installs, so a panic between
+/// the load and the app's `wire` prints redacted under it.
 pub fn collect_secrets<R>(f: impl FnOnce() -> R) -> (R, CollectedSecrets) {
     let (answer, texts) = crate::redact::collecting(f);
+    crate::redact::record_for_process(&texts);
     (answer, CollectedSecrets { texts })
 }
 

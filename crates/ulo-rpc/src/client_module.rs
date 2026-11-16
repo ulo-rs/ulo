@@ -99,7 +99,8 @@ impl<L: Link> RpcClientModule<L> {
     /// The client's byte bound, as [`RpcClient::max_queued_bytes`] sets it: the bytes the reply
     /// items of one `stream` or `duplex` call held unread for its caller may carry, 4 MiB unset.
     /// The item that would take them past it ends the call `Unavailable` with the reason
-    /// `"overflow"`, after the client sends its server `cancel`. `u64::MAX` removes it; `0` is
+    /// `"overflow"`, after the client sends its server `cancel`, and an item over it on its own
+    /// `BadRequest` with the reason `"payload_too_large"`. `u64::MAX` removes it; `0` is
     /// refused when the app wires, as [`ZeroBytes`].
     pub fn max_queued_bytes(mut self, bytes: u64) -> Self {
         self.queued_bytes = bytes;
