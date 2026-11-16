@@ -154,37 +154,17 @@ struct Reading {
 }
 
 /// `host` as the canonical `url` writes it: its ASCII letters lowercased, since DNS compares names
-/// without regard to ASCII case (RFC 4343) and `redis://H` and `redis://h` reach one server; one
-/// trailing dot dropped from a DNS name, the dot that marks the name absolute (RFC 1034 §3.1), so
-/// `redis://h.` and `redis://h` compare equal; and an IPv6 address, which the redis client holds
-/// without its brackets, in brackets. A non-ASCII letter keeps its case: a `redis://` URL's host
-/// is opaque to the URL parser, which percent-encodes such a letter and applies no IDNA mapping,
-/// and the client resolves the host as written.
+/// without regard to ASCII case (RFC 4343) and `redis://H` and `redis://h` reach one server, and
+/// an IPv6 address, which the redis client holds without its brackets, in brackets. A non-ASCII
+/// letter keeps its case: a `redis://` URL's host is opaque to the URL parser, which
+/// percent-encodes such a letter and applies no IDNA mapping, and the client resolves the host as
+/// written.
 ///
-/// The dot stays where dropping it would change what the host names: on a host that is a dot
-/// alone, on a second trailing dot, which leaves an empty label, on an IPv6 address, and on a host
-/// whose last label reads as a number, decimal or `0x` hexadecimal, as an IPv4 address's does: no
-/// top-level DNS label is all-numeric (RFC 3696 §2), and the system resolver can parse such a host
-/// as an address without the dot (`inet_aton`) and looks it up as a name with it.
+/// A trailing dot is kept. `/etc/hosts` entries and a resolver's search list treat `h.` and `h`
+/// differently, so the two can connect to different servers.
 fn canonical_host(host: &str) -> String {
     let host = host.to_ascii_lowercase();
-    if host.contains(':') {
-        return format!("[{host}]");
-    }
-    match host.strip_suffix('.') {
-        Some(name) if !name.is_empty() && !name.ends_with('.') && !name.rsplit('.').next().is_some_and(numeric) => name.to_owned(),
-        _ => host,
-    }
-}
-
-/// Whether `label`, lowercased, is a number as `inet_aton` reads an address part: decimal digits,
-/// or `0x` and hexadecimal digits.
-fn numeric(label: &str) -> bool {
-    let (digits, radix) = match label.strip_prefix("0x") {
-        Some(hex) => (hex, 16),
-        None => (label, 10),
-    };
-    digits.chars().all(|c| c.is_digit(radix)) && (radix == 16 || !digits.is_empty())
+    if host.contains(':') { format!("[{host}]") } else { host }
 }
 
 const NO_RUNTIME: &str = "the Redis broadcast adapter has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
@@ -312,10 +292,11 @@ impl BroadcastAdapter for Redis {
     ///   socket's path. `redis://:key@cache/2` is `redis://cache:6379`, and
     ///   `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`. No
     ///   userinfo, query, fragment or database reaches it. The host's ASCII letters are
-    ///   lowercased, DNS names comparing without regard to ASCII case (RFC 4343), and one trailing
-    ///   dot is dropped from a DNS name, so `redis://Cache`, `redis://cache.:6379` and
-    ///   `redis://cache` compare equal; an IP address keeps a trailing dot, and a socket's path
-    ///   keeps its case.
+    ///   lowercased, DNS names comparing without regard to ASCII case (RFC 4343), so
+    ///   `redis://Cache` and `redis://cache` compare equal. A trailing dot is kept, since
+    ///   `/etc/hosts` entries and a resolver's search list resolve `cache.` and `cache`
+    ///   differently: `redis://cache.` and `redis://cache` are refused naming `url`. A socket's
+    ///   path keeps its case.
     /// - `username`, the ACL user the connection authenticates as, which selects the commands and
     ///   keys the connection may use: the userinfo's username of a TCP URL and the `user` query
     ///   parameter of a Unix socket's, `default` when the URL names none. The client sends `AUTH`

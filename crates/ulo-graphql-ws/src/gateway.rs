@@ -54,6 +54,10 @@ const REASON_INVALID_MESSAGE: &str = "Invalid message received";
 const REASON_TOO_MANY_INITS: &str = "Too many initialisation requests";
 const REASON_UNAUTHORIZED: &str = "Unauthorized";
 
+/// The message of the `Internal` close of a connection whose session holds no `ConnectionInit`,
+/// refused in `on_connect` and closed in `on_message` with one reason.
+const NO_SESSION: &str = "the connection has no graphql-transport-ws session";
+
 /// The gateway, serving the engine bound as `dyn Engine` (or `dyn Engine @ Q`): a controller listed
 /// in a module's `controllers` beside an import of `WsModule`, mounted at the subscription path
 /// with `ModuleDef::controller::<GraphqlWs>().at(path)`. Its settings: `event = "type"`,
@@ -280,7 +284,7 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
         }
         if let Some(after) = self.init_timeout {
             let Some(session) = conn.session().get::<ConnectionInit>() else {
-                return Err(ConnectRefused::kind(ErrorKind::Internal, "the connection has no graphql-transport-ws session"));
+                return Err(ConnectRefused::kind(ErrorKind::Internal, NO_SESSION));
             };
             let state = Arc::clone(&session.state);
             let timer = Arc::clone(conn.timer());
@@ -307,7 +311,8 @@ impl<Q: Send + Sync + 'static> Gateway for GraphqlWs<Q> {
 
     async fn on_message(&self, conn: &Connection, frame: Frame) {
         let Some(session) = conn.session().get::<ConnectionInit>() else {
-            close_frame(conn, CloseCode::INTERNAL_ERROR, "the connection has no graphql-transport-ws session").await;
+            let internal = ConnectRefused::kind(ErrorKind::Internal, NO_SESSION);
+            close_frame(conn, internal.close_code(), internal.reason()).await;
             return;
         };
         let message = match &frame {

@@ -81,10 +81,12 @@ impl Tcp {
         self
     }
 
-    /// The largest frame, in bytes, read or written; a larger length prefix closes the connection
-    /// before the body is read. 1 MiB unset, which bounds the request frames a server holds at
-    /// 1 GiB under its default `max_inflight`; a value above the 4-byte prefix's range is bounded
-    /// by it. Zero is refused in `prepare`.
+    /// The largest frame, in bytes, read or written. Of a larger frame a server reads the length
+    /// prefix and the first 4 KiB alone: where those bytes name its call, `t` and `id` ahead of
+    /// the payload as `RpcClient` writes them, the call is answered `bad_request` with
+    /// `payload_too_large`, and the connection closes either way. 1 MiB unset, which bounds the
+    /// request frames a server holds at 1 GiB under its default `max_inflight`; a value above the
+    /// 4-byte prefix's range is bounded by it. Zero is refused in `prepare`.
     pub fn max_frame(mut self, bytes: u64) -> Self {
         self.core.set_max_frame(bytes);
         self
