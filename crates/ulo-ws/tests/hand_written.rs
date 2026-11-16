@@ -2,7 +2,9 @@
 //! `WsHandler` and `HandlerSpec`: its connect hook, a unary answer and a streamed one answer what
 //! the attribute-written twin answers, with the same `HandlerInfo`; a message handler mounted
 //! with no event is refused naming its gateway, and one mounted beside a gateway that reads every
-//! message raw is refused with the reason `Unreached::RawGateway`.
+//! message raw is refused with the reason `Unreached::RawGateway`. A raw gateway's `on_message`
+//! panic closes the connection with 1011 and the kind ahead of the reason, as an `Internal`
+//! refusal reads.
 
 mod support;
 
@@ -364,4 +366,59 @@ async fn a_message_handler_on_a_gateway_reading_every_message_raw_is_refused_wit
         ),
         "{text}"
     );
+}
+
+/// A gateway reading every message raw whose `on_message` panics.
+struct Panicking;
+
+impl Construct for Panicking {
+    type Scope = Auto;
+
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
+
+    async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
+        Ok(Panicking)
+    }
+}
+
+impl GatewayConfig for Panicking {
+    fn settings() -> GatewaySettings {
+        GatewaySettings::at("/panicking")
+    }
+
+    fn mount_gateway(m: &mut Mount<'_>) {
+        <Self as Gateway>::mount(m);
+    }
+}
+
+impl Gateway for Panicking {
+    async fn on_message(&self, _conn: &Connection, _frame: Frame) {
+        panic!("a raw gateway's handler failed");
+    }
+}
+
+impl Controller for Panicking {}
+
+impl Handlers for Panicking {
+    fn mount(m: &mut Mount<'_>) {
+        <Self as Gateway>::mount(m);
+    }
+}
+
+#[tokio::test]
+async fn a_raw_gateways_on_message_panic_closes_1011_with_the_kind_ahead_of_the_reason() {
+    let app = Running::start(
+        Root(|m| {
+            m.controller::<Panicking>();
+        }),
+        ulo_http_hyper::Server::new("127.0.0.1:0"),
+    )
+    .await;
+    let mut socket = app.connect("/panicking", &[]).await;
+    send_json(&mut socket, &json!({ "any": "frame" })).await;
+    assert_eq!(close_frame(&mut socket).await, Some((1011, String::from("internal: internal error"))));
+    hang_up(socket).await;
+    app.stop().await;
 }

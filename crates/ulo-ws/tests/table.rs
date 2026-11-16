@@ -7,8 +7,9 @@
 //! A server whose write of the 101 fails is the host here too: the connection hooks stay paired,
 //! `on_disconnect` running once with `Lost` for a connection whose `OnConnect` ran in the
 //! handshake, and nothing running for one whose connection phase had not begun. A connection over
-//! `max_connections` runs no hook in either refusal mode, and a connect guard decides before the
-//! slot is taken. Under `max_inflight = 1` a connection's answers leave in the order their
+//! `max_connections` runs no hook in either refusal mode, refused 503 with `Retry-After` before
+//! the upgrade under `refuse = handshake` and closed 1013 after it under `refuse = close`, and a
+//! connect guard decides before the slot is taken. Under `max_inflight = 1` a connection's answers leave in the order their
 //! messages arrived, the first answer held before its queueing through `conformance-probe`'s
 //! `AnswerHold`.
 
@@ -16,7 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use http::header::{ALLOW, CONTENT_TYPE, HeaderValue, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_VERSION, UPGRADE};
+use http::header::{ALLOW, CONTENT_TYPE, HeaderValue, RETRY_AFTER, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_VERSION, UPGRADE};
 use http::request::Parts;
 use http::{Method, StatusCode, Version};
 use serde_json::{Value, json};
@@ -30,7 +31,7 @@ use ulo_http::Upgraded;
 use ulo_transport::prepare::Failures;
 use ulo_ws::{
     AnswerHold, ConnId, ConnectCx, ConnectRefused, Connection, DisconnectReason, GatewayDefaults, GatewayTable, Handshake, OnConnect,
-    OnDisconnect, Ws, WsConnect,
+    OnDisconnect, Refusal, Ws, WsConnect,
 };
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -546,24 +547,35 @@ async fn close_code(what: &str, ws: &mut WebSocketStream<DuplexStream>) -> u16 {
     u16::from(frame.code)
 }
 
+/// `Retry-After` on a refusal written by a server that is not `ulo_http`'s: `HttpConfig`'s default
+/// `shed_retry_after`, one second.
+const SHED_RETRY_AFTER: &str = "1";
+
+/// The `Retry-After` `refusal` is written with.
+fn retry_after(refusal: Refusal) -> Option<String> {
+    let response = refusal.into_response();
+    response.headers().get(RETRY_AFTER).map(|value| value.to_str().expect("an ASCII header").to_owned())
+}
+
 /// Hangs up `holder` and waits for its end.
 async fn hang_up(mut holder: WebSocketStream<DuplexStream>) {
     let _ = holder.close(None).await;
     within("the holder's end of the connection", async { while let Some(Ok(_)) = holder.next().await {} }).await;
 }
 
+/// `refuse = close` closes a connection over the limit with 1013 after the 101 instead, as
+/// `a_full_gateway_s_connect_guard_refuses_first_and_capacity_runs_no_hook` holds.
 #[tokio::test]
-async fn a_connection_over_max_connections_admitted_in_the_handshake_is_closed_1013_with_no_hook() {
+async fn a_connection_over_max_connections_under_refuse_handshake_is_refused_503_with_no_hook() {
     let app = start().await;
     let hooks = app.hooks.clone();
     let (holder, holding) = hold_the_slot(&app, "/paired").await;
 
-    let Handshake::Switch(second) = app.table.handshake(head("/paired", |_| {}), None).await else {
-        panic!("the connection phase refused a valid upgrade request: capacity is refused with 1013 after the 101");
+    let Handshake::Refuse(refusal) = app.table.handshake(head("/paired", |_| {}), None).await else {
+        panic!("a connection over `max_connections` under `refuse = handshake` was switched");
     };
-    let (server, mut over) = pipe().await;
-    second.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
-    assert_eq!(close_code("the second connection's close", &mut over).await, 1013);
+    assert_eq!((refusal.status(), refusal.reason()), (StatusCode::SERVICE_UNAVAILABLE, "unavailable: too many connections"));
+    assert_eq!(retry_after(refusal), Some(SHED_RETRY_AFTER.to_owned()), "the capacity refusal's `Retry-After`");
     hang_up(holder).await;
     app.stop().await;
     let all = hooks.all();
@@ -621,6 +633,7 @@ async fn a_handshake_once_the_drain_has_begun_is_refused_503_before_the_connecti
         };
         assert_eq!(refusal.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
         assert_eq!(refusal.reason(), ulo_transport::SHUTDOWN_MESSAGE, "{path}");
+        assert_eq!(retry_after(refusal), Some(SHED_RETRY_AFTER.to_owned()), "{path}: the drain's 503");
     }
     assert_eq!(hooks.all(), Vec::new(), "the connection phase ran once the drain had begun");
 }
@@ -640,6 +653,7 @@ async fn a_connection_phase_that_meets_the_drain_is_refused_503() {
         panic!("a handshake whose connection phase met the drain was accepted");
     };
     assert_eq!((refusal.status(), refusal.reason()), (StatusCode::SERVICE_UNAVAILABLE, ulo_transport::SHUTDOWN_MESSAGE));
+    assert_eq!(retry_after(refusal), Some(SHED_RETRY_AFTER.to_owned()), "the drain's 503");
     hold.release.notify_one();
     within("the app's close", stopping).await.expect("the close task panicked");
     assert_eq!(hooks.all(), Vec::new(), "the connection phase ran a hook once the app was draining");

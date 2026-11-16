@@ -23,4 +23,6 @@ allow ulo-ws ulo_transport::__derive  # re-exported for the derives, as in `ulo-
 allow ulo-grpc ulo_transport::__derive  # re-exported for the derives, as in `ulo-http`
 
 allow ulo-ws ulo_http::__private::error_head  # the status and headers HTTP answers an error with, which a handshake refused under `refuse = handshake` answers with; one function the problem document's rendering also calls, so the two cannot disagree
+allow ulo-ws ulo_http::__private::handshake_answers  # the challenge and `Retry-After` of the HTTP server handing a handshake to the hand-off, read from the request's extensions, and `HttpConfig::default()`'s for a standalone server's; the same settings HTTP answers its own 401s and 503s with
+allow ulo-ws ulo_http::__private::HandshakeAnswers  # the value `handshake_answers` returns, named in the connection phase that carries it to the refusal
 allow ulo-grpc ulo_http::__private::Carried  # the seal of `ulo_http::HttpCarried`, which `Grpc` implements so a gRPC call runs HTTP's pre-dispatch stage; a doc-hidden supertrait is what seals it to the two transports
