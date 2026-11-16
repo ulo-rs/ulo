@@ -697,3 +697,24 @@ Breaks planted, each in a scratch copy, the working tree untouched:
 | a `not_applicable` name that is no scenario, in the README's first run | the suite's doctest, `E0425` naming it |
 | the README's first run with `disrupt` answering the wrong type | the suite's doctest |
 
+### Q29-13 status (the runtime suite published)
+
+- Leaf: `scripts/release_check.py lockstep` derives `ulo-runtime-conformance` as a leaf, 17 core crates and 41 leaves, since it owns no doc-hidden module and no core crate depends on it through a normal or build dependency (transports decision 175).
+- Public surface: `public-reach.txt` lists the crate with no allowance, so `Harness`, `Stoppable` and `Run` name only types `ulo` exports.
+- The README's first run compiles as a doctest of `ulo-runtime-conformance`: the suite stamped over `ulo-runtime-smol`, declaring the two shut-down scenarios not applicable as that crate's own `tests/conformance.rs` does.
+- `runtime_suite!` stamps an ignored scenario with a literal reason, which libtest prints; a harness answering `None` from `stoppable` without the declaration fails the two shut-down scenarios, naming the declaration.
+- `check_readme_install.py` reads the crate's README.
+
+Breaks planted, each in the working tree and then restored:
+
+| Break | Red |
+| --- | --- |
+| the README's first run with `stoppable` answering the wrong type | the suite's doctest, `E0308` |
+| a `not_applicable` name that is no scenario, in the README's first run | the suite's doctest, `E0425` naming it |
+| a `not_applicable` name that is no scenario, in `ulo-runtime-smol`'s test build | the build, `E0425` naming it |
+| the `not_applicable` block left out of `ulo-runtime-smol`'s harness | its two shut-down scenarios, naming the declaration |
+| `#[ignore = concat!(..)]` in place of the literal | the ignore reason absent from the report |
+| a caret on a README pin; a pin at another alpha | `check_readme_install.py`, naming the line |
+| a doc-hidden `__private` module in the suite | `lockstep`: the suite placed in the core |
+| a public function naming a `futures` type the suite does not re-export | `public_reach.py check` |
+| a re-export of `ulo_transport::__derive` | `private_paths.py check`, naming the path |

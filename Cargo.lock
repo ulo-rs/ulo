@@ -9858,6 +9858,7 @@ dependencies = [
  "futures",
  "tracing",
  "ulo",
+ "ulo-runtime-smol",
  "ulo-transport",
 ]
 
