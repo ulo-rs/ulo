@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, TryLockError};
 
 use crate::timer::BoxError;
 
@@ -422,8 +422,9 @@ mod serde_impl {
     }
 }
 
-/// The secrets one graph registered, as the text the redaction function replaces. Per graph,
-/// never process-wide, which would leak between tests.
+/// The secrets one graph registered, as the text the redaction function replaces. A graph
+/// redacts with its own registry, never the process's ([`with_process_secrets`]), which would
+/// leak between tests.
 #[derive(Clone, Default)]
 pub(crate) struct SecretRegistry {
     pub(crate) texts: Vec<String>,
@@ -475,7 +476,9 @@ impl SecretRegistry {
 pub(crate) struct Redactor(Arc<RwLock<Arc<SecretRegistry>>>);
 
 impl Redactor {
+    /// Also records `secrets` for the process's redacting panic hook, which runs outside any app.
     pub(crate) fn set(&self, secrets: &SecretRegistry) {
+        record_for_process(&secrets.texts);
         *self.0.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(secrets.clone());
     }
 
@@ -484,6 +487,68 @@ impl Redactor {
         let secrets = Arc::clone(&*self.0.read().unwrap_or_else(PoisonError::into_inner));
         redact_panic(&secrets, payload)
     }
+}
+
+/// Every secret a graph in this process registered, recorded when an app takes the graph at
+/// `wire` and at each `load`, and every text `collect_secrets` collected: what the hook
+/// `crate::panic::install_redacting_hook` installs replaces, since a panic hook runs on whatever
+/// thread panicked, inside no app. Process-wide and never emptied, so a secret of an app since
+/// dropped stays replaced. No graph reads it: each redacts with its own registry.
+///
+/// The hook may run on a thread that panicked anywhere, so the lock is held only to swap the
+/// pointer, which cannot panic, and the hook reads it with `try_read` alone (see
+/// [`with_process_secrets`]). [`RECORDING`] orders the writers, which build the next registry
+/// outside the lock.
+static PROCESS: RwLock<Option<Arc<SecretRegistry>>> = RwLock::new(None);
+
+static RECORDING: Mutex<()> = Mutex::new(());
+
+/// How many times [`with_process_secrets`] tries the lock, yielding between tries, before it gives
+/// up. A writer holds it for a pointer swap, so a try that fails throughout means a thread stopped
+/// inside one.
+const READ_ATTEMPTS: usize = 1000;
+
+/// Adds `texts` to the process's registry; a text already there, or empty, is skipped.
+pub(crate) fn record_for_process(texts: &[String]) {
+    let _recording = RECORDING.lock().unwrap_or_else(PoisonError::into_inner);
+    let current = PROCESS.read().unwrap_or_else(PoisonError::into_inner).clone();
+    let known = |text: &String| text.is_empty() || current.as_ref().is_some_and(|held| held.texts.contains(text));
+    if texts.iter().all(known) {
+        return;
+    }
+    let mut next = current.as_deref().cloned().unwrap_or_default();
+    for text in texts {
+        next.register(text.clone());
+    }
+    let next = Some(Arc::new(next));
+    let previous = std::mem::replace(&mut *PROCESS.write().unwrap_or_else(PoisonError::into_inner), next);
+    // Dropped outside the lock, so nothing but the swap runs under it.
+    drop(previous);
+}
+
+/// `f` over the process's registry, empty before anything is recorded; `None` when the lock was
+/// held by a writer on every one of [`READ_ATTEMPTS`] tries. Never waits on the lock, so a thread
+/// that panicked holding it, which the swap never does, could not deadlock here either.
+pub(crate) fn with_process_secrets<R>(f: impl FnOnce(&SecretRegistry) -> R) -> Option<R> {
+    for _ in 0..READ_ATTEMPTS {
+        let held = match PROCESS.try_read() {
+            Ok(guard) => guard.clone(),
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().clone(),
+            Err(TryLockError::WouldBlock) => {
+                std::thread::yield_now();
+                continue;
+            }
+        };
+        let empty = SecretRegistry::default();
+        return Some(f(held.as_deref().unwrap_or(&empty)));
+    }
+    None
+}
+
+/// The process registry's write lock, held by the caller, for the test that reads it held.
+#[cfg(test)]
+pub(crate) fn hold_process_lock_for_test() -> std::sync::RwLockWriteGuard<'static, Option<Arc<SecretRegistry>>> {
+    PROCESS.write().unwrap_or_else(PoisonError::into_inner)
 }
 
 const MARKER: &str = "[redacted]";
@@ -512,15 +577,21 @@ pub(crate) fn redact_as(secrets: &SecretRegistry, error: BoxError, text: String)
 
 /// A caught panic payload, converted to a message and redacted the same way.
 pub(crate) fn redact_panic(secrets: &SecretRegistry, payload: Box<dyn Any + Send>) -> Redacted {
-    let message = if let Some(s) = payload.downcast_ref::<&'static str>() {
+    let message = panic_text(&*payload);
+    let text = scrub(secrets, &message);
+    Redacted::from_parts(Box::new(PanicMessage(message)), text)
+}
+
+/// A panic payload's message, unredacted: the `&str` or `String` `panic!` carries, and a fixed
+/// text for any other payload.
+pub(crate) fn panic_text(payload: &(dyn Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
         (*s).to_owned()
     } else if let Some(s) = payload.downcast_ref::<String>() {
         s.clone()
     } else {
         "a panic whose payload is not a string".to_owned()
-    };
-    let text = scrub(secrets, &message);
-    Redacted::from_parts(Box::new(PanicMessage(message)), text)
+    }
 }
 
 /// The backstop: `scheme://user:password@host` becomes `scheme://[redacted]@host`.

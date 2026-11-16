@@ -846,8 +846,8 @@ pub async fn panic_redacted<R: ulo::Spawn + ?Sized>(runtime: &R, payload: Box<dy
 /// A panic kept when no stream is guarded, or after one has been raised, is logged at `error`, its
 /// message redacted on `runtime` as a task's panic is: the app's runtime redacts with the app's
 /// secrets, a runtime outside any app strips a url's userinfo alone. A panic that unwinds out of
-/// a watched task runs the process's panic hook first, which prints the unredacted message unless
-/// the application installs one of its own; this type governs what the link reports.
+/// a watched task runs the process's panic hook first, which [`ulo::secrets`] covers with
+/// [`ulo::panic::install_redacting_hook`]; this type governs what the link reports.
 ///
 /// ```
 /// use std::sync::Arc;

@@ -516,10 +516,12 @@ impl RpcClient {
     /// that would take the bytes held past it ends the call as an item past `max_queued_items`
     /// does: the client sends its server `cancel`, and the caller reads the items already held,
     /// then `Unavailable` with the reason `"overflow"`. An item over the bound on its own ends the
-    /// call the same way at once, the message naming its size. A call's last frame, `res`, `err` or
-    /// `end`, always fits, so a call answered by one reply is never ended by it. This handle and the
-    /// clones made from it after carry it, as [`timeout`](Self::timeout)'s do. `u64::MAX` removes
-    /// the bound.
+    /// call at once, however fast the caller reads, the client sending `cancel` the same way and
+    /// the caller reading `BadRequest` with the reason `"payload_too_large"`, the message naming
+    /// its size: no read makes room for it, so retrying the call meets it again. A call's last
+    /// frame, `res`, `err` or `end`, always fits, so a call answered by one reply is never ended by
+    /// it. This handle and the clones made from it after carry it, as
+    /// [`timeout`](Self::timeout)'s do. `u64::MAX` removes the bound.
     ///
     /// `0`, which would end every stream at its first item, is refused as [`ZeroBytes`].
     pub fn max_queued_bytes(mut self, bytes: u64) -> Result<Self, ZeroBytes> {
@@ -969,9 +971,12 @@ fn queued_bytes(frame: &Frame) -> u64 {
 }
 
 /// Ends call `id`, whose queue held its limit's worth of reply frames unread when another
-/// arrived: nothing more is routed to it, `cancel` is sent so its server stops producing, and only
-/// then is the error queued behind the frames already held. The error marks no call settled, and
-/// a settled call sends no `cancel` when it drops, so the `cancel` goes here or not at all.
+/// arrived, or was offered a frame over its byte bound on its own: nothing more is routed to it,
+/// `cancel` is sent so its server stops producing, and only then is the error queued behind the
+/// frames already held, `Unavailable` with the reason `overflow` for a bound the caller's reads
+/// make room under and `BadRequest` with `payload_too_large` for the frame no read makes room
+/// for. The error marks no call settled, and a settled call sends no `cancel` when it drops, so
+/// the `cancel` goes here or not at all.
 fn overflow(conn: &Conn, id: u64, waiting: &Waiting, passed: Overflow) {
     conn.pending().remove(&id);
     // A caller dropping its stream at this moment sends the `cancel` from its `Pending`; whichever
@@ -982,18 +987,30 @@ fn overflow(conn: &Conn, id: u64, waiting: &Waiting, passed: Overflow) {
             let _ = cancel.await;
         })));
     }
-    let message = match passed {
-        Overflow::Bytes { limit, item } if item > limit => format!(
-            "the stream's next reply item, of {item} bytes, is over the client's `max_queued_bytes` of {limit} on its own, and ended the call; its server was sent `cancel`"
-        ),
-        Overflow::Bytes { limit, item } => format!(
-            "the stream's reply items its caller had not read and the next one, of {item} bytes, would have passed {limit} bytes, the client's `max_queued_bytes`, and it ended the call; its server was sent `cancel`"
-        ),
-        Overflow::Items { limit } => format!(
-            "the stream had {limit} reply items its caller had not read, the client's `max_queued_items`, and the next one ended the call; its server was sent `cancel`"
-        ),
+    let error = match passed {
+        Overflow::TooLarge { limit, item } => RpcError::new(
+            ErrorKind::BadRequest,
+            format!(
+                "the stream's next reply item, of {item} bytes, is over the client's `max_queued_bytes` of {limit} on its own, and ended the call; its server was sent `cancel`"
+            ),
+        )
+        .with_reason("payload_too_large"),
+        Overflow::Bytes { limit, item } => RpcError::new(
+            ErrorKind::Unavailable,
+            format!(
+                "the stream's reply items its caller had not read and the next one, of {item} bytes, would have passed {limit} bytes, the client's `max_queued_bytes`, and it ended the call; its server was sent `cancel`"
+            ),
+        )
+        .with_reason("overflow"),
+        Overflow::Items { limit } => RpcError::new(
+            ErrorKind::Unavailable,
+            format!(
+                "the stream had {limit} reply items its caller had not read, the client's `max_queued_items`, and the next one ended the call; its server was sent `cancel`"
+            ),
+        )
+        .with_reason("overflow"),
     };
-    waiting.feed.finish(Err(RpcError::new(ErrorKind::Unavailable, message).with_reason("overflow")), 0);
+    waiting.feed.finish(Err(error), 0);
 }
 
 /// A streamed request's items as `in` frames, then `in_end`. A failure goes to the waiting call,
@@ -1580,15 +1597,16 @@ impl<Res> Stream for RpcStream<Res> {
 /// link or a broker refusal is `Unavailable`; the client's timeout `Timeout`, and a client whose
 /// runtime has shut down while it timed the call, or a link whose runtime refused a wait its
 /// connect made, `Unavailable` with `reason: "runtime_shut_down"`;
-/// an oversized payload
-/// `BadRequest` with `reason: "payload_too_large"`; a binary payload on a JSON link `BadRequest`
+/// an oversized payload, or a reply item over the client's `max_queued_bytes` on its own,
+/// `BadRequest` with `reason: "payload_too_large"`, as is a streamed request item over the
+/// server's, from the server; a binary payload on a JSON link `BadRequest`
 /// with `reason: "binary_unsupported"`, before any I/O; a call of a shape the link's
 /// `Capabilities::shapes` leave out `Unimplemented` with `reason: "shape_unsupported"`, before any
 /// I/O, and a streamed reply a server on such a link cannot write the same; a stream whose caller
-/// left more reply items unread than the client's `max_queued_items` `Unavailable` with
-/// `reason: "overflow"`, and a
-/// streamed request whose handler left more items unread than the server's the same, from the
-/// server; a `deadline-ms` the caller set with
+/// left more reply items unread than the client's `max_queued_items`, or more bytes than its
+/// `max_queued_bytes`, `Unavailable` with `reason: "overflow"`, and a
+/// streamed request whose handler left more items or bytes unread than the server's the same,
+/// from the server; a `deadline-ms` the caller set with
 /// `.header` `BadRequest` with `reason: "reserved_header"`, before any I/O; a request frame the
 /// link cannot encode `Internal`; a connect the link refuses as [`Misconfigured`] `Internal` with
 /// `reason: "misconfigured_link"`; a connect that panicked `Unavailable`, the link's error, which
@@ -1642,8 +1660,8 @@ impl RpcError {
     /// for a call of a shape the link does not carry, `"zero_timeout"`,
     /// `"reserved_header"` for a `deadline-ms` the caller set, `"overflow"` for a call whose reply
     /// items, or whose streamed request's items on its server, waited unread past the
-    /// `max_queued_items` of the side that held them, `"misconfigured_link"` for a link
-    /// that refused to connect as [`Misconfigured`], `"runtime_shut_down"` for a call whose
+    /// `max_queued_items` or `max_queued_bytes` of the side that held them,
+    /// `"misconfigured_link"` for a link that refused to connect as [`Misconfigured`], `"runtime_shut_down"` for a call whose
     /// client's runtime refused to time it or whose link's connect answered
     /// [`RuntimeShutDown`](ulo::RuntimeShutDown), and the server's `"bad_deadline"` for a
     /// `deadline-ms` header it cannot read.

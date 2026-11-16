@@ -131,8 +131,11 @@ impl<L: Link> Server<L> {
     /// bytes waiting past it ends the call as an item past `max_queued_items` does: the handler's
     /// execution is cancelled `CancelReason::Explicit`, its request ends failing with
     /// `ExtractError::OverflowedBytes`, and the call is answered `err` of kind `unavailable` with
-    /// the reason `overflow`. An item over the bound on its own ends the call the same way at once,
-    /// the message naming its size; a stream carrying such items needs a larger bound, on a link
+    /// the reason `overflow`. An item over the bound on its own ends the call at once, however fast
+    /// the handler reads: its request ends failing with `ExtractError::TooLarge` naming the bound,
+    /// and the call is answered `err` of kind `bad_request` with the reason `payload_too_large`,
+    /// the message naming the item's size, as a client answers a frame over its link's
+    /// `max_frame`, since a retry sends the same item again. A stream carrying such items needs a larger bound, on a link
     /// whose `max_frame` lets them through. A request or event carried in one frame, `req` or
     /// `evt`, is never queued, and neither bound applies to it. Both apply on every link alike: a
     /// link declaring `native_backpressure` paces whole calls under `max_inflight`, never one

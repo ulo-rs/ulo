@@ -84,7 +84,9 @@ impl<'a> ModuleDef<'a> {
     }
 
     /// Registers a secret this module holds, so the redaction function replaces it in every
-    /// error this graph reports. Registration is per graph, never process-wide.
+    /// error this graph reports. Registration is per graph: no other graph's errors replace it.
+    /// The process also records it, for the panic hook
+    /// [`install_redacting_hook`](crate::panic::install_redacting_hook) installs.
     pub fn secret<T: fmt::Display>(&mut self, secret: &Secret<T>) {
         self.node.secrets.push(secret.expose().to_string());
     }
