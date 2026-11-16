@@ -34,7 +34,7 @@ use crate::router::{RouteTarget, Routed, Router};
 use crate::routing::Routing;
 use crate::trace;
 use crate::transport::{ClientAddr, Http, RequestHead};
-use crate::upgrade::UpgradeHandler;
+use crate::upgrade::{ServingConfig, UpgradeHandler};
 
 /// What a backend calls per request: load shedding, the pre-dispatch stage, routing, `dispatch`,
 /// rendering (transports DESIGN §3.7). `Clone`, an `Arc` inside, so each connection task holds its
@@ -319,7 +319,11 @@ impl ServiceInner {
             if req.headers().contains_key(UPGRADE) {
                 let taker = self.upgrades.iter().find(|(path, _)| path.matches(req.path()).is_some()).map(|(_, taker)| Arc::clone(taker));
                 if let Some(taker) = taker {
-                    let end: Rest = Box::new(move |req| taker.upgrade(req));
+                    let serving = ServingConfig(Arc::clone(&self.config));
+                    let end: Rest = Box::new(move |mut req| {
+                        req.head.extensions.insert(serving);
+                        taker.upgrade(req)
+                    });
                     return self.unrouted(&exec.handle(), req, end).await;
                 }
             }

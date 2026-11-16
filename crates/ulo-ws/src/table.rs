@@ -154,8 +154,9 @@ impl GatewayDefaults {
         self
     }
 
-    /// Connections per gateway: unbounded at `Count::Default`. Over it a connection is accepted
-    /// and closed with 1013. `Count::Max(0)` is refused in `prepare`.
+    /// Connections per gateway: unbounded at `Count::Default`. Over it a connection is refused as
+    /// `Unavailable`, closed with 1013 after the upgrade, or under `refuse = handshake` answered 503
+    /// with `Retry-After` before it. `Count::Max(0)` is refused in `prepare`.
     pub fn max_connections(mut self, connections: Count) -> Self {
         self.max_connections = connections;
         self
@@ -283,11 +284,16 @@ impl GatewayTable {
     /// The decision on one upgrade request, made from its head alone: the gateway at its path
     /// (404 when none), RFC 6455's checks (405 for a method other than GET, 400 for HTTP/1.0, a
     /// missing `Connection: Upgrade`, `Upgrade: websocket` or `Sec-WebSocket-Key`, 426 for a
-    /// version other than 13), 503 once the drain has begun (on the HTTP server's port that
-    /// server's own drain answers first), and the first of the gateway's subprotocols the client
-    /// offered. Under `refuse = handshake` the connection phase runs
+    /// version other than 13), 503 with `Retry-After` once the drain has begun (on the HTTP
+    /// server's port that server's own drain answers first), and the first of the gateway's
+    /// subprotocols the client offered. Under `refuse = handshake` the connection phase runs
     /// here, its connect guards and `OnConnect`, and a refusal answers the status and headers HTTP
-    /// answers its error with, as [`ConnectRefused`](crate::ConnectRefused) states.
+    /// answers its error with, as [`ConnectRefused`](crate::ConnectRefused) states, a connection
+    /// over `max_connections` 503 with `Retry-After`.
+    ///
+    /// The challenge of a 401 whose error names none and the `Retry-After` of a 503 the server
+    /// gives for its own state are the HTTP server's `challenge` and `shed_retry_after` on its
+    /// port, and `Bearer` and one second, its defaults, on a standalone server's.
     ///
     /// `peer` is the client's address, which `ConnectionInfo::peer` reports.
     pub async fn handshake(&self, head: Parts, peer: Option<SocketAddr>) -> Handshake {

@@ -2,8 +2,9 @@
 //! `bind` hands the link each mounted pattern with the `Instances` its handler declares, one for a
 //! request and for an event left at its default. `prepare` refuses the option on a request handler,
 //! which no attribute can write and a hand-written controller can, and on a link declared without
-//! the `every_instance` capability, TCP's, naming the link's reason. No broker is needed: the
-//! recording link carries frames over TCP and declares what a broker would.
+//! the `every_instance` capability, TCP's, naming the link's reason, and hands the same list
+//! `bind` will to `Link::subscribable`, whose refusal it reports as `Configure`. No broker is
+//! needed: the recording links carry frames over TCP and declare what a broker would.
 
 use std::error::Error;
 use std::fmt;
@@ -194,4 +195,93 @@ async fn a_request_handler_declared_every_instance_is_refused() {
     assert!(matches!(refused, StartupError::Configure(_)), "{text}");
     assert!(text.contains("every.request") && text.contains("request handler declared `every_instance`"), "{text}");
     assert!(listened.lock().unwrap_or_else(PoisonError::into_inner).is_empty(), "the refused server listened");
+}
+
+/// TCP's frames under a broker's capabilities, its `subscribable` recording what `prepare` hands
+/// it and refusing with `refusal` when set, its `listen` counting the calls.
+struct Checking {
+    tcp: Tcp,
+    refusal: Option<&'static str>,
+    checked: Arc<Mutex<Vec<Subscription>>>,
+    listens: Arc<Mutex<usize>>,
+}
+
+impl Checking {
+    fn new(refusal: Option<&'static str>) -> Checking {
+        Checking { tcp: Tcp::new("127.0.0.1:0"), refusal, checked: Arc::default(), listens: Arc::default() }
+    }
+}
+
+impl Link for Checking {
+    const NAME: &'static str = "checking";
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::new(DeliveryMode::Competing)
+    }
+
+    async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
+        self.tcp.prepare(app).await
+    }
+
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        *self.checked.lock().unwrap_or_else(PoisonError::into_inner) = subscriptions.to_vec();
+        self.refusal.map_or(Ok(()), |refusal| Err(refusal.into()))
+    }
+
+    async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
+        *self.listens.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        self.tcp.listen(subscriptions).await
+    }
+
+    async fn connect(&self, runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+        self.tcp.connect(runtime).await
+    }
+
+    async fn drain(&self) {
+        self.tcp.drain().await;
+    }
+
+    async fn close(&self) -> Result<(), BoxError> {
+        self.tcp.close().await
+    }
+
+    fn bound(&self) -> Vec<BoundAddr> {
+        self.tcp.bound()
+    }
+}
+
+/// Q30-7: `prepare` hands the link's `subscribable` every pattern it routes with the instances
+/// its handler declares, the list `listen` receives. Planted break: the hook not called from
+/// `prepare`.
+#[tokio::test]
+async fn prepare_hands_subscribable_the_patterns_listen_receives() {
+    let link = Checking::new(None);
+    let (checked, listens) = (Arc::clone(&link.checked), Arc::clone(&link.listens));
+    bind(PricesRoot, link).await.expect("the server binds");
+    let checked = checked.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    assert_eq!(
+        checked,
+        vec![
+            Subscription::new("prices.changed", Instances::Every),
+            Subscription::new("prices.quote", Instances::One),
+            Subscription::new("prices.recorded", Instances::One),
+        ]
+    );
+    assert_eq!(*listens.lock().unwrap_or_else(PoisonError::into_inner), 1, "the server listened other than once");
+}
+
+/// Q30-7: a refusal from `subscribable` is a `Configure` failure naming the link, collected with
+/// the server's other configuration failures, and the server never listens. Planted break: the
+/// refusal returned at once rather than collected.
+#[tokio::test]
+async fn a_subscribable_refusal_is_a_configure_failure_collected_with_the_others() {
+    let link = Checking::new(Some("a pattern this link cannot carry"));
+    let listens = Arc::clone(&link.listens);
+    let app = App::builder(PricesRoot).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+    let refused = app.bind(ulo_rpc::Server::new(link).max_inflight(Count::Max(0))).listen().await.err().expect("a refused link's server bound");
+    let text = refused.to_string();
+    assert!(matches!(refused, StartupError::Configure(_)), "{text}");
+    assert!(text.contains("link `checking`: a pattern this link cannot carry"), "the refusal does not name the link and its reason: {text}");
+    assert!(text.contains("max_inflight"), "the refusal is not collected with the zero `max_inflight`: {text}");
+    assert_eq!(*listens.lock().unwrap_or_else(PoisonError::into_inner), 0, "a server whose link refused its patterns listened");
 }

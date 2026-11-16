@@ -39,12 +39,14 @@
 //! AMQP caps an exchange's name, a queue's, a routing key and a header's name at 255 bytes, so
 //! the link serves a pattern of at most 241 bytes, whose event exchange `ulo.rpc.event.<pattern>`
 //! is then 255, and an event declared `every_instance` on one of at most 208, whose queue of the
-//! instance's own, `ulo.rpc.event.<pattern>.<uuid>`, is then 255. A server's `listen` refuses a
-//! longer pattern, and a longer one whose event is declared `every_instance`, before it connects,
-//! as a permanent `StartupError::Bind` naming each such pattern, its length in bytes and the
-//! limit. A client fails an event whose exchange name, a request or a stream whose routing key, or
-//! a call carrying a header whose name, would be longer, before publishing it, and the connection
-//! carries the frames after it.
+//! instance's own, `ulo.rpc.event.<pattern>.<uuid>`, is then 255. A server refuses a longer
+//! pattern, and a longer one whose event is declared `every_instance`, in `prepare`, through
+//! `Link::subscribable`: a permanent `StartupError::Configure` entry naming each such pattern, its
+//! length in bytes and the limit, reported with every other server's configuration failures
+//! before any server binds. A client fails an event whose exchange name, a request or a stream
+//! whose routing key, or a call carrying a header whose name, would be longer, before publishing
+//! it, as `ulo_rpc::NameTooLong`, which the caller reads as `BadRequest` with the reason
+//! `name_too_long`, and the connection carries the frames after it.
 //!
 //! Upgrade the servers before the clients. A client publishes each event to the pattern's
 //! exchange, which a server of `ulo-rpc-rabbitmq` 0.1.0-alpha.2 or earlier binds no queue to:

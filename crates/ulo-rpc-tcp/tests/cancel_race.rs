@@ -180,6 +180,10 @@ impl<L: Link> Link for Gated<L> {
         self.link.max_inflight(calls);
     }
 
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        self.link.subscribable(subscriptions)
+    }
+
     async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         let inbound = self.link.listen(patterns).await?;
         // Deliveries read past a held `cancel`, handed on after it in their order.
