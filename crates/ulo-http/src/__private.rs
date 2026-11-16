@@ -2,28 +2,63 @@
 //! part of the public API: names and shapes here change with their users.
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 
 pub use ulo_transport as transport;
 
-use http::{HeaderMap, StatusCode};
+use http::{Extensions, HeaderMap, HeaderValue, StatusCode};
 use ulo_transport::CallError;
 
+use crate::backend::HttpConfig;
 use crate::extract::{Host, Path};
 use crate::handler::HttpHandler;
 use crate::render;
+use crate::upgrade::ServingConfig;
 
 /// The status and the headers HTTP answers `error` with: the status `WithHttpStatus` set when it is
 /// 400 to 599, otherwise the kind's, and the headers that status calls for, `WWW-Authenticate`
-/// with the error's own challenge or `default_challenge` on a 401, `Retry-After` from a
-/// `RetryAfter` detail on a 429 or a 503. A WebSocket handshake refused under
-/// `refuse = handshake` is answered with them.
-pub fn error_head(error: &CallError, default_challenge: &str) -> (StatusCode, HeaderMap) {
+/// with the error's own challenge on a 401, `Retry-After` from a `RetryAfter` detail on a 429 or a
+/// 503. A WebSocket handshake refused under `refuse = handshake` is answered with them, and a 401
+/// whose error names no challenge with [`HandshakeAnswers::challenge`].
+pub fn error_head(error: &CallError) -> (StatusCode, HeaderMap) {
     let status = render::status_for(error);
     let mut headers = HeaderMap::new();
-    render::status_headers(error, status, default_challenge, &mut headers);
+    render::status_headers(error, status, None, &mut headers);
     (status, headers)
+}
+
+/// What the server answering a WebSocket handshake adds to its refusals, as it adds them to its
+/// own errors and refusals. Each header is built when a refusal asks for it, so a handshake that
+/// is not refused builds none and logs nothing for a challenge that is not a valid header value.
+#[derive(Clone, Debug)]
+pub struct HandshakeAnswers(Option<Arc<HttpConfig>>);
+
+impl HandshakeAnswers {
+    /// `WWW-Authenticate` on a 401 whose error names no challenge: the server's `challenge`.
+    pub fn challenge(&self) -> HeaderValue {
+        match &self.0 {
+            Some(config) => render::challenge_value(&config.challenge),
+            None => render::challenge_value(&HttpConfig::default().challenge),
+        }
+    }
+
+    /// `Retry-After` on a 503 refusing for the server's own state, the drain or a connection
+    /// limit: the server's `shed_retry_after`.
+    pub fn retry_after(&self) -> HeaderValue {
+        match &self.0 {
+            Some(config) => render::retry_after(config.shed_retry_after),
+            None => render::retry_after(HttpConfig::default().shed_retry_after),
+        }
+    }
+}
+
+/// The answers of the server whose request carries `extensions`: the `ulo_http` server or embedding
+/// that handed the request to an `UpgradeHandler`, or, for a request no such server handed over,
+/// a standalone WebSocket server's, `HttpConfig::default()`'s `Bearer` and one second.
+pub fn handshake_answers(extensions: &Extensions) -> HandshakeAnswers {
+    HandshakeAnswers(extensions.get::<ServingConfig>().map(|serving| Arc::clone(&serving.0)))
 }
 
 /// The seal of [`HttpCarried`](crate::HttpCarried): implemented for `Http` here and for

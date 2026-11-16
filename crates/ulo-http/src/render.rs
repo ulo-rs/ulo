@@ -239,21 +239,19 @@ fn document(error: &CallError, status: StatusCode, config: &HttpConfig) -> Respo
     *response.status_mut() = status;
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/problem+json"));
-    status_headers(error, status, &config.challenge, headers);
+    status_headers(error, status, Some(&config.challenge), headers);
     response
 }
 
 /// The headers `status` calls for when it answers `error`: `WWW-Authenticate` on a 401, the
-/// error's own challenge or `default_challenge`, and `Retry-After` on a 429 or a 503 from a
-/// `RetryAfter` detail. `ulo-ws` writes a refused handshake's headers through it.
-pub(crate) fn status_headers(error: &CallError, status: StatusCode, default_challenge: &str, headers: &mut HeaderMap) {
-    if status == StatusCode::UNAUTHORIZED {
-        let challenge = error.challenge().unwrap_or(default_challenge);
-        let value = HeaderValue::from_str(challenge).unwrap_or_else(|_| {
-            tracing::warn!(challenge, "a `WWW-Authenticate` challenge is not a valid header value; `Bearer` is sent instead");
-            HeaderValue::from_static("Bearer")
-        });
-        headers.insert(WWW_AUTHENTICATE, value);
+/// error's own challenge or `default_challenge`, none when both are absent, and `Retry-After` on
+/// a 429 or a 503 from a `RetryAfter` detail. `ulo-ws` writes a refused handshake's headers
+/// through it, and the challenge of the server answering the handshake once it is known.
+pub(crate) fn status_headers(error: &CallError, status: StatusCode, default_challenge: Option<&str>, headers: &mut HeaderMap) {
+    if status == StatusCode::UNAUTHORIZED
+        && let Some(challenge) = error.challenge().or(default_challenge)
+    {
+        headers.insert(WWW_AUTHENTICATE, challenge_value(challenge));
     }
     if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
         if let Some(after) = error.details().retry_after() {
@@ -262,9 +260,17 @@ pub(crate) fn status_headers(error: &CallError, status: StatusCode, default_chal
     }
 }
 
+/// `challenge` as a `WWW-Authenticate` value, `Bearer` when it is not a valid header value.
+pub(crate) fn challenge_value(challenge: &str) -> HeaderValue {
+    HeaderValue::from_str(challenge).unwrap_or_else(|_| {
+        tracing::warn!(challenge, "a `WWW-Authenticate` challenge is not a valid header value; `Bearer` is sent instead");
+        HeaderValue::from_static("Bearer")
+    })
+}
+
 /// `Retry-After` as delay-seconds (RFC 9110 §10.2.3), a fraction of a second rounded up so a client
 /// never retries early.
-fn retry_after(after: Duration) -> HeaderValue {
+pub(crate) fn retry_after(after: Duration) -> HeaderValue {
     let seconds = after.as_secs() + u64::from(after.subsec_nanos() > 0);
     HeaderValue::from(seconds)
 }

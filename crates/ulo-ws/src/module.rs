@@ -66,8 +66,9 @@ impl WsModule {
         self
     }
 
-    /// Connections per gateway: unbounded at `Count::Default`. Over it a connection is accepted
-    /// and closed with 1013. `Count::Max(0)` is refused in `prepare`.
+    /// Connections per gateway: unbounded at `Count::Default`. Over it a connection is refused as
+    /// `Unavailable`, closed with 1013 after the upgrade, or under `refuse = handshake` answered 503
+    /// with `Retry-After` before it. `Count::Max(0)` is refused in `prepare`.
     pub fn max_connections(mut self, connections: Count) -> Self {
         self.defaults.max_connections = connections;
         self

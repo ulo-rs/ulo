@@ -136,8 +136,8 @@ pub async fn version<H: Host>() {
 /// The drain refuses an upgrade request in progress when it begins: a fresh connection carries
 /// half the request head, the server's count shows it has read from that connection, the drain
 /// begins, which an idle WebSocket connection's 1001 shows, and the rest of the head follows. A
-/// standalone server answers with the handshake's own 503, and the HTTP server's port with the
-/// HTTP server's own. The server's count is what shows the request in progress, since a server
+/// standalone server answers with the handshake's own 503 and `Retry-After`, and the HTTP server's
+/// port with the HTTP server's own. The server's count is what shows the request in progress, since a server
 /// stops accepting at its drain and drops what it has not accepted, and hyper closes as idle a
 /// connection it has read nothing from; no accept order is assumed. A host whose server cannot
 /// count fails here, and declares the scenario not applicable.
@@ -197,10 +197,14 @@ pub async fn draining<H: Host>() {
     app.closed(closing).await;
 }
 
-/// `answer` is the drain's refusal of an upgrade request on `H`'s port.
+/// `answer` is the drain's refusal of an upgrade request on `H`'s port. On a gateway's own port
+/// it carries `Retry-After`, one second, as the HTTP server's drain refusal does unset.
 fn refused_at_drain<H: Host, S>(what: &str, answer: &Answer<S>) {
     match H::PORT {
-        Port::Own => refused(what, answer, 503),
+        Port::Own => {
+            refused(what, answer, 503);
+            assert_eq!(answer.header("retry-after"), Some("1"), "{what}: `Retry-After`");
+        }
         Port::Http => {
             // The status alone: on the HTTP port, the HTTP server's drain and load shedding
             // answer first, with the HTTP server's own 503 (F368; the rule is stated in
