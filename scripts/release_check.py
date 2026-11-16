@@ -36,7 +36,9 @@ three steps against it and stops at the first that fails:
 `semver-breaks.txt` lists `break <package> <lint> <count>  # reason`: a break since the last
 release that is accepted, with the number of distinct items the lint reports in that package. The
 check fails on a break no entry accepts, on an entry whose count differs from the run's, and on an
-entry nothing matches, so its entries go once BASELINE is a release that carries their breaks.
+entry nothing matches. An `against <version>` line, required once there is an entry, names the
+release the entries were written for. When BASELINE is another release the entries are not
+applied and the job prints a note saying so, so the tag does not turn the job red.
 
 `--skip` leaves a package out of step 3, and out of release-plz's own semver check in step 2, on
 a machine that cannot build its rustdoc: `ulo-rpc-kafka` with its `tls` feature needs OpenSSL
@@ -309,6 +311,8 @@ def read_breaks(text):
             continue
         body, _, reason = line.partition(" # ")
         parts = body.split()
+        if parts and parts[0] == "against":
+            continue
         if len(parts) != 4 or parts[0] != "break" or not parts[3].isdigit():
             raise UsageError(f"{BREAKS}:{n}: expected `break <package> <lint> <count>  # reason`")
         if not reason.strip():
@@ -318,6 +322,42 @@ def read_breaks(text):
             raise UsageError(f"{BREAKS}:{n}: `{parts[1]} {parts[2]}` is listed twice")
         entries[key] = (int(parts[3]), reason.strip())
     return entries
+
+
+def read_against(text):
+    """The release `semver-breaks.txt` is written against, from its `against <version>` line, or
+    `None` for a file with no entries and no line. A file with entries and no line, or two lines,
+    is a usage error: an entry is accepted only against the release it was written for."""
+    versions = []
+    entries = 0
+    for n, raw in enumerate(text.splitlines(), 1):
+        body = raw.strip().partition(" # ")[0].split()
+        if not body or body[0].startswith("#"):
+            continue
+        if body[0] == "against":
+            if len(body) != 2:
+                raise UsageError(f"{BREAKS}:{n}: expected `against <version>`")
+            versions.append(body[1].removeprefix("v"))
+        elif body[0] == "break":
+            entries += 1
+    if len(versions) > 1:
+        raise UsageError(f"{BREAKS}: `against` is given {len(versions)} times")
+    if entries and not versions:
+        raise UsageError(f"{BREAKS}: entries need an `against <version>` line naming the release they accept breaks against")
+    return versions[0] if versions else None
+
+
+def breaks_for(text, baseline_version):
+    """`(entries, note)`: the entries when the file is written against `baseline_version`, none
+    and a note naming the mismatch otherwise, so a file left from an earlier release accepts
+    nothing and fails nothing."""
+    entries = read_breaks(text)
+    against = read_against(text)
+    if against is None or against == baseline_version:
+        return entries, None
+    return {}, (f"{BREAKS} is written against {against} and this run's baseline is "
+                f"{baseline_version}: its {len(entries)} entries are not applied; replace them "
+                f"with the breaks since {baseline_version} and set `against {baseline_version}`")
 
 
 def semver_findings(report, expected, accepted, skipped=(), major=()):
@@ -457,7 +497,10 @@ def check(root, baseline, skipped):
             return 1
         print(f"release-plz: {len(cur)} crates versioned, the core at {after[ANCHOR]['version']}")
 
-    accepted = read_breaks((root / BREAKS).read_text()) if (root / BREAKS).exists() else {}
+    accepted, stale = (breaks_for((root / BREAKS).read_text(), base[ANCHOR]["version"])
+                       if (root / BREAKS).exists() else ({}, None))
+    if stale:
+        print(f"semver: {stale}")
     by_type, no_library, unreleased, found = semver_targets(base, cur, set(skipped))
     expected = {n for names in by_type.values() for n in names}
     report = parse_semver_log(run_semver(root, baseline, by_type, env))
@@ -648,6 +691,24 @@ def self_test():
         try:
             read_breaks(bad)
             failures.append(f"break list reader accepted {bad!r}")
+        except UsageError:
+            pass
+
+    legal = "against 0.1.0-alpha.2\nbreak ulo function_missing 2  # wanted\n"
+    if breaks_for(legal, "0.1.0-alpha.2") != ({("ulo", "function_missing"): (2, "wanted")}, None):
+        failures.append("a file against its own baseline was not applied")
+    entries, note = breaks_for(legal, "0.1.0-alpha.3")
+    if entries or not note or "0.1.0-alpha.2" not in note or "0.1.0-alpha.3" not in note:
+        failures.append("a file against an earlier release was applied or gave no note")
+    if breaks_for("against v0.1.0-alpha.2\n", "0.1.0-alpha.2")[1] is not None:
+        failures.append("a `v` prefix on the against line was refused")
+    if breaks_for("# c\n", "0.1.0-alpha.3") != ({}, None):
+        failures.append("an empty file gave a note")
+    for bad in ("break ulo function_missing 2  # r\n", "against 1\nagainst 2\n", "against\n",
+                "against 1 2\n"):
+        try:
+            breaks_for(bad, "1")
+            failures.append(f"breaks without a legal against line were accepted: {bad!r}")
         except UsageError:
             pass
 
