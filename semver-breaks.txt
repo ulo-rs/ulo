@@ -2,7 +2,10 @@
 # job checks out: `break <package> <lint> <count>  # reason`, `<lint>` as cargo-semver-checks names
 # it and `<count>` the distinct items it reports for that lint in that package. A break no entry
 # accepts fails the job, as does a count the run does not reproduce and an entry the run does not
-# report, so these entries go once the last release is one that carries them.
+# report. The `against` line names the release the entries were written for; when the job's
+# baseline is another release the entries are not applied, and the job says so.
+
+against 0.1.0-alpha.2
 
 break ulo enum_no_repr_variant_discriminant_changed 33  # #408 adds `WiringError::DuplicateSetting` ahead of later variants; every variant carries fields and the enum is `#[non_exhaustive]`, so no caller reads a discriminant
 break ulo enum_struct_variant_field_added 1  # `WiringError::ScopeViolation` carries `controller`, which chooses the attribute its hint names, `#[controller(execution)]` for a controller and `#[injectable(execution)]` for any other type; a pattern written without `..` names the new field

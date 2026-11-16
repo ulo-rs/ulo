@@ -65,7 +65,7 @@ cargo-semver-checks has no lint for a changed type: a parameter or return type t
 tuple struct's field that stops being public, passes step 3. A change making such a break adds a
 comment line to `semver-breaks.txt` in the form `# unchecked <package> <item>  # reason`, which
 the script skips. The pull request that cuts a release lists those lines in the release's notes
-beside the `break` entries, and the first change after the tag removes both.
+beside the `break` entries; the first change after the tag replaces both.
 
 ## Reading a failure
 
@@ -122,9 +122,10 @@ regenerates `Cargo.lock` for the workspace members, and updates the Install sect
 While that version is a pre-release the Install sections pin each crate `=<version>`, and the
 script refuses any other operator: a caret on a pre-release also takes a later pre-release of the
 same version, which may break the first.
-The release is tagged `v<version>`. From that tag on, `release check` compares with the new release,
-every entry in `semver-breaks.txt` stops matching, and the first change after the tag removes them.
-Until that change merges, the job fails on `master` and on every other pull request.
+The release is tagged `v<version>`. From that tag on, `release check` compares with the new release
+and the `against` line in `semver-breaks.txt` no longer matches it, so its entries are not applied.
+The first change that breaks a public item replaces the file with entries for the breaks since the
+new release and sets `against` to it.
 
 ## Publishing a crate for the first time
 
