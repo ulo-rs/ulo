@@ -478,13 +478,13 @@ fn closing_and_dropping_links_does_not_stall_the_thread() {
 
 mod tasks;
 
-/// Q22-P10: a panic in each of the server's tasks, the request lane, the control lane and the
-/// writer, ends the server as a transport failure naming the link and the task, the panic
-/// redacted.
+/// Q22-P10: a panic in each of the server's tasks, the request lane, the control lane, the writer
+/// and the partition watcher, ends the server as a transport failure naming the link and the
+/// task, the panic redacted.
 #[tokio::test]
 async fn a_panicking_server_task_is_a_panicked_failure_the_core_recognises() {
     let broker = KraftBroker::start().await;
-    for task in ["request lane", "control lane", "writer"] {
+    for task in ["request lane", "control lane", "writer", "partition watcher"] {
         let plant = ulo_rpc::link::PlantedPanic::new(task, tasks::PANIC_TEXT);
         tasks::server_task_panics(broker.link().panic_in(plant.clone()), plant, &format!("the Kafka link's {task} panicked: ")).await;
     }

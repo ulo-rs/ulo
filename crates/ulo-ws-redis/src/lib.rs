@@ -140,7 +140,7 @@ const DEFAULT_USER: &str = "default";
 /// What the redis client reads from an adapter's URL, as its settings report it.
 struct Reading {
     /// Where the client connects: `redis://`, `rediss://` or `redis+unix://` by the connection it
-    /// makes, then the host, its ASCII letters lowercased, and the port, the default port filled
+    /// makes, then the host as `canonical_host` writes it and the port, the default port filled
     /// in, or the socket's path as written. The client's reading carries no userinfo, query,
     /// fragment or database.
     url: String,
@@ -154,14 +154,37 @@ struct Reading {
 }
 
 /// `host` as the canonical `url` writes it: its ASCII letters lowercased, since DNS compares names
-/// without regard to ASCII case (RFC 4343) and `redis://H` and `redis://h` reach one server, and
-/// an IPv6 address, which the redis client holds without its brackets, in brackets. A non-ASCII
-/// letter keeps its case: a `redis://` URL's host is opaque to the URL parser, which
-/// percent-encodes such a letter and applies no IDNA mapping, and the client resolves the host as
-/// written.
+/// without regard to ASCII case (RFC 4343) and `redis://H` and `redis://h` reach one server; one
+/// trailing dot dropped from a DNS name, the dot that marks the name absolute (RFC 1034 §3.1), so
+/// `redis://h.` and `redis://h` compare equal; and an IPv6 address, which the redis client holds
+/// without its brackets, in brackets. A non-ASCII letter keeps its case: a `redis://` URL's host
+/// is opaque to the URL parser, which percent-encodes such a letter and applies no IDNA mapping,
+/// and the client resolves the host as written.
+///
+/// The dot stays where dropping it would change what the host names: on a host that is a dot
+/// alone, on a second trailing dot, which leaves an empty label, on an IPv6 address, and on a host
+/// whose last label reads as a number, decimal or `0x` hexadecimal, as an IPv4 address's does: no
+/// top-level DNS label is all-numeric (RFC 3696 §2), and the system resolver can parse such a host
+/// as an address without the dot (`inet_aton`) and looks it up as a name with it.
 fn canonical_host(host: &str) -> String {
     let host = host.to_ascii_lowercase();
-    if host.contains(':') { format!("[{host}]") } else { host }
+    if host.contains(':') {
+        return format!("[{host}]");
+    }
+    match host.strip_suffix('.') {
+        Some(name) if !name.is_empty() && !name.ends_with('.') && !name.rsplit('.').next().is_some_and(numeric) => name.to_owned(),
+        _ => host,
+    }
+}
+
+/// Whether `label`, lowercased, is a number as `inet_aton` reads an address part: decimal digits,
+/// or `0x` and hexadecimal digits.
+fn numeric(label: &str) -> bool {
+    let (digits, radix) = match label.strip_prefix("0x") {
+        Some(hex) => (hex, 16),
+        None => (label, 10),
+    };
+    digits.chars().all(|c| c.is_digit(radix)) && (radix == 16 || !digits.is_empty())
 }
 
 const NO_RUNTIME: &str = "the Redis broadcast adapter has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
@@ -289,14 +312,17 @@ impl BroadcastAdapter for Redis {
     ///   socket's path. `redis://:key@cache/2` is `redis://cache:6379`, and
     ///   `redis+unix:///run/redis.sock?pass=key&db=1` is `redis+unix:///run/redis.sock`. No
     ///   userinfo, query, fragment or database reaches it. The host's ASCII letters are
-    ///   lowercased, DNS names comparing without regard to ASCII case (RFC 4343), so
-    ///   `redis://Cache` and `redis://cache` compare equal; a socket's path keeps its case.
+    ///   lowercased, DNS names comparing without regard to ASCII case (RFC 4343), and one trailing
+    ///   dot is dropped from a DNS name, so `redis://Cache`, `redis://cache.:6379` and
+    ///   `redis://cache` compare equal; an IP address keeps a trailing dot, and a socket's path
+    ///   keeps its case.
     /// - `username`, the ACL user the connection authenticates as, which selects the commands and
     ///   keys the connection may use: the userinfo's username of a TCP URL and the `user` query
     ///   parameter of a Unix socket's, `default` when the URL names none. The client sends `AUTH`
     ///   only with a password, so a username written without one authenticates nothing and is
     ///   `default` too: `redis://alice@cache` and `redis://cache` compare equal, and
-    ///   `redis://alice:key@cache` and `redis://bob:key@cache` are refused naming `username`.
+    ///   `redis://alice:key@cache` and `redis://bob:key@cache` are refused naming `username`. The
+    ///   name is printed as it is, `alice`, as `url` is.
     /// - `database`, the path of a TCP URL and the `db` query parameter of a Unix socket's, 0 when
     ///   the URL names none, so `redis://a:6379` and `redis://a:6379/0` compare equal.
     /// - `protocol`, `resp2` or `resp3`, from the `protocol` query parameter, `resp2` when the URL
@@ -323,7 +349,7 @@ impl BroadcastAdapter for Redis {
             Ok(reading) => {
                 let settings = settings
                     .with("url", format_args!("{}", reading.url))
-                    .with("username", reading.username)
+                    .with("username", format_args!("{}", reading.username))
                     .with("database", reading.database)
                     .with("protocol", format_args!("{}", reading.protocol));
                 match reading.tls_verify {

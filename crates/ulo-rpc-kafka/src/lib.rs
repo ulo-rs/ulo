@@ -4,8 +4,9 @@
 //! size limit the producer's `message.max.bytes`, 1,000,000 bytes, a broker configured lower
 //! refusing with the same error; `Competing` through the consumer group, the application's root
 //! module's full type path unless `.group(..)` names one, and an event declared `every_instance`
-//! through a consumer of each instance's own, assigned every partition of its topic from its end
-//! at `bind` and committing nothing, so the broker records no group for it; the handler topics created at `bind`, so
+//! through a consumer of each instance's own, assigned every partition of its topic at the end
+//! `bind` reads and committing nothing, so the broker records no group for it, with a `warn` once
+//! the topic's partition count changes after `bind`; the handler topics created at `bind`, so
 //! a stopped server's topic exists and a miss is the client's `Timeout` under auto-create; the
 //! group's offsets committed at the topics' end at `bind` where it has none, so a request produced
 //! while no instance consumes, or while a rebalance moves its partition, waits for the next owner
@@ -14,6 +15,11 @@
 //! unset, the group consumer pauses its partitions until a request settles, so requests over the
 //! bound wait in their topics rather than being refused; the drain pauses and commits; an
 //! `ssl://` broker entry selects `security.protocol=SSL` under the `tls` feature.
+//!
+//! A server's `bind` returns once the consumers of the instance's own, the control topic's and
+//! the every-instance events', are assigned, so a record produced to either after `bind` returns
+//! is read, and fails with [`ConnectTimedOut`] when it has not returned within
+//! [`Kafka::connect_within`], 30 s unset, timed on the app's `Timer`.
 //!
 //! Kafka accepts that first commit only while the group has no member, so it anchors a topic only
 //! when the group's first instance binds. A handler added in a deployment that rolls out while
@@ -53,3 +59,4 @@
 mod link;
 
 pub use link::Kafka;
+pub use ulo_rpc::ConnectTimedOut;
