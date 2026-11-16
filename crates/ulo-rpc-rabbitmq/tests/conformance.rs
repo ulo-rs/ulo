@@ -443,6 +443,13 @@ async fn a_client_dropped_holding_an_untaken_connection_closes_it() {
     released(&broker.relay, "a client dropped holding an untaken connection").await;
 }
 
+/// What a refused frame's `NameTooLong` names: what the name is, its length and the limit.
+fn too_long(refused: &ulo::BoxError) -> (&'static str, usize, u64) {
+    assert!(!ulo::is_panic(refused), "the refusal panicked the writer: {refused}");
+    let named = refused.downcast_ref::<ulo_rpc::NameTooLong>().unwrap_or_else(|| panic!("refused other than as `NameTooLong`: {refused}"));
+    (named.what, named.name.len(), named.limit)
+}
+
 /// An event on `pattern` from `outbound`.
 async fn emitted(outbound: &ulo_rpc::Outbound, pattern: &str) -> Result<(), ulo::BoxError> {
     let event = Frame::Evt { pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
@@ -481,11 +488,11 @@ async fn the_broker_serves_patterns_whose_names_are_255_bytes() {
 }
 
 /// A client frame on a pattern AMQP cannot name, an event on 242 bytes, whose exchange would be
-/// 256, and a request and a stream's open on 256, fails that frame naming the pattern, its length
-/// and the limit, as does an event carrying a header name of 256 bytes, and the connection
-/// carries the next frame: lapin's `ShortString` panics on such a name where it converts with
-/// `From`, which would end the writer and fail every call on the connection. Planted break: the
-/// names converted with `into()`.
+/// 256, and a request and a stream's open on 256, fails that frame as `NameTooLong` naming the
+/// pattern, its length and the limit, as does an event carrying a header name of 256 bytes, and
+/// the connection carries the next frame: lapin's `ShortString` panics on such a name where it
+/// converts with `From`, which would end the writer and fail every call on the connection.
+/// Planted break: the names converted with `into()`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_client_frame_on_a_pattern_amqp_cannot_name_fails_alone() {
     let broker = RabbitMqBroker::start().await;
@@ -497,26 +504,19 @@ async fn a_client_frame_on_a_pattern_amqp_cannot_name_fails_alone() {
     let outbound = client.connect(&runtime).await.expect("the client's link connects");
 
     let event = emitted(&outbound, &"v".repeat(242)).await.expect_err("an event whose exchange name is 256 bytes was published");
-    assert!(!ulo::is_panic(&event), "the event on a 242-byte pattern panicked the writer: {event}");
-    let text = event.to_string();
-    for part in ["is 242 bytes", "event exchange `ulo.rpc.event.<pattern>` would be 256 bytes", "AMQP's 255-byte limit"] {
-        assert!(text.contains(part), "the refused event does not say `{part}`: {text}");
-    }
+    assert_eq!(too_long(&event), ("event pattern", 242, 241), "the refusal of an event on a 242-byte pattern");
     let pattern = "r".repeat(256);
     let request = Frame::Req { id: 1, pattern: pattern.clone(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
     let request = (outbound.send)(Pattern::from(pattern.as_str()), request, Some(ReplyTo { id: 1 })).await.expect_err("a 256-byte routing key was published");
-    assert!(!ulo::is_panic(&request), "the request on a 256-byte pattern panicked the writer: {request}");
-    assert!(request.to_string().contains("routing key would be 256 bytes"), "the refused request does not name its routing key: {request}");
+    assert_eq!(too_long(&request), ("request pattern", 256, 255), "the refusal of a request on a 256-byte pattern");
     let open = Frame::Open { id: 2, pattern: pattern.clone(), headers: CallHeaders::new() };
     let open = (outbound.send)(Pattern::from(pattern.as_str()), open, Some(ReplyTo { id: 2 })).await.expect_err("a stream's open on a 256-byte routing key was published");
-    assert!(!ulo::is_panic(&open), "the open on a 256-byte pattern panicked the writer: {open}");
-    assert!(open.to_string().contains("routing key would be 256 bytes"), "the refused open does not name its routing key: {open}");
+    assert_eq!(too_long(&open), ("request pattern", 256, 255), "the refusal of a stream's open on a 256-byte pattern");
     let mut headers = CallHeaders::new();
     headers.insert("h".repeat(256), "v");
     let named = Frame::Evt { pattern: served.to_owned(), headers, data: Data::new(b"1".as_slice()) };
     let named = (outbound.send)(Pattern::from(served), named, None).await.expect_err("an event carrying a 256-byte header name was published");
-    assert!(!ulo::is_panic(&named), "a 256-byte header name panicked the writer: {named}");
-    assert!(named.to_string().contains("a header name on pattern `client.after.refusal` is 256 bytes"), "the refused event does not name its header: {named}");
+    assert_eq!(too_long(&named), ("header name", 256, 255), "the refusal of a 256-byte header name");
 
     emitted(&outbound, served).await.expect("the connection carries an event after the refusals");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next())

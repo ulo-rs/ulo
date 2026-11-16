@@ -90,6 +90,17 @@ pub trait Link: Send + Sync + 'static {
         let _ = calls;
     }
 
+    /// What the link refuses of the subscriptions [`listen`](Self::listen) would receive, before
+    /// any I/O: on RabbitMQ, a pattern whose event exchange or queue AMQP cannot name. Called from
+    /// `Server::prepare` with every pattern the server routes, the list `listen` receives, so the
+    /// refusal is a `Configure` failure, reported with every server's configuration failures
+    /// before any server binds. A link that wraps another forwards it, or the wrapped link's
+    /// refusal comes from its `listen`.
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        let _ = subscriptions;
+        Ok(())
+    }
+
     /// Server side: subscribe to the mounted handlers' patterns, each with the [`Instances`] a
     /// message on it reaches: [`Instances::One`] for every request and for an event left at its
     /// default, [`Instances::Every`] for an event whose handler is declared `every_instance`. The
@@ -234,7 +245,7 @@ impl fmt::Debug for Ack {
 /// A link's client side, from [`Link::connect`]: `send` publishes a frame on `pattern`, with the
 /// reply's correlation when one is expected, and `replies` yields every reply-lane frame for this
 /// client. A link with a miss signal fails `send` with [`NoDestination`]; one refusing a frame over
-/// its size with [`FrameTooLarge`].
+/// its size with [`FrameTooLarge`], and one carrying a name it cannot with [`NameTooLong`].
 ///
 /// On TCP, UDP, Redis, RabbitMQ and Kafka, frames go out in the order their sends were called: each
 /// frame takes its place in the writer's queue when `send` is called, before the returned future
@@ -783,6 +794,38 @@ impl fmt::Display for FrameTooLarge {
 }
 
 impl Error for FrameTooLarge {}
+
+/// A frame carrying a name over the link's limit on that name, refused before it is sent: on
+/// RabbitMQ, an event's pattern over 241 bytes, whose exchange `ulo.rpc.event.<pattern>` AMQP
+/// cannot name, a request's pattern over 255 bytes, which no routing key holds, or a call header's
+/// name over 255 bytes. `RpcClient` answers it `BadRequest` with `reason: "name_too_long"`, the
+/// message naming which name and its length: no retry sends such a frame.
+///
+/// ```
+/// use ulo::BoxError;
+/// use ulo_rpc::NameTooLong;
+///
+/// let refused: BoxError = NameTooLong { what: "header name", name: "h".repeat(256), limit: 255 }.into();
+/// assert!(refused.is::<NameTooLong>());
+/// assert!(refused.to_string().starts_with("the header name `hhh"));
+/// assert!(refused.to_string().ends_with("` is 256 bytes, over the link's limit of 255 bytes on it"));
+/// ```
+#[derive(Debug)]
+pub struct NameTooLong {
+    /// What the name is, as it reads in prose: `"event pattern"`, `"header name"`.
+    pub what: &'static str,
+    pub name: String,
+    /// The longest such name the link carries, in bytes.
+    pub limit: u64,
+}
+
+impl fmt::Display for NameTooLong {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the {} `{}` is {} bytes, over the link's limit of {} bytes on it", self.what, self.name, self.name.len(), self.limit)
+    }
+}
+
+impl Error for NameTooLong {}
 
 /// A frame the link's codec cannot encode, from [`Codec::encode_frame`]: a payload that is not an
 /// item of that codec, such as a `Data` built from JSON bytes and answered on a CBOR link. On a

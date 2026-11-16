@@ -30,7 +30,8 @@ const DEFAULT_SHED_RETRY_AFTER: Duration = Duration::from_secs(1);
 
 /// The RPC server over link `L`: `app.bind(ulo_rpc::Server::new(ulo_rpc_tcp::Tcp::new("0.0.0.0:7000")))`.
 ///
-/// `prepare` calls `Link::prepare` and `Link::max_inflight`, and refuses two handlers for one
+/// `prepare` calls `Link::prepare`, `Link::max_inflight` and `Link::subscribable`, the last with
+/// every pattern it routes, and refuses two handlers for one
 /// pattern, a handler whose shape the link's capabilities do not carry (a streamed shape on UDP),
 /// an `#[event]` handler with a streamed shape, a request handler declared `every_instance`, an
 /// event declared `every_instance` on a link declaring `without_every_instance` (TCP, UDP), a
@@ -270,6 +271,9 @@ impl<L: Link> ulo::Server for Server<L> {
                 }
             }
         }
+        if let Err(error) = self.link.subscribable(&subscriptions(&routes)) {
+            failures.push_link_error(L::NAME, error);
+        }
         failures.into_result()?;
         let requests = routes.values().filter(|route| route.kind == Kind::Message).count();
         let events = routes.values().filter(|route| route.kind == Kind::Event && route.instances == Instances::One).count();
@@ -311,10 +315,7 @@ impl<L: Link> ulo::Server for Server<L> {
         let Some(shared) = &self.shared else {
             return Err("the RPC server was bound before `prepare` built its routes".into());
         };
-        let mut subscriptions: Vec<Subscription> =
-            shared.routes.iter().map(|(pattern, route)| Subscription::new(pattern.as_str(), route.instances)).collect();
-        subscriptions.sort();
-        let inbound = self.link.listen(&subscriptions).await?;
+        let inbound = self.link.listen(&subscriptions(&shared.routes)).await?;
         *self.inbound.lock().unwrap_or_else(PoisonError::into_inner) = Some(inbound);
         Ok(())
     }
@@ -488,6 +489,14 @@ async fn abandon(shared: &Shared, tasks: &mut TaskSet, unread: usize) {
     }
     tasks.abort_all();
     tasks.join_all().await;
+}
+
+/// Each routed pattern with the instances its handler declares, in order: what `Link::subscribable`
+/// checks and `Link::listen` receives.
+fn subscriptions(routes: &HashMap<String, Route>) -> Vec<Subscription> {
+    let mut subscriptions: Vec<Subscription> = routes.iter().map(|(pattern, route)| Subscription::new(pattern.as_str(), route.instances)).collect();
+    subscriptions.sort();
+    subscriptions
 }
 
 /// A handler as a `prepare` failure names it, `` `Invoices::create` ``.
