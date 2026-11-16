@@ -7,7 +7,8 @@ shutdown, and run on a runtime and a server you choose.
 
 The core owns no async runtime and no socket. A runtime crate (`ulo-runtime-tokio`,
 `ulo-runtime-smol`) and a transport crate (`ulo-http-hyper`, `ulo-rpc-nats`, ...) are added beside it,
-so the same application module runs on either runtime and behind any server.
+so the same application module runs on either runtime and behind any server. A runtime written
+outside this repository runs `ulo-runtime-conformance`, the suite both runtimes pass.
 
 ## Install
 

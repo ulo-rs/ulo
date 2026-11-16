@@ -7,9 +7,9 @@ description = "The conformance suite every Ulo runtime runs"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# A dev-dependency of the runtime crates and of nothing else. Cargo strips dev-dependencies when
-# publishing them, so this never needs a crates.io release.
-publish = false
+readme = "README.md"
+keywords = ["ulo", "runtime", "conformance", "testing"]
+categories = ["development-tools::testing", "asynchronous"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.2" }
@@ -19,6 +19,11 @@ ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.2" }
 futures.workspace = true
 # The recording subscriber the scenario reading the core's `warn` installs.
 tracing.workspace = true
+
+[dev-dependencies]
+# The README's first run, compiled as a doctest of this crate: the suite stamped over the smol
+# runtime. A dev-dependency cycle Cargo allows.
+ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 
 [lints]
 workspace = true
