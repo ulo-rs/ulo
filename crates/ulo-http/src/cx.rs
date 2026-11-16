@@ -67,8 +67,8 @@ pub(crate) struct MatchedRoute {
     /// The route pattern as written, prefix applied: `/users/{id}`.
     pub(crate) pattern: Arc<str>,
     pub(crate) params: PathParams,
-    /// The server's body limit, or the route's `#[meta(BodyLimit(..))]`.
-    pub(crate) body_limit: u64,
+    /// The server's body limit, or the route's `#[meta(MaxBody(..))]`.
+    pub(crate) max_body: u64,
 }
 
 /// A matched route's path parameters, percent-decoded but for `%2F`, which stays as sent, in the

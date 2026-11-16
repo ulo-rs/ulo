@@ -191,9 +191,9 @@ impl Args {
                     self.setters.push(quote!(.subprotocols([#(#names),*])));
                 }
             }
-            "message_limit" => {
+            "max_message" => {
                 let value: Expr = input.parse()?;
-                self.setters.push(quote_spanned!(value.span()=> .message_limit(#value)));
+                self.setters.push(quote_spanned!(value.span()=> .max_message(#value)));
             }
             "max_connections" | "max_inflight" | "max_outbound" => {
                 let value: Expr = input.parse()?;
@@ -225,7 +225,7 @@ impl Args {
                 return Err(syn::Error::new(
                     span,
                     "expected `path`, `namespace`, `event`, `codec`, `subprotocols`, `session`, `session_with`, \
-                     `connect_guards(..)`, `refuse`, `overflow`, `port`, `message_limit`, `max_connections`, `max_inflight`, \
+                     `connect_guards(..)`, `refuse`, `overflow`, `port`, `max_message`, `max_connections`, `max_inflight`, \
                      `max_outbound`, `ping_interval` or `pong_timeout`",
                 ));
             }

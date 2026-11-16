@@ -83,9 +83,9 @@ impl<B: Backend> Server<B> {
         self
     }
 
-    /// The body limit of a route without `#[meta(BodyLimit(..))]`.
-    pub fn body_limit(mut self, bytes: u64) -> Self {
-        self.config.body_limit = bytes;
+    /// The body limit of a route without `#[meta(MaxBody(..))]`.
+    pub fn max_body(mut self, bytes: u64) -> Self {
+        self.config.max_body = bytes;
         self
     }
 
@@ -330,7 +330,7 @@ pub(crate) fn prepare_app(
             (Stage::empty(), false)
         }
     };
-    let router = match Router::build(mounted.handlers(), config.body_limit, &stage, mount) {
+    let router = match Router::build(mounted.handlers(), config.max_body, &stage, mount) {
         Ok(router) if staged => {
             failures.extend(stage.unreached());
             Some(router)

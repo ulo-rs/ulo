@@ -112,7 +112,7 @@ pub use cors::{Cors, CorsError};
 pub use cx::{HttpCx, PathParams};
 pub use extract::{BodyStream, Form, Header, Host, Json, LastEventId, Multipart, Path, Query};
 pub use handler::HttpHandler;
-pub use limits::{BodyLimit, KB, MB, Timeout};
+pub use limits::{KB, MB, MaxBody, Timeout};
 pub use middleware::Middleware;
 pub use miss::{MethodNotAllowed, NoRoute, NotAcceptable};
 pub use pre_dispatch::PreDispatch;

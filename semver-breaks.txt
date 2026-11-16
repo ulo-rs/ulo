@@ -9,7 +9,7 @@ break ulo enum_struct_variant_field_added 1  # `WiringError::ScopeViolation` car
 break ulo trait_method_missing 1  # `Controller` is a mark with no methods and a controller's handlers mount through `Handlers::mount` alone, so no `Controller` impl can mount something in their place; a hand-written controller moves its `mount` into `impl Handlers`, which `ModuleDef::controller` now requires (`C: Handlers`, a tightened bound the tool does not report)
 break ulo-handler-codegen function_missing 1  # #412: `protocol::outside_routes` is `outside_handlers`, the helper that names the handler-impl attribute `#[handlers]`; a macro-support crate, called by the framework's own macros
 break ulo-http method_parameter_count_changed 10  # #409: each ability of `BackendLimits` and `EmbedLimits` is a `bool` accessor taking no argument, declared absent through a `without_` setter that takes the reason, in place of a setter taking the `bool`
-break ulo-http struct_pub_field_missing 10  # #409: the public `bool` fields of `BackendLimits` and `EmbedLimits` are private, read through the accessors
+break ulo-http struct_pub_field_missing 11  # #409: the public `bool` fields of `BackendLimits` and `EmbedLimits` are private, read through the accessors; and `HttpConfig::body_limit` is `max_body`, a bound being named `max_<thing>` (transports decision 11)
 break ulo-http struct_pub_field_now_doc_hidden 10  # #409: the same ten fields, which this lint reports a second time
 break ulo-http trait_method_receiver_added 1  # #409: `Backend::limits` takes `&self`
 break ulo-http trait_removed_associated_constant 1  # #409: `Embed::STRIPS_PREFIX` is the `strips_prefix` ability of `EmbedLimits`
@@ -41,3 +41,11 @@ break ulo-ws-hyper inherent_method_now_doc_hidden 1  # `ServerOn::messages_read`
 # unchecked ulo-ws-redis Redis::settings  # reports `username`, printed as written (`alice`), and in `url` lowercases the host's ASCII letters and drops one trailing dot from a DNS name, so two registrations differing in the ACL user are refused and two differing in host case or in that dot are one module
 # unchecked ulo-rpc-kafka listen  # a server's `listen` fails `Bind` with `ConnectTimedOut` once `Kafka::connect_within`, 30 s unset, passes, where it ran on librdkafka's own timeouts alone
 # unchecked ulo guards  # and `interceptors`, `error_handlers`, `meta`, `construct` and a field's `injectable(default)`: a marker under a qualifier other than `ulo`, a typo or a renamed dependency's name such as `#[framework::guards]`, is a compile error at the marker, where the macro read its last segment alone and accepted it; under a renamed dependency the marker is written `#[ulo::guards]` beside `extern crate <name> as ulo;`
+break ulo-http inherent_method_missing 3  # `Server::body_limit`, `Embedded::body_limit` and `Handle::body_limit` are `max_body`, a bound being named `max_<thing>` (transports decision 11); no alias before beta
+break ulo-http struct_missing 1  # `BodyLimit` is `MaxBody`, the metadata type taking its bound's name
+break ulo-ws inherent_method_missing 3  # `GatewaySettings::message_limit`, `GatewayDefaults::message_limit` and `WsModule::message_limit` are `max_message`, by the same rule
+break ulo-ws struct_pub_field_missing 1  # `GatewaySettings::message_limit` is the field `max_message`
+break ulo-ws-hyper inherent_method_missing 1  # `ServerOn::message_limit` is `max_message`
+# unchecked ulo-http MaxBody  # a route's bound is written `#[meta(MaxBody(..))]` where it was `#[meta(BodyLimit(..))]`
+# unchecked ulo-ws gateway  # the `#[ulo_ws::gateway(..)]` key `message_limit = ..` is `max_message = ..`; the old key fails to compile with the list of keys the attribute accepts
+# unchecked ulo-ws WsModule::settings  # reports the gateway default under `max_message`, so a `WiringError::DuplicateSetting` from two imports, or from an adapter writing the same key, names `max_message` where it named `message_limit`

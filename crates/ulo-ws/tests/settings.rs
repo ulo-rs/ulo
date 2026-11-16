@@ -63,11 +63,11 @@ async fn two_adapter_kinds_under_one_identity_are_refused() {
     assert_eq!(settings, [("broadcast", Some("local".to_owned()), Some(std::any::type_name::<Opaque>().to_owned()))]);
 }
 
-/// The gateway defaults are settings too: a second import with another `message_limit` is
+/// The gateway defaults are settings too: a second import with another `max_message` is
 /// refused naming it. Planted break: `WsModule::settings` answering the adapter's alone.
 #[tokio::test]
 async fn two_gateway_defaults_under_one_identity_are_refused() {
-    let errors = match wired(Root(vec![WsModule::for_root().message_limit(1024), WsModule::for_root().message_limit(2048)])) {
+    let errors = match wired(Root(vec![WsModule::for_root().max_message(1024), WsModule::for_root().max_message(2048)])) {
         Err(errors) => errors,
         Ok(()) => panic!("wired; two message limits under one identity should be refused"),
     };
@@ -75,7 +75,7 @@ async fn two_gateway_defaults_under_one_identity_are_refused() {
         panic!("expected `DifferingSettings`:\n{errors}");
     };
     let settings: Vec<_> = settings.iter().map(|s| (s.name, s.first.clone(), s.second.clone())).collect();
-    assert_eq!(settings, [("message_limit", Some("Some(1024)".to_owned()), Some("Some(2048)".to_owned()))]);
+    assert_eq!(settings, [("max_message", Some("Some(1024)".to_owned()), Some("Some(2048)".to_owned()))]);
 }
 
 /// Two in-memory modules are one module, and so are two of one user adapter type.
@@ -94,7 +94,7 @@ const COLLIDING_LINE: u32 = line!() + 4;
 
 impl BroadcastAdapter for Colliding {
     fn settings(&self) -> ModuleSettings {
-        ModuleSettings::new().with("broadcast", "colliding").with("message_limit", 7)
+        ModuleSettings::new().with("broadcast", "colliding").with("max_message", 7)
     }
 
     fn publish(&self, target: Target, frame: Bytes) -> BoxFuture<'static, Result<(), BoxError>> {
@@ -113,13 +113,13 @@ impl BroadcastAdapter for Colliding {
 async fn an_adapter_setting_named_as_a_gateway_default_is_refused_with_both_lines() {
     let errors = match wired(Root(vec![WsModule::for_root().broadcast(Colliding)])) {
         Err(errors) => errors,
-        Ok(()) => panic!("wired; the adapter and the module both write `message_limit`"),
+        Ok(()) => panic!("wired; the adapter and the module both write `max_message`"),
     };
     assert_eq!(errors.len(), 1, "{errors}");
     let Some(WiringError::DuplicateSetting { setting, module, first, second }) = errors.iter().next() else {
         panic!("expected `DuplicateSetting`:\n{errors}");
     };
-    assert_eq!(*setting, "message_limit");
+    assert_eq!(*setting, "max_message");
     assert_eq!(module.to_string(), "WsModule");
     assert_eq!((first.file(), first.line()), (file!(), COLLIDING_LINE));
     assert!(second.file().ends_with("module.rs") && second.file().contains("ulo-ws"), "the module's own line: {second}");

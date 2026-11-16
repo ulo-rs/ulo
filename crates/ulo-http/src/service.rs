@@ -453,7 +453,7 @@ impl ServiceInner {
             handler: target.handler.clone(),
             pattern: Arc::clone(&target.pattern),
             params,
-            body_limit: target.body_limit,
+            max_body: target.max_body,
         };
         let cx = self.context(exec, head, conn, Some(route), None, None);
         let recovering = ulo::recover(Some(&target.handler), exec, &cx, Box::new(render::timed_out()));
@@ -515,7 +515,7 @@ impl ServiceInner {
                 handler: target.handler.clone(),
                 pattern: Arc::clone(&target.pattern),
                 params,
-                body_limit: target.body_limit,
+                max_body: target.max_body,
             };
             let cx = this.context(&exec, Arc::new(RequestHead { parts: head }), conn, Some(route), Some(body), upgrade);
             let call = Arc::clone(&target.call);

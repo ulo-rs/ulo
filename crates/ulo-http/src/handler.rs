@@ -22,7 +22,7 @@ pub(crate) type HandlerFn = Arc<dyn Fn(HttpCx) -> BoxFuture<'static, Result<Resp
 /// router matches and the one [`HandlerInfo::route`](ulo::HandlerInfo::route) and
 /// [`Routing::Matched`](crate::Routing::Matched) report, the controller's `.at(..)` prefix joined to
 /// it. A handler mounted with no route is refused when the server prepares. Enhancers, declared
-/// metadata (a [`BodyLimit`](crate::BodyLimit) or [`Timeout`](crate::Timeout) among it) and what
+/// metadata (a [`MaxBody`](crate::MaxBody) or [`Timeout`](crate::Timeout) among it) and what
 /// the call reads from the container go on the spec as well, as for every transport.
 ///
 /// The call runs once per request, after every guard admits, and inside the interceptors. It reads

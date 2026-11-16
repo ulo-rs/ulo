@@ -71,8 +71,8 @@ const fn protocol_code(code: u16) -> CloseCode {
     }
 }
 
-/// `/small`'s `message_limit`, in bytes.
-pub(crate) const MESSAGE_LIMIT: usize = 128;
+/// `/small`'s `max_message`, in bytes.
+pub(crate) const MAX_MESSAGE: usize = 128;
 
 /// The two `/streams` events whose stream end a scenario reads.
 pub(crate) const WRITTEN: &str = "written";
@@ -429,7 +429,7 @@ macro_rules! gateways {
         }
 
         #[handlers]
-        #[ulo_ws::gateway(path = "/small", port = $port, message_limit = 128, max_connections = 1)]
+        #[ulo_ws::gateway(path = "/small", port = $port, max_message = 128, max_connections = 1)]
         impl Small {
             #[ulo_ws::message("echo")]
             fn echo(&self, text: Payload<String>) -> String {

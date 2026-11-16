@@ -21,7 +21,7 @@ use ulo_transport::prepare::{Failure, Names};
 
 use crate::handler::{HandlerFn, HttpHandler};
 use crate::cx::PathParams;
-use crate::limits::{BodyLimit, Timeout};
+use crate::limits::{MaxBody, Timeout};
 use crate::pre_dispatch::{ScopedStage, Stage};
 use crate::router::pattern::{Pattern, unreachable};
 use crate::transport::Http;
@@ -50,7 +50,7 @@ pub(crate) struct RouteTarget {
     /// `pattern` under the embedding's mount prefix, as the host sees it: the span's `http.route`
     /// and `Routing::Matched`. The same `Arc` when the app is not nested.
     pub(crate) route: Arc<str>,
-    pub(crate) body_limit: u64,
+    pub(crate) max_body: u64,
     /// The route's `#[meta(Timeout(..))]` as a duration, `None` for no timeout.
     pub(crate) timeout: Option<Duration>,
     /// The pre-dispatch entries whose scope can match a path of this route, middleware and tower
@@ -85,7 +85,7 @@ impl Router {
     /// before a rest.
     pub(crate) fn build(
         handlers: &[MountedHandler<Http>],
-        default_body_limit: u64,
+        default_max_body: u64,
         stage: &Stage,
         mount: &str,
     ) -> Result<Router, Vec<Failure>> {
@@ -152,7 +152,7 @@ impl Router {
                 call: Arc::clone(&http.call),
                 pattern: Arc::clone(&pattern.raw),
                 route,
-                body_limit: info.meta::<BodyLimit>().map_or(default_body_limit, |limit| limit.0),
+                max_body: info.meta::<MaxBody>().map_or(default_max_body, |limit| limit.0),
                 timeout: timeout.and_then(Timeout::duration),
                 stage: stage.scoped_for(&pattern),
             });

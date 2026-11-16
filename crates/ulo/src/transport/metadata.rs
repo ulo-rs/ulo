@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::transport::Transport;
 
 /// A metadata type that means something on one transport alone, naming it (transports DESIGN
-/// §2.5, X24): `ulo_http::Timeout` and `ulo_http::BodyLimit` name `Http`.
+/// §2.5, X24): `ulo_http::Timeout` and `ulo_http::MaxBody` name `Http`.
 ///
 /// Every transport's handler attribute probes each `#[meta(..)]` value at the concrete site, so a
 /// value naming another transport fails to compile where it is written, E0308 at the value with

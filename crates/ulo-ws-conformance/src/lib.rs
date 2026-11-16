@@ -285,7 +285,7 @@ macro_rules! ws_conformance_suite {
             unknown_event_is_unimplemented => messages::unknown_event,
             frame_naming_no_event_is_bad_request => messages::no_event,
             control_frame_is_answered_with_nothing => messages::control_frame,
-            message_limit_closes_with_1009 => messages::message_limit,
+            max_message_closes_with_1009 => messages::max_message,
             reply_stream_is_written_whole => messages::reply_stream,
             connect_guard_refusal_closes_with_3003 => close_codes::guard_refusal,
             connect_refusal_closes_by_kind => close_codes::by_kind,

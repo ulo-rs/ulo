@@ -1,6 +1,6 @@
 //! One message through the envelope: a round trip, the `error` envelope for an event nothing
 //! handles and for a frame naming no event, a control frame answered by the protocol layer alone,
-//! `message_limit` counted after reassembly, and a streamed answer written to its end.
+//! `max_message` counted after reassembly, and a streamed answer written to its end.
 
 use async_tungstenite::tungstenite::Message;
 use async_tungstenite::tungstenite::protocol::frame::Frame as WireFrame;
@@ -10,7 +10,7 @@ use ulo_ws::DisconnectReason;
 
 use super::Served;
 use crate::Host;
-use crate::app::MESSAGE_LIMIT;
+use crate::app::MAX_MESSAGE;
 
 /// `answer` is the `error` envelope of kind `kind`, carrying `id` or none.
 fn error_envelope(what: &str, answer: &Value, id: Option<Value>, kind: &str) {
@@ -80,16 +80,16 @@ pub async fn control_frame<H: Host>() {
 
 /// Two fragments, each under the 128-byte limit and together over it, close the connection with
 /// 1009 as a protocol error.
-pub async fn message_limit<H: Host>() {
+pub async fn max_message<H: Host>() {
     let app = Served::<H>::start().await;
     let mut conn = app.connect("/small", &[]).await;
     assert_eq!(conn.exchange(json!({ "event": "echo", "id": 1, "data": "short" })).await, json!({ "id": 1, "data": "short" }));
-    let message = json!({ "event": "echo", "id": 2, "data": "y".repeat(MESSAGE_LIMIT + 12) }).to_string();
+    let message = json!({ "event": "echo", "id": 2, "data": "y".repeat(MAX_MESSAGE + 12) }).to_string();
     let (first, rest) = message.split_at(80);
-    assert!(first.len() < MESSAGE_LIMIT && rest.len() < MESSAGE_LIMIT && message.len() > MESSAGE_LIMIT);
+    assert!(first.len() < MAX_MESSAGE && rest.len() < MAX_MESSAGE && message.len() > MAX_MESSAGE);
     conn.send(Message::Frame(WireFrame::message(first.as_bytes().to_vec(), OpCode::Data(Data::Text), false))).await;
     conn.send(Message::Frame(WireFrame::message(rest.as_bytes().to_vec(), OpCode::Data(Data::Continue), true))).await;
-    assert_eq!(conn.close_frame().await.map(|(code, _)| code), Some(1009), "a message over `message_limit`");
+    assert_eq!(conn.close_frame().await.map(|(code, _)| code), Some(1009), "a message over `max_message`");
     conn.hang_up().await;
     let ends = app.probe.departures.at_least(app.timer(), 1, "the oversized connection's `on_disconnect`").await;
     assert_eq!(ends, vec![("/small".to_owned(), DisconnectReason::ProtocolError)]);

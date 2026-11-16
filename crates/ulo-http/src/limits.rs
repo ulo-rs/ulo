@@ -4,20 +4,20 @@ use ulo::{Bound, TransportMetadata};
 
 use crate::transport::Http;
 
-/// 1024 bytes, for `.body_limit(64 * KB)`.
+/// 1024 bytes, for `.max_body(64 * KB)`.
 pub const KB: u64 = 1024;
 
-/// 1024 × 1024 bytes, for `.body_limit(2 * MB)`.
+/// 1024 × 1024 bytes, for `.max_body(2 * MB)`.
 pub const MB: u64 = 1024 * 1024;
 
-/// A route's body limit, overriding the server's `.body_limit(..)`:
-/// `#[meta(BodyLimit(50 * MB))]`. A body over it fails with 413 before deserialization.
+/// A route's body limit, overriding the server's `.max_body(..)`:
+/// `#[meta(MaxBody(50 * MB))]`. A body over it fails with 413 before deserialization.
 ///
 /// HTTP metadata: written on a handler of another transport, it fails to compile there (X24).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BodyLimit(pub u64);
+pub struct MaxBody(pub u64);
 
-impl TransportMetadata for BodyLimit {
+impl TransportMetadata for MaxBody {
     type Transport = Http;
 }
 

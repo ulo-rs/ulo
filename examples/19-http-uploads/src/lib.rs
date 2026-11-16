@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use ulo::{App, AppBuilder, BoxError, Dep, controller, handlers, injectable, module};
-use ulo_http::{BodyLimit, Bytes, CallError, Created, ErrorKind, KB, Multipart, Path};
+use ulo_http::{Bytes, CallError, Created, ErrorKind, KB, MaxBody, Multipart, Path};
 use ulo_http_hyper::Server;
 
 /// What a body may weigh unless its route says otherwise.
@@ -12,7 +12,7 @@ pub const AVATAR_LIMIT: u64 = 256;
 
 /// The server this example runs on; `main` and the tests bind it to their own address.
 pub fn server(endpoint: &str) -> Server {
-    Server::new(endpoint).body_limit(SERVER_LIMIT)
+    Server::new(endpoint).max_body(SERVER_LIMIT)
 }
 
 #[injectable]
@@ -51,7 +51,7 @@ impl UploadController {
     }
 
     #[ulo_http::post("/avatars")]
-    #[meta(BodyLimit(AVATAR_LIMIT))]
+    #[meta(MaxBody(AVATAR_LIMIT))]
     async fn avatar(&self, parts: Multipart) -> Result<Created<&'static str>, BoxError> {
         self.store(parts).await
     }

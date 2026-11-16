@@ -17,7 +17,7 @@ use ulo::{
 };
 use ulo_http::embed::EmbedLimits;
 use ulo_http::{
-    BodyLimit, Cors, Event, Host, Http, HttpBody, HttpCx, Json, Path, PreDispatch, Query, Request, Response, Sse,
+    Cors, Event, Host, Http, HttpBody, HttpCx, Json, MaxBody, Path, PreDispatch, Query, Request, Response, Sse,
     StatusCode, UpgradeHandler, Upgrades,
 };
 use ulo_transport::{CallError, Classify, ErrorKind, IntoReply, Valid, Validate};
@@ -137,7 +137,7 @@ impl Suite {
     }
 
     #[ulo_http::post("/small")]
-    #[meta(BodyLimit(16))]
+    #[meta(MaxBody(16))]
     fn small(&self, item: Json<Item>) -> Json<Item> {
         item
     }

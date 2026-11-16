@@ -13,7 +13,7 @@ use http::{Method, StatusCode};
 use o1_support::{Call, Running, start};
 use serde::Deserialize;
 use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
-use ulo_http::{BodyLimit, BodyStream, Bytes, Form, Header, Host, Http, HttpBody, HttpCx, Json, Multipart, Path, Query, Response};
+use ulo_http::{BodyStream, Bytes, Form, Header, Host, Http, HttpBody, HttpCx, Json, MaxBody, Multipart, Path, Query, Response};
 use ulo_transport::{CallError, ErrorKind, ExtractError, Valid, Validate};
 
 #[derive(Deserialize)]
@@ -99,7 +99,7 @@ impl Inputs {
     }
 
     #[ulo_http::post("/upload")]
-    #[meta(BodyLimit(512))]
+    #[meta(MaxBody(512))]
     async fn upload(&self, mut parts: Multipart) -> Result<String, CallError> {
         let refuse = |error: multer::Error| CallError::new(ErrorKind::BadRequest, error.to_string());
         let mut seen = Vec::new();
@@ -117,7 +117,7 @@ impl Inputs {
 
     /// Reads the parts and answers what a read failure was, as its source reported it.
     #[ulo_http::post("/upload-small")]
-    #[meta(BodyLimit(16))]
+    #[meta(MaxBody(16))]
     async fn upload_small(&self, mut parts: Multipart) -> String {
         loop {
             match parts.next_field().await {
@@ -130,7 +130,7 @@ impl Inputs {
     }
 
     #[ulo_http::post("/stream")]
-    #[meta(BodyLimit(8))]
+    #[meta(MaxBody(8))]
     async fn stream(&self, mut body: BodyStream) -> String {
         let mut read = 0;
         while let Some(chunk) = body.next().await {
@@ -144,7 +144,7 @@ impl Inputs {
 
     /// Propagates the stream's error, as a handler written with `?` does.
     #[ulo_http::post("/stream-through")]
-    #[meta(BodyLimit(8))]
+    #[meta(MaxBody(8))]
     async fn stream_through(&self, mut body: BodyStream) -> Result<String, BoxError> {
         let mut read = 0;
         while let Some(chunk) = body.next().await {
@@ -155,7 +155,7 @@ impl Inputs {
 
     /// Propagates the multipart error, from `next_field` and from reading a part alike.
     #[ulo_http::post("/upload-through")]
-    #[meta(BodyLimit(16))]
+    #[meta(MaxBody(16))]
     async fn upload_through(&self, mut parts: Multipart) -> Result<String, multer::Error> {
         let mut read = 0;
         while let Some(field) = parts.next_field().await? {
@@ -165,7 +165,7 @@ impl Inputs {
     }
 
     #[ulo_http::post("/bytes")]
-    #[meta(BodyLimit(8))]
+    #[meta(MaxBody(8))]
     fn bytes(&self, bytes: Bytes) -> String {
         bytes.len().to_string()
     }
@@ -420,7 +420,7 @@ async fn multipart_without_a_boundary_is_unsupported_and_a_declared_length_over_
 }
 
 #[tokio::test]
-async fn a_body_stream_and_bytes_stop_at_the_routes_body_limit_and_report_the_limit() {
+async fn a_body_stream_and_bytes_stop_at_the_routes_max_body_and_report_the_limit() {
     let apps = Apps::start().await;
 
     apps.succeeds(|| Call::new(Method::POST, "/stream").body("12345"), "5|ok").await;

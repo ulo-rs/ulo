@@ -19,7 +19,7 @@
 //! rocket 0.5 is on `http` 0.2, so the adapter converts at its edge. `mount` leaves the URI whole,
 //! so the adapter is declared without `strips_prefix` and the app strips `.nested_at` itself. rocket's
 //! `Data` must be read inside the handler, so the body is buffered under the embedding's own
-//! `body_limit` once the app first reads it, a larger one answered with the same 413 as everywhere
+//! `max_body` once the app first reads it, a larger one answered with the same 413 as everywhere
 //! else; a body the app never reads stays unread, which is what lets a `Miss::Forward` miss go back
 //! to rocket with its `Data`. rocket's `Response` has no extensions, so `Routing` lives in the
 //! request's local cache as an `Option<Routing>`, where a fairing's `on_response` reads it with
@@ -75,8 +75,8 @@ impl Embed for Rocket {
 
     type HostRequest<'r> = rocket::Request<'r>;
 
-    /// `request_body` reports `Buffered` at the default `body_limit`, 2 MiB: the declaration is
-    /// per host, and an embedding's own `.body_limit(..)` is the cap its requests are buffered
+    /// `request_body` reports `Buffered` at the default `max_body`, 2 MiB: the declaration is
+    /// per host, and an embedding's own `.max_body(..)` is the cap its requests are buffered
     /// under.
     fn limits() -> EmbedLimits {
         EmbedLimits::NONE
@@ -85,7 +85,7 @@ impl Embed for Rocket {
             )
             .without_tls_info("the adapter reads no TLS state off rocket's request, so `ConnInfo::tls` is `None`")
             .without_strips_prefix("`mount` leaves `req.uri()` whole, with the tail in a `<path..>` segment")
-            .request_body(RequestBody::Buffered(HttpConfig::default().body_limit))
+            .request_body(RequestBody::Buffered(HttpConfig::default().max_body))
             .without_pending_close(
                 "rocket runs each request's handler in a task of its own, spawned in `hyper_service_fn`, which a closed connection does not end, and gives a handler no signal of the close",
             )
