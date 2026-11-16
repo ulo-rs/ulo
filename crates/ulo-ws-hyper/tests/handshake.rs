@@ -1,7 +1,7 @@
 //! What a gateway decides before its first message, past the WebSocket conformance suite's
 //! handshake scenarios (`tests/conformance.rs`): a gateway refusing a connection that agreed no
 //! subprotocol, a gateway listing none echoing none, a refusal before the upgrade taking no
-//! `max_connections` slot, connect guards written by value and by closure, and the session
+//! `max_connections` slot and one over the limit refused 503 with `Retry-After`, connect guards written by value and by closure, and the session
 //! `session = T` creates before those guards run.
 
 mod support;
@@ -234,10 +234,13 @@ async fn a_handshake_refusal_counts_against_no_connection_limit() {
     let refused = upgrade(app.addr, "/strict", &[("x-user", "bob")]).await;
     assert_eq!(refused.status, 403, "body: {}", refused.body);
 
-    // One the guards admit over the limit is accepted and closed with 1013, before `OnConnect`.
-    let mut over = app.connect("/strict", &[("x-token", "open"), ("x-user", "bob")]).await;
-    assert_eq!(close_frame(&mut over).await, Some((1013, "unavailable: too many connections".to_owned())));
-    hang_up(over).await;
+    // One the guards admit over the limit is refused 503 before the upgrade, with the standalone
+    // server's `Retry-After`, before `OnConnect`.
+    let over = upgrade(app.addr, "/strict", &[("x-token", "open"), ("x-user", "bob")]).await;
+    assert_eq!(over.status, 503, "body: {}", over.body);
+    assert!(over.socket.is_none(), "a refusal under `refuse = handshake` switched protocols");
+    assert_eq!(over.header("retry-after"), Some("1"));
+    assert_eq!(over.body, "unavailable: too many connections");
     hang_up(admitted).await;
     app.stop().await;
 }

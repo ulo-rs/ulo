@@ -43,12 +43,13 @@ impl CloseCode {
     pub const POLICY_VIOLATION: CloseCode = CloseCode(1008);
     /// 1009: a message too large to process.
     pub const MESSAGE_TOO_BIG: CloseCode = CloseCode(1009);
-    /// 1011: the server met a condition that kept it from fulfilling the request. The connect
-    /// refusal of `Internal` and `Unimplemented`, its reason starting with the kind.
+    /// 1011: the server met a condition that kept it from fulfilling the request. The close of
+    /// `Internal` and `Unimplemented`, its reason starting with the kind: a connect refusal, and a
+    /// hand-written gateway's `on_message` panic as `internal: internal error`.
     pub const INTERNAL_ERROR: CloseCode = CloseCode(1011);
     /// 1013: try again later. The connect refusal of `TooManyRequests` and `Unavailable`, its
-    /// reason starting with the kind, a connection over `max_connections` among them as
-    /// `unavailable: too many connections`.
+    /// reason starting with the kind, a connection over `max_connections` under `refuse = close`
+    /// among them as `unavailable: too many connections`.
     pub const TRY_AGAIN_LATER: CloseCode = CloseCode(1013);
     /// 3000, the registry's `Unauthorized`: the connect refusal of `Unauthorized`.
     pub const UNAUTHORIZED: CloseCode = CloseCode(3000);
@@ -186,6 +187,22 @@ pub(crate) fn check_reason(reason: &str) -> Result<(), CloseCodeError> {
     Ok(())
 }
 
+/// A close by `kind`, a refusal's or one mid-connection: the code [`CloseCode::of_kind`] gives,
+/// and as the reason `message`, after the kind and `: ` when more than one kind closes with that
+/// code and `message` does not already start with them. The message is cut to fit 123 bytes, the
+/// kind kept whole.
+pub(crate) fn by_kind(kind: ErrorKind, message: &str) -> (CloseCode, String) {
+    let code = CloseCode::of_kind(kind);
+    let prefix = format!("{kind}: ");
+    let reason = if code.is_shared() && !message.starts_with(&prefix) {
+        let message = truncated_to(message.to_owned(), REASON_LIMIT - prefix.len());
+        prefix + &message
+    } else {
+        truncated(message.to_owned())
+    };
+    (code, reason)
+}
+
 /// `reason` cut to at most 123 bytes at a character boundary.
 pub(crate) fn truncated(reason: String) -> String {
     truncated_to(reason, REASON_LIMIT)
@@ -267,6 +284,17 @@ mod tests {
             let refused = crate::ConnectRefused::kind(kind, "why");
             assert_eq!((refused.close_code().get(), refused.reason()), (code, reason), "{kind:?}");
         }
+    }
+
+    /// A message already starting with its own kind's prefix carries it once, cut to 123 bytes
+    /// with the prefix whole; another kind's prefix is the message's text and gains the kind's.
+    #[test]
+    fn a_message_already_carrying_the_prefix_is_not_prefixed_again() {
+        assert_eq!(crate::ConnectRefused::kind(ErrorKind::NotFound, "not_found: x").reason(), "not_found: x");
+        let long = format!("internal: {}", "x".repeat(200));
+        assert_eq!(crate::ConnectRefused::kind(ErrorKind::Internal, long.clone()).reason(), &long[..REASON_LIMIT]);
+        assert_eq!(crate::ConnectRefused::kind(ErrorKind::NotFound, "conflict: x").reason(), "not_found: conflict: x");
+        assert_eq!(crate::ConnectRefused::kind(ErrorKind::NotFound, "not_found:x").reason(), "not_found: not_found:x");
     }
 
     /// A code an error names through `WithCloseCode` carries the message alone, whatever the kind.

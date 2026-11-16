@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use ulo::{AppHandle, BoxError, BoxFuture, DrainToken, Meta};
 
+use crate::backend::HttpConfig;
 use crate::request::Request;
 use crate::response::Response;
 
@@ -88,3 +89,9 @@ impl Upgrades {
 }
 
 impl Meta for Upgrades {}
+
+/// The settings of the server handing a request to its `UpgradeHandler`, in the request's
+/// extensions: `__private::handshake_answers` reads a refused handshake's challenge and
+/// `Retry-After` from them.
+#[derive(Clone)]
+pub(crate) struct ServingConfig(pub(crate) Arc<HttpConfig>);
