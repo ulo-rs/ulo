@@ -29,8 +29,8 @@ use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics};
 use ulo_transport::sync::ordered;
 use ulo_transport::{Count, Details, ErrorKind, SHUTDOWN_MESSAGE};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, Instances, Link, NoDestination,
-    NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, Instances, Link, NameTooLong,
+    NoDestination, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 
 /// The header naming a message's frame kind where the message alone does not tell it: `open` on
@@ -81,29 +81,32 @@ const MAX_PATTERN: usize = MAX_NAME - EVENTS.len();
 /// `ulo.rpc.event.<pattern>.<uuid>`.
 const MAX_EVERY_INSTANCE_PATTERN: usize = MAX_PATTERN - ".".len() - uuid::fmt::Simple::LENGTH;
 
-/// `name`, a client's `what` for `pattern`, as a `shortstr`, or the refusal of the frame, which
-/// nothing is published for, naming the pattern, the name's length and AMQP's limit.
-fn amqp_name(name: String, pattern: &Pattern, what: &str) -> Result<ShortString, BoxError> {
-    let bytes = name.len();
-    ShortString::try_new(name).map_err(|_| {
-        format!(
-            "pattern `{pattern}` is {} bytes, and its {what} would be {bytes} bytes, past AMQP's {MAX_NAME}-byte limit on a name",
-            pattern.as_str().len()
-        )
-        .into()
-    })
+/// The refusal of a client frame carrying `name`, the `what` the link carries in at most `limit`
+/// bytes, which nothing is published for.
+fn too_long(what: &'static str, name: &str, limit: usize) -> BoxError {
+    Box::new(NameTooLong { what, name: name.to_owned(), limit: limit as u64 })
 }
 
-/// The refusal of a client frame on `pattern` whose header name is over AMQP's limit, which
-/// nothing is published for.
-fn header_names(headers: &CallHeaders, pattern: &Pattern) -> Result<(), BoxError> {
+/// A request's or a stream's routing key, its pattern, as a `shortstr`, or the frame's refusal.
+fn routing_key(pattern: &Pattern) -> Result<ShortString, BoxError> {
+    ShortString::try_new(pattern.as_str().to_owned()).map_err(|_| too_long("request pattern", pattern.as_str(), MAX_NAME))
+}
+
+/// An event's exchange `ulo.rpc.event.<pattern>` and its routing key, the pattern, or the frame's
+/// refusal naming the pattern and the longest the exchange's name holds.
+fn event_names(pattern: &Pattern) -> Result<(ShortString, ShortString), BoxError> {
+    let refused = |_| too_long("event pattern", pattern.as_str(), MAX_PATTERN);
+    let exchange = ShortString::try_new(event_exchange(pattern.as_str())).map_err(refused)?;
+    // The pattern is shorter than its exchange's name, so it fits once the name does.
+    let key = ShortString::try_new(pattern.as_str().to_owned()).map_err(refused)?;
+    Ok((exchange, key))
+}
+
+/// The refusal of a client frame carrying a header name over AMQP's limit.
+fn header_names(headers: &CallHeaders) -> Result<(), BoxError> {
     match headers.iter().map(|(name, _)| name).find(|name| name.len() > MAX_NAME) {
         None => Ok(()),
-        Some(name) => Err(format!(
-            "a header name on pattern `{pattern}` is {} bytes, past AMQP's {MAX_NAME}-byte limit on a name",
-            name.len()
-        )
-        .into()),
+        Some(name) => Err(too_long("header name", name, MAX_NAME)),
     }
 }
 
@@ -115,9 +118,11 @@ struct Declared {
     own: bool,
 }
 
-/// The names each subscription is served through, built before `listen` connects. A pattern
-/// whose exchange or queue name is over AMQP's 255 bytes is refused, every such pattern named
-/// with its length, as a `Permanent` failure: the declaration would fail whatever the broker.
+/// The names each subscription is served through. A pattern whose exchange or queue name is over
+/// AMQP's 255 bytes is refused, every such pattern named with its length, as a `Permanent`
+/// failure: the declaration would fail whatever the broker. `Link::subscribable` answers the
+/// refusal in `Server::prepare`, and `listen` builds the names again before it connects, each
+/// instance's own queue under a fresh uuid.
 fn declared(subscriptions: &[Subscription]) -> Result<Vec<Declared>, BoxError> {
     let mut declared = Vec::with_capacity(subscriptions.len());
     let mut refused = Vec::new();
@@ -594,6 +599,14 @@ impl Link for RabbitMq {
             Some(calls) => u16::try_from(calls).unwrap_or(u16::MAX),
             None => UNLIMITED_PREFETCH,
         };
+    }
+
+    /// A pattern over 241 bytes, or over 208 for an event declared `every_instance`, whose event
+    /// exchange `ulo.rpc.event.<pattern>` or queue of the instance's own
+    /// `ulo.rpc.event.<pattern>.<uuid>` AMQP cannot name: every such pattern, its length and the
+    /// limit, a permanent failure.
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        declared(subscriptions).map(drop)
     }
 
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
@@ -1255,7 +1268,7 @@ impl ClientSide {
     async fn send(self: &Arc<Self>, pattern: Pattern, frame: Frame, answer: oneshot::Sender<Result<(), BoxError>>, confirming: &mut Confirming) {
         match frame {
             Frame::Req { id, headers, data, .. } => {
-                let key = match header_names(&headers, &pattern).and_then(|()| amqp_name(pattern.as_str().to_owned(), &pattern, "routing key")) {
+                let key = match header_names(&headers).and_then(|()| routing_key(&pattern)) {
                     Ok(key) => key,
                     Err(refused) => return drop(answer.send(Err(refused))),
                 };
@@ -1264,17 +1277,14 @@ impl ClientSide {
                 self.settle(published, Some(id), pattern, answer, confirming);
             }
             Frame::Evt { headers, data, .. } => {
-                if let Err(refused) = header_names(&headers, &pattern) {
+                if let Err(refused) = header_names(&headers) {
                     return drop(answer.send(Err(refused)));
                 }
                 let mut properties = BasicProperties::default();
                 if let Some(table) = amqp_headers(&headers, None) {
                     properties = properties.with_headers(table);
                 }
-                // The pattern is shorter than its exchange's name, so it fits once the name does.
-                let names = amqp_name(event_exchange(pattern.as_str()), &pattern, "event exchange `ulo.rpc.event.<pattern>`")
-                    .and_then(|exchange| Ok((exchange, amqp_name(pattern.as_str().to_owned(), &pattern, "routing key")?)));
-                let (exchange, key) = match names {
+                let (exchange, key) = match event_names(&pattern) {
                     Ok(names) => names,
                     Err(refused) => return drop(answer.send(Err(refused))),
                 };
@@ -1288,7 +1298,7 @@ impl ClientSide {
                 self.settle(published, None, pattern, answer, confirming);
             }
             Frame::Open { id, headers, .. } => {
-                let key = match header_names(&headers, &pattern).and_then(|()| amqp_name(pattern.as_str().to_owned(), &pattern, "routing key")) {
+                let key = match header_names(&headers).and_then(|()| routing_key(&pattern)) {
                     Ok(key) => key,
                     Err(refused) => return drop(answer.send(Err(refused))),
                 };
@@ -1710,6 +1720,51 @@ mod tests {
         assert!(refused.contains("is 300 bytes, and its event exchange"), "the 300-byte pattern is not named: {refused}");
         assert!(refused.contains("is 230 bytes and its event is declared `every_instance`"), "the 230-byte pattern is not named: {refused}");
         assert!(!refused.contains("`fits`"), "a pattern that fits is named: {refused}");
+    }
+
+    /// The `NameTooLong` a client frame's name is refused with: what it is, the name and the limit.
+    fn too_long_of(refused: BoxError) -> (&'static str, usize, u64) {
+        let named = refused.downcast_ref::<NameTooLong>().unwrap_or_else(|| panic!("refused other than as `NameTooLong`: {refused}"));
+        (named.what, named.name.len(), named.limit)
+    }
+
+    /// Q30-8: a client frame whose name AMQP cannot carry is refused as `NameTooLong`, which
+    /// `RpcClient` answers `BadRequest` with `name_too_long`: an event's pattern past 241 bytes,
+    /// where its exchange's name passes 255, a request's or a stream's past 255, and a header name
+    /// past 255, each served one byte shorter. Planted break: the refusals written as plain
+    /// errors, which the client answers `Unavailable`.
+    #[test]
+    fn a_client_name_amqp_cannot_carry_is_refused_as_name_too_long() {
+        let pattern = |bytes: usize| Pattern::from("p".repeat(bytes));
+        let (exchange, key) = event_names(&pattern(241)).expect("an event on a 241-byte pattern is published");
+        assert_eq!((exchange.as_str().len(), key.as_str().len()), (255, 241), "the exchange and routing key of an event on a 241-byte pattern");
+        let event = event_names(&pattern(242)).err().expect("an event on a 242-byte pattern was published");
+        assert_eq!(too_long_of(event), ("event pattern", 242, 241), "the refusal of an event on a 242-byte pattern");
+
+        assert_eq!(routing_key(&pattern(255)).expect("a request on a 255-byte pattern is published").as_str().len(), 255);
+        let request = routing_key(&pattern(256)).expect_err("a request on a 256-byte pattern was published");
+        assert_eq!(too_long_of(request), ("request pattern", 256, 255), "the refusal of a request on a 256-byte pattern");
+
+        let mut headers = CallHeaders::new();
+        headers.insert("h".repeat(255), "v");
+        header_names(&headers).expect("a 255-byte header name is published");
+        headers.insert("h".repeat(256), "v");
+        let header = header_names(&headers).expect_err("a 256-byte header name was published");
+        assert_eq!(too_long_of(header), ("header name", 256, 255), "the refusal of a 256-byte header name");
+    }
+
+    /// Q30-7: the link refuses the subscriptions `Server::prepare` hands it with the refusal
+    /// `listen` would make, so the server reports it as `Configure` before any server binds, and
+    /// accepts the ones `listen` serves. Planted break: `subscribable` left at its default.
+    #[test]
+    fn subscribable_refuses_what_listen_would() {
+        let link = RabbitMq::url("amqp://guest:guest@127.0.0.1:5672/%2f");
+        let served = [Subscription::new("p".repeat(241), Instances::One), Subscription::new("e".repeat(208), Instances::Every)];
+        link.subscribable(&served).expect("patterns whose names are 255 bytes are accepted");
+        let unusable = [Subscription::new("p".repeat(242), Instances::One), Subscription::new("e".repeat(209), Instances::Every)];
+        let refused = link.subscribable(&unusable).expect_err("patterns AMQP cannot name were accepted");
+        assert!(refused.is::<Permanent>(), "a pattern AMQP cannot name is refused as retryable: {refused}");
+        assert_eq!(refused.to_string(), declared(&unusable).err().expect("`listen` refuses them").to_string(), "the refusal differs from `listen`'s");
     }
 
     /// Q21-P6: a client connect that panics fails the call waiting on it `Unavailable` holding the

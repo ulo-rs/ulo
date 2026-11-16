@@ -85,8 +85,8 @@ pub use extract::{Inbound, Payload};
 pub use frame::{Data, ErrorBody, Frame, PayloadKind};
 pub use handler::RpcHandler;
 pub use link::{
-    Ack, Capabilities, ConnectTimedOut, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Link, Misconfigured, NoDestination, NoTimer,
-    Ordering, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
+    Ack, Capabilities, ConnectTimedOut, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Link, Misconfigured, NameTooLong, NoDestination,
+    NoTimer, Ordering, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 pub use server::Server;
 pub use transport::{CallHeaders, LinkInfo, NoHandler, Reply, Rpc, RpcCx};

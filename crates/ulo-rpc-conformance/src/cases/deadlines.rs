@@ -914,6 +914,10 @@ impl<L: Link> Link for SlowConnect<L> {
         self.link.max_inflight(calls);
     }
 
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        self.link.subscribable(subscriptions)
+    }
+
     fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
         self.link.listen(patterns)
     }
@@ -1004,6 +1008,10 @@ impl<L: Link> Link for Tapped<L> {
         self.link.max_inflight(calls);
     }
 
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        self.link.subscribable(subscriptions)
+    }
+
     async fn listen(&self, patterns: &[Subscription]) -> Result<Inbound, BoxError> {
         let inbound = self.link.listen(patterns).await?;
         let tap = self.tap.clone();
@@ -1068,6 +1076,10 @@ impl<L: Link> Link for Counted<L> {
         self.link.max_inflight(calls);
     }
 
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        self.link.subscribable(subscriptions)
+    }
+
     fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
         self.link.listen(patterns)
     }
@@ -1118,6 +1130,10 @@ impl<L: Link> Link for MutedCancel<L> {
 
     fn max_inflight(&mut self, calls: Count) {
         self.0.max_inflight(calls);
+    }
+
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        self.0.subscribable(subscriptions)
     }
 
     fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
@@ -1174,6 +1190,10 @@ impl<L: Link> Link for Stamped<L> {
 
     fn max_inflight(&mut self, calls: Count) {
         self.link.max_inflight(calls);
+    }
+
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        self.link.subscribable(subscriptions)
     }
 
     fn listen(&self, patterns: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
