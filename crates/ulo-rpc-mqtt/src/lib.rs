@@ -3,8 +3,10 @@
 //! Data properties. QoS configurable; ordered per topic and QoS; the maximum packet size from
 //! CONNACK; `Competing` through `$share/<group>/`, the group the application's root module's full
 //! type path unless `.group(..)` names one, and a CONNACK announcing no shared subscriptions fails
-//! the `bind` of a server with a pattern reaching one instance; an event declared `every_instance` through the plain topic filter, which reaches every
-//! instance; PUBACK or PUBREC 0x10 maps to `Unavailable` at QoS 1 and 2, and a miss at QoS 0 is the
+//! the `bind` of a server with a pattern reaching one instance, before it subscribes, while one
+//! whose patterns are all events declared `every_instance` binds; an event declared
+//! `every_instance` through the plain topic filter, which reaches every instance; PUBACK or PUBREC
+//! 0x10 maps to `Unavailable` at QoS 1 and 2, and a miss at QoS 0 is the
 //! client's `Timeout`; a call waiting when the client's connection drops is `Unavailable`, since a
 //! clean session loses what reached the reply topic meanwhile; `mqtts://` selects TLS.
 //!
@@ -13,6 +15,11 @@
 //! for every connection after. A store that cannot be read or holds no root is a misconfiguration
 //! no retry mends: it fails a server's `bind`, and each client call `Internal` with
 //! `reason: "misconfigured_link"`.
+//!
+//! The shared-subscription refusal has run against a scripted broker alone, one whose CONNACK
+//! announces Shared Subscription Available as 0, in the crate's tests: Mosquitto 2.0.18, the
+//! conformance suite's image, supports shared subscriptions, and no broker lacking them has been
+//! run against the link.
 //!
 //! The drain unsubscribes and returns once the broker has acknowledged each UNSUBSCRIBE, after
 //! every request it routed to the instance before. Both sides announce a Receive Maximum of

@@ -7,8 +7,10 @@
 //! fifth loses the broker between the server's two connections and shows `listen` fails at its
 //! `connect_within`, a sixth shows a client call that gives up while the link connects leaves
 //! the connect to the next call, a seventh that a connect finishing after its call gave up is taken
-//! by the next call, and an eighth that a client dropped holding that connection closes it. A server's link listens after `prepare` on an app with a
-//! `Timer`, which `listen` refuses to go without.
+//! by the next call, and an eighth that a client dropped holding that connection closes it. Two
+//! more show the broker takes names of AMQP's full 255 bytes, and that a client frame on a pattern
+//! whose name would be longer fails alone. A server's link listens after `prepare` on an app with
+//! a `Timer`, which `listen` refuses to go without.
 
 #![cfg(feature = "integration")]
 
@@ -439,6 +441,92 @@ async fn a_client_dropped_holding_an_untaken_connection_closes_it() {
     assert_eq!(broker.relay.open().await, 1, "the parked connect holds no connection at the broker");
     drop(client);
     released(&broker.relay, "a client dropped holding an untaken connection").await;
+}
+
+/// An event on `pattern` from `outbound`.
+async fn emitted(outbound: &ulo_rpc::Outbound, pattern: &str) -> Result<(), ulo::BoxError> {
+    let event = Frame::Evt { pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    (outbound.send)(Pattern::from(pattern), event, None).await
+}
+
+/// Q29-9: the broker takes a name of exactly AMQP's 255 bytes. A 241-byte pattern reaching one
+/// instance has a 255-byte event exchange and a 208-byte one declared `every_instance` a 255-byte
+/// queue of the instance's own: the server listens on both and receives an event on each.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_broker_serves_patterns_whose_names_are_255_bytes() {
+    let broker = RabbitMqBroker::start().await;
+    let (shared, own) = ("s".repeat(241), "e".repeat(208));
+    let server = prepared(broker.link()).await;
+    let subscriptions = [ulo_rpc::Subscription::new(shared.as_str(), ulo_rpc::Instances::One), ulo_rpc::Subscription::new(own.as_str(), ulo_rpc::Instances::Every)];
+    let mut inbound = server.listen(&subscriptions).await.expect("the server listens on patterns whose names are 255 bytes");
+    let client = broker.link();
+    let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+    let outbound = client.connect(&runtime).await.expect("the client's link connects");
+    for pattern in [&shared, &own] {
+        emitted(&outbound, pattern).await.unwrap_or_else(|error| panic!("the event on the {}-byte pattern was not published: {error}", pattern.len()));
+        let delivery = tokio::time::timeout(PATIENCE, inbound.next())
+            .await
+            .unwrap_or_else(|_| panic!("the event on the {}-byte pattern did not reach the server within {PATIENCE:?}", pattern.len()))
+            .expect("the server's inbound stream ended");
+        assert!(
+            matches!(&delivery.frame, Frame::Evt { pattern: received, .. } if received == pattern),
+            "the server received something other than the event on the {}-byte pattern: {:?}",
+            pattern.len(),
+            delivery.frame
+        );
+        delivery.ack.ack();
+    }
+    client.close().await.expect("the client's link closes");
+    server.close().await.expect("the server's link closes");
+}
+
+/// A client frame on a pattern AMQP cannot name, an event on 242 bytes, whose exchange would be
+/// 256, and a request and a stream's open on 256, fails that frame naming the pattern, its length
+/// and the limit, as does an event carrying a header name of 256 bytes, and the connection
+/// carries the next frame: lapin's `ShortString` panics on such a name where it converts with
+/// `From`, which would end the writer and fail every call on the connection. Planted break: the
+/// names converted with `into()`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_frame_on_a_pattern_amqp_cannot_name_fails_alone() {
+    let broker = RabbitMqBroker::start().await;
+    let served = "client.after.refusal";
+    let server = prepared(broker.link()).await;
+    let mut inbound = server.listen(&[Pattern::from(served).into()]).await.expect("the server's link listens");
+    let client = broker.link();
+    let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+    let outbound = client.connect(&runtime).await.expect("the client's link connects");
+
+    let event = emitted(&outbound, &"v".repeat(242)).await.expect_err("an event whose exchange name is 256 bytes was published");
+    assert!(!ulo::is_panic(&event), "the event on a 242-byte pattern panicked the writer: {event}");
+    let text = event.to_string();
+    for part in ["is 242 bytes", "event exchange `ulo.rpc.event.<pattern>` would be 256 bytes", "AMQP's 255-byte limit"] {
+        assert!(text.contains(part), "the refused event does not say `{part}`: {text}");
+    }
+    let pattern = "r".repeat(256);
+    let request = Frame::Req { id: 1, pattern: pattern.clone(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let request = (outbound.send)(Pattern::from(pattern.as_str()), request, Some(ReplyTo { id: 1 })).await.expect_err("a 256-byte routing key was published");
+    assert!(!ulo::is_panic(&request), "the request on a 256-byte pattern panicked the writer: {request}");
+    assert!(request.to_string().contains("routing key would be 256 bytes"), "the refused request does not name its routing key: {request}");
+    let open = Frame::Open { id: 2, pattern: pattern.clone(), headers: CallHeaders::new() };
+    let open = (outbound.send)(Pattern::from(pattern.as_str()), open, Some(ReplyTo { id: 2 })).await.expect_err("a stream's open on a 256-byte routing key was published");
+    assert!(!ulo::is_panic(&open), "the open on a 256-byte pattern panicked the writer: {open}");
+    assert!(open.to_string().contains("routing key would be 256 bytes"), "the refused open does not name its routing key: {open}");
+    let mut headers = CallHeaders::new();
+    headers.insert("h".repeat(256), "v");
+    let named = Frame::Evt { pattern: served.to_owned(), headers, data: Data::new(b"1".as_slice()) };
+    let named = (outbound.send)(Pattern::from(served), named, None).await.expect_err("an event carrying a 256-byte header name was published");
+    assert!(!ulo::is_panic(&named), "a 256-byte header name panicked the writer: {named}");
+    assert!(named.to_string().contains("a header name on pattern `client.after.refusal` is 256 bytes"), "the refused event does not name its header: {named}");
+
+    emitted(&outbound, served).await.expect("the connection carries an event after the refusals");
+    let delivery = tokio::time::timeout(PATIENCE, inbound.next())
+        .await
+        .unwrap_or_else(|_| panic!("the event after the refusals did not reach the server within {PATIENCE:?}"))
+        .expect("the server's inbound stream ended");
+    assert!(matches!(&delivery.frame, Frame::Evt { pattern, .. } if pattern == served), "the server received {:?}", delivery.frame);
+    delivery.ack.ack();
+    client.close().await.expect("the client's link closes");
+    server.close().await.expect("the server's link closes");
 }
 
 mod tasks;
