@@ -1,9 +1,9 @@
 //! The Redis adapter's settings, which `WsModule` compares: `redis`, where the URL connects,
-//! canonical, its host's ASCII letters lowercased and a DNS name's trailing dot dropped, and never
-//! with its userinfo, query, fragment or database, the ACL user it authenticates as, the database, the protocol and, for TLS, whether the
-//! certificate is verified, each as the redis client reads the URL, and `connect_within`. No
-//! password reaches a setting. Nothing connects: `wire()` reads the settings alone, and `prepare`
-//! reads the URL.
+//! canonical, its host's ASCII letters lowercased and any trailing dot kept, and never with its
+//! userinfo, query, fragment or database, the ACL user it authenticates as, the database, the
+//! protocol and, for TLS, whether the certificate is verified, each as the redis client reads the
+//! URL, and `connect_within`. No password reaches a setting. Nothing connects: `wire()` reads the
+//! settings alone, and `prepare` reads the URL.
 
 use std::time::Duration;
 
@@ -298,43 +298,24 @@ fn the_username_is_printed_as_written() {
     assert!(username.contains(r#""username": "alice""#), "{username}");
 }
 
-/// A trailing dot marks a DNS name absolute (RFC 1034 §3.1): a host written with one is one
-/// module with the host written without, over TCP and TLS, with a port or without, and `url`
-/// writes it without the dot. Planted break: `canonical_host` keeping the dot.
+/// A trailing dot is part of the host the resolver is given: a name listed only in `/etc/hosts`
+/// resolves as `cache` and not as `cache.`, and a search list expands `cache` and leaves `cache.`
+/// absolute, so `h.` and `h` can reach different servers. Each pair is refused naming `url`, the
+/// dot kept and the host's ASCII letters lowercased, over TCP and TLS, with a port or without, on
+/// a DNS name, an IPv4 address and a second trailing dot alike; a socket's path keeps its dot
+/// too. Planted break: `canonical_host` dropping one trailing dot from a DNS name.
 #[tokio::test]
-async fn a_dns_name_differing_only_in_a_trailing_dot_is_one_module() {
-    wired(Root(vec!["redis://cache.example.", "redis://cache.example"])).unwrap_or_else(|errors| panic!("{errors}"));
-    wired(Root(vec!["redis://Cache.:6379", "redis://cache"])).unwrap_or_else(|errors| panic!("{errors}"));
-    wired(Root(vec!["rediss://cache.:6380/#insecure", "rediss://cache:6380/#insecure"])).unwrap_or_else(|errors| panic!("{errors}"));
-    for (url, reported) in [("redis://cache.", "redis://cache:6379"), ("redis://CACHE.:6390/2", "redis://cache:6390"), ("rediss://h.", "rediss://h:6379")] {
-        let settings = format!("{:?}", Redis::url(url).settings());
-        assert!(settings.contains(&format!(r#""url": "{reported}""#)), "{url}: {settings}");
-    }
-}
-
-/// The dot stays where dropping it would change what the host names: after an IPv4 address, which
-/// the resolver parses as an address without the dot and looks up as a name with it, after any
-/// last label that reads as a number, and as a second trailing dot, which leaves an empty label.
-/// Each pair is refused naming `url`, the dotted host written as given; a socket's path keeps its
-/// dot too. Planted breaks: `canonical_host` dropping every trailing dot; dropping the second of
-/// two.
-#[tokio::test]
-async fn a_trailing_dot_that_changes_the_host_is_kept() {
-    for (dotted, bare) in [
-        ("redis://192.0.2.1.", "redis://192.0.2.1"),
-        ("redis://cache.0x7f.", "redis://cache.0x7f"),
-        ("redis://cache.12.", "redis://cache.12"),
-        ("redis://cache..", "redis://cache."),
+async fn a_host_differing_only_in_a_trailing_dot_is_refused() {
+    for (dotted, bare, first, second) in [
+        ("redis://cache.", "redis://cache", "redis://cache.:6379", "redis://cache:6379"),
+        ("redis://Cache.Example.:6390/2", "redis://cache.example:6390/2", "redis://cache.example.:6390", "redis://cache.example:6390"),
+        ("rediss://cache.:6380/#insecure", "rediss://cache:6380/#insecure", "rediss://cache.:6380", "rediss://cache:6380"),
+        ("redis://192.0.2.1.", "redis://192.0.2.1", "redis://192.0.2.1.:6379", "redis://192.0.2.1:6379"),
+        ("redis://cache..", "redis://cache.", "redis://cache..:6379", "redis://cache.:6379"),
+        ("redis+unix:///run/redis.sock.", "redis+unix:///run/redis.sock", "redis+unix:///run/redis.sock.", "redis+unix:///run/redis.sock"),
     ] {
-        let why = format!("`{dotted}` and `{bare}` name different hosts and should be refused");
+        let why = format!("`{dotted}` and `{bare}` can reach different servers and should be refused");
         let (settings, _) = differing(Root(vec![dotted, bare]), &why);
-        let [(name, Some(first), Some(_))] = settings.as_slice() else { panic!("{dotted}: {settings:?}") };
-        assert_eq!(*name, "url", "{dotted}: {settings:?}");
-        assert_eq!(*first, format!("{dotted}:6379"), "{dotted} lost a dot");
+        assert_eq!(settings, [("url", Some(first.to_owned()), Some(second.to_owned()))], "{dotted} and {bare}");
     }
-    let (settings, _) = differing(
-        Root(vec!["redis+unix:///run/redis.sock.", "redis+unix:///run/redis.sock"]),
-        "two socket paths under one identity should be refused",
-    );
-    assert_eq!(settings, [("url", Some("redis+unix:///run/redis.sock.".to_owned()), Some("redis+unix:///run/redis.sock".to_owned()))]);
 }
