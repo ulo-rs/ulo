@@ -32,6 +32,13 @@ either through a normal or build dependency: `ulo-http`, `ulo-ws` and `ulo-serve
 support crate as a dev-dependency, which Cargo strips when publishing, and the suite's dependents
 are the RPC links, `ulo-ws-redis` and the community-link fixture, each through a dev-dependency.
 
+`ulo-runtime-conformance`, the runtime conformance suite, is a leaf by the same two conditions. It
+owns no doc-hidden module: `runtime_suite!` expands to public items of the suite, reached through
+`$crate`, and to items it writes beside the harness. Its dependencies are `ulo`, `ulo-transport`, `futures`
+and `tracing`, and its dependents, `ulo-runtime-tokio` and `ulo-runtime-smol`, take it as a
+dev-dependency, which Cargo strips when publishing; the suite takes `ulo-runtime-smol` as one in
+turn, for the README's first run.
+
 ## What `release check` checks
 
 The job checks out the last release, the nearest tag matching `v[0-9]*` among the ancestors of the
@@ -109,7 +116,8 @@ needs first.
 
 One pull request moves `[workspace.package] version` and every `=` pin to the new version,
 regenerates `Cargo.lock` for the workspace members, and updates the Install sections of `README.md`,
-`crates/ulo/README.md` and `crates/ulo-rpc-conformance/README.md`, which
+`crates/ulo/README.md`, `crates/ulo-rpc-conformance/README.md` and
+`crates/ulo-runtime-conformance/README.md`, which
 `scripts/check_readme_install.py` holds to the workspace version.
 While that version is a pre-release the Install sections pin each crate `=<version>`, and the
 script refuses any other operator: a caret on a pre-release also takes a later pre-release of the
@@ -126,7 +134,9 @@ each after the crates it pins. A crate checked alone, `cargo package -p <crate>`
 `cargo publish --dry-run -p <crate>`, resolves its `=` pins on crates.io instead, and fails while a
 crate it pins is not on crates.io at that version. Dev-dependencies name no version, and Cargo
 strips them from the published manifest, so they impose no order; `ulo-rpc-conformance` and
-`ulo-rpc-tcp` are each a dev-dependency of the other.
+`ulo-rpc-tcp` are each a dev-dependency of the other, and so are `ulo-runtime-conformance` and
+`ulo-runtime-smol`. `ulo-runtime-conformance` is first published after `ulo` and `ulo-transport`,
+the two crates it pins, and `cargo publish --workspace` orders it so.
 
 crates.io limits how many new crate names one account creates: a burst of a few, then about one
 every ten minutes. A release adding more names than the burst spaces them or waits out the limit

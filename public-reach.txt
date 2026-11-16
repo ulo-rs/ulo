@@ -7,6 +7,7 @@ crate ulo-http
 crate ulo-rpc
 crate ulo-rpc-conformance
 crate ulo-conformance-support
+crate ulo-runtime-conformance
 crate ulo-ws
 crate ulo-grpc
 crate ulo-graphql

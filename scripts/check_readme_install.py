@@ -30,7 +30,7 @@ import re
 import sys
 import tempfile
 
-READMES = ["README.md", "crates/ulo/README.md", "crates/ulo-rpc-conformance/README.md"]
+READMES = ["README.md", "crates/ulo/README.md", "crates/ulo-rpc-conformance/README.md", "crates/ulo-runtime-conformance/README.md"]
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
 # What a dependency or `cargo add` may write: cargo reads `"0.1"` as `^0.1`, a claim about the
 # version as much as `"0.1.0"` is.
