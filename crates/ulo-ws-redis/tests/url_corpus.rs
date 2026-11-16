@@ -2,7 +2,7 @@
 //! URLs the redis client reads differently: TLS with and without `#insecure`, Unix sockets under
 //! both schemes, databases in the path and in the query, passwords holding `@`, `%`, `#` and `?`,
 //! a username alone, a password alone and both, hosts in capitals, in mixed case, IDNA-encoded and
-//! non-ASCII, IPv4 and IPv6 hosts, the `protocol` parameter, and URLs it does not read at all. No
+//! non-ASCII, hosts ending in a dot, IPv4 and IPv6 hosts, the `protocol` parameter, and URLs it does not read at all. No
 //! password in the corpus reaches the adapter's settings or `prepare`'s refusal, and no TCP `url`
 //! setting keeps an ASCII capital. Nothing connects.
 
@@ -63,6 +63,13 @@ const CORPUS: &[&str] = &[
     "redis://bücher.example",
     "redis://BÜCHER.example",
     "redis://b%C3%BCcher.example",
+    "redis://cache.",
+    "redis://CACHE.:6379/1",
+    "rediss://cache.example.:6380/#insecure",
+    "redis://cache..",
+    "redis://.",
+    "redis://192.0.2.1.",
+    "redis://[::1].",
     "redis://[::1]:6379",
     "redis://[::1]",
     "redis://::1:6379",

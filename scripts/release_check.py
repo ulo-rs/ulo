@@ -75,6 +75,20 @@ class UsageError(Exception):
     pass
 
 
+def without_auto_maintenance(env):
+    """`env` with git's automatic maintenance off for every git command run under it, release-plz's
+    own included. Git 2.54 has `commit` start `git maintenance run --auto --detach`, whose repack
+    deletes a fresh repository's loose objects while release-plz copies its `.git`."""
+    env = dict(env)
+    count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    for key, value in (("maintenance.auto", "false"), ("gc.auto", "0")):
+        env[f"GIT_CONFIG_KEY_{count}"] = key
+        env[f"GIT_CONFIG_VALUE_{count}"] = value
+        count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
+    return env
+
+
 def read_group(text):
     """The packages `release-plz.toml` puts in the core group, in file order."""
     names, current, in_package = [], {}, False
@@ -196,9 +210,9 @@ def without_semver_check(text, names):
     return text
 
 
-def copy_tree(root, dest, skipped=()):
+def copy_tree(root, dest, skipped=(), env=None):
     """The working tree's tracked and unignored files, as one commit of a new repository, with
-    release-plz's semver check off for the `skipped` packages."""
+    release-plz's semver check off for the `skipped` packages, its git commands run under `env`."""
     listed = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         capture_output=True, check=True,
@@ -213,9 +227,9 @@ def copy_tree(root, dest, skipped=()):
         config = dest / CONFIG
         config.write_text(without_semver_check(config.read_text(), skipped))
     git = ["git", "-C", str(dest), "-c", "user.name=release-check", "-c", "user.email=release-check@invalid"]
-    subprocess.run(git[:3] + ["init", "-q"], check=True)
-    subprocess.run(git + ["add", "-A"], check=True)
-    subprocess.run(git + ["commit", "-q", "--no-verify", "-m", "release check"], check=True)
+    subprocess.run(git[:3] + ["init", "-q"], check=True, env=env)
+    subprocess.run(git + ["add", "-A"], check=True, env=env)
+    subprocess.run(git + ["commit", "-q", "--no-verify", "-m", "release check"], check=True, env=env)
 
 
 def release_plz_findings(log, pkgs):
@@ -420,13 +434,13 @@ def check(root, baseline, skipped):
     for name in skipped:
         if name not in cur:
             raise UsageError(f"--skip names `{name}`, which is no publishable member")
-    env = dict(os.environ)
+    env = without_auto_maintenance(os.environ)
     env.setdefault("CARGO_TARGET_DIR", str(root / "target" / "release-check"))
     env["NO_COLOR"] = "1"
 
     with tempfile.TemporaryDirectory(prefix="release-check-") as tmp:
         work = pathlib.Path(tmp) / "tree"
-        copy_tree(root, work, skipped)
+        copy_tree(root, work, skipped, env)
         out = subprocess.run(
             ["release-plz", "update", "--config", CONFIG,
              "--registry-manifest-path", str(baseline / "Cargo.toml")],

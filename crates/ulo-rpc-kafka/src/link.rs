@@ -21,13 +21,13 @@ use rdkafka::{Offset, TopicPartitionList};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NoDestination, NoTimer,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NoDestination, NoTimer,
     Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::ordered;
@@ -67,6 +67,16 @@ const QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 /// among this many the writer has not taken.
 const WRITE_QUEUE: usize = 64;
 
+/// How long a server's `listen` may take, unless [`Kafka::connect_within`] says otherwise.
+const CONNECT_WITHIN: Duration = Duration::from_secs(30);
+
+/// How often a server reads the partition count of each topic it reads every partition of, the
+/// interval at which librdkafka refreshes its own metadata, `topic.metadata.refresh.interval.ms`.
+const METADATA_REFRESH: Duration = Duration::from_secs(300);
+
+/// The bound on each metadata and watermark read an own consumer's assignment makes.
+const METADATA_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The Kafka link.
 ///
 /// Each side produces through one writer task, fed in order by every send on it, so the records a
@@ -80,15 +90,20 @@ const WRITE_QUEUE: usize = 64;
 /// refuses in `usable`, so a client is refused where it
 /// takes the link and a server's `listen()` fails, and in `connect`.
 ///
+/// A server's `listen` returns once every consumer of its own is assigned, so a control record or
+/// an event declared `every_instance` produced after `bind` returns is read, and fails as `Bind`,
+/// with [`ConnectTimedOut`](ulo_rpc::ConnectTimedOut), when it has not returned within
+/// [`connect_within`](Self::connect_within).
+///
 /// A link dropped without `close`, as a server's is when its app drops before the close step,
 /// aborts the tasks reading its consumers and its writers, so each consumer leaves its group and
 /// its connections close, on a thread of its own as at `close`.
 ///
-/// A panic in one of the link's tasks, a request lane, the control lane, a writer or the reply
-/// router, ends a server as a transport failure, the app's shutdown outcome naming the link and
-/// the task and holding the panic redacted with the app's secrets; on a client it fails the calls
-/// waiting on the connection `Unavailable` holding the panic, and the next call connects again
-/// ([`TaskPanics`](ulo_rpc::link::TaskPanics)).
+/// A panic in one of the link's tasks, a request lane, the control lane, a writer, the partition
+/// watcher or the reply router, ends a server as a transport failure, the app's shutdown outcome
+/// naming the link and the task and holding the panic redacted with the app's secrets; on a
+/// client it fails the calls waiting on the connection `Unavailable` holding the panic, and the
+/// next call connects again ([`TaskPanics`](ulo_rpc::link::TaskPanics)).
 pub struct Kafka {
     pub(crate) brokers: String,
     pub(crate) runtime: Option<Tokio>,
@@ -97,6 +112,11 @@ pub struct Kafka {
     pub(crate) codec: Codec,
     pub(crate) partitions: i32,
     pub(crate) replication: i32,
+    pub(crate) connect_within: Duration,
+    /// Awaited immediately before the consumers of the server's own are assigned, the last step
+    /// of `listen`, with the topics they are assigned, its error failing `listen`: [`no_hold`],
+    /// which a test replaces with one that holds the assignment or refuses it.
+    pub(crate) before_assign: fn(&[&str]) -> BoxFuture<'static, Result<(), BoxError>>,
     /// The root module's full type path, written by `prepare` when no `group` is set.
     pub(crate) default_group: Option<String>,
     /// The server's in-flight bound, from `Link::max_inflight`; `None` for no bound.
@@ -165,6 +185,8 @@ impl Kafka {
             codec: Codec::Json,
             partitions: 1,
             replication: 1,
+            connect_within: CONNECT_WITHIN,
+            before_assign: no_hold,
             default_group: None,
             max_inflight: Count::Default.max_inflight(),
             timer: None,
@@ -188,8 +210,8 @@ impl Kafka {
         &self.probe
     }
 
-    /// Makes the link's task `planted` names, `request lane`, `control lane`, `writer` or `reply
-    /// router`, panic once `planted` fires. For the link's own tests, under the
+    /// Makes the link's task `planted` names, `request lane`, `control lane`, `writer`, `partition
+    /// watcher` or `reply router`, panic once `planted` fires. For the link's own tests, under the
     /// `conformance-probe` feature.
     #[doc(hidden)]
     #[cfg(feature = "conformance-probe")]
@@ -198,8 +220,8 @@ impl Kafka {
         self
     }
 
-    /// How many of the link's lanes, writers, reply routers and event loops have a future that
-    /// has not yet dropped, on both sides. For the link's own tests, under the
+    /// How many of the link's lanes, writers, reply routers, partition watchers and event loops
+    /// have a future that has not yet dropped, on both sides. For the link's own tests, under the
     /// `conformance-probe` feature.
     #[doc(hidden)]
     #[cfg(feature = "conformance-probe")]
@@ -250,6 +272,17 @@ impl Kafka {
         self
     }
 
+    /// How long a server's `listen` may take, 30 seconds by default, timed on the app's `Timer`:
+    /// the topics' creation, the starting commit, the consumers' creation and the assignment of
+    /// each consumer of the server's own. A `listen` still running at the bound fails as `Bind`
+    /// with [`ConnectTimedOut`](ulo_rpc::ConnectTimedOut) naming the link and its brokers; a
+    /// `Timer` whose runtime has shut down fails it as `Permanent` `RuntimeShutDown`. A zero bound
+    /// is refused by `prepare`. A client's connect is not bounded by it.
+    pub fn connect_within(mut self, bound: Duration) -> Self {
+        self.connect_within = bound;
+        self
+    }
+
     /// The tokio runtime the link's clients and tasks run on, in place of the one current where
     /// it was built.
     pub fn with_handle(mut self, handle: Handle) -> Self {
@@ -296,6 +329,9 @@ impl Link for Kafka {
             )
             .into());
         }
+        if self.connect_within.is_zero() {
+            return Err("the Kafka link's `connect_within` is zero, so no server could bind within it".into());
+        }
         match &self.group {
             Some(group) if group.is_empty() => return Err("the Kafka link's group is empty".into()),
             Some(_) => {}
@@ -318,11 +354,17 @@ impl Link for Kafka {
     /// A pattern reaching one instance is a topic of the group's consumer, which Kafka assigns
     /// each partition of to one member. Those reaching every instance, events declared
     /// `every_instance`, are read by a consumer of this instance's own, assigned every partition of
-    /// them from its end outside any group's rebalancing, as the control consumer is: its
+    /// them at its end outside any group's rebalancing, as the control consumer is: its
     /// `group.id`, `<group>.every.<uuid>`, is this instance's and commits nothing, so the broker
-    /// keeps no group or offset for it, and it reads what is produced from `bind` on. A partition
-    /// added to such a topic after `bind` is not read: an event produced there reaches none of the
-    /// instances already listening, and one started later reads it from its end.
+    /// keeps no group or offset for it. Each partition's end is read before the assignment and
+    /// the consumer assigned that offset (`own_consumer`), and `listen` returns once both
+    /// consumers are assigned, its last step, so a record produced after `bind` returns is read.
+    ///
+    /// A partition added to such a topic after `bind` is not read: an event produced there reaches
+    /// none of the instances already listening, and one started later reads it from its end. Each
+    /// instance reads the partition count of the topics it reads every partition of every five
+    /// minutes, librdkafka's metadata refresh interval, and logs a `warn` naming the topic and both
+    /// counts when it has changed (`watch_partitions`).
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         let group = self
             .group
@@ -330,50 +372,67 @@ impl Link for Kafka {
             .or_else(|| self.default_group.clone())
             .ok_or("the Kafka link's group is unset: `listen` ran before `prepare`")?;
         let runtime = self.runtime()?;
-        let base = Brokers::parse(&self.brokers)?.config();
+        let brokers = Brokers::parse(&self.brokers)?;
+        let base = brokers.config();
         let timer = self.timer.clone().ok_or(NoTimer { link: "Kafka" })?;
+        let timed_out = ConnectTimedOut::new(self.connect_within, brokers.list, "Kafka");
         let (every, shared): (Vec<&Subscription>, Vec<&Subscription>) =
             subscriptions.iter().partition(|subscription| subscription.instances == Instances::Every);
         let topics: Vec<String> = shared.iter().map(|subscription| subscription.pattern.as_str().to_owned()).collect();
         let own: Vec<String> = every.iter().map(|subscription| subscription.pattern.as_str().to_owned()).collect();
-        let (partitions, replication) = (self.partitions, self.replication);
-        let (consumer, every, control, producer) = runtime
-            .run(async move {
-                // Created here, not on the first produce, so a stopped server's topic still exists
-                // and a miss is the caller's `Timeout` whether or not the broker auto-creates
-                // topics; the consumer also gets its partitions at once rather than after a
-                // metadata refresh.
-                create_topics(&base, &topics, partitions, replication).await?;
-                // The admin API refuses an empty list as an invalid argument.
-                if !own.is_empty() {
-                    create_topics(&base, &own, partitions, replication).await?;
+        let (partitions, replication, before_assign) = (self.partitions, self.replication, self.before_assign);
+        let anchoring = Arc::clone(&timer);
+        let connecting = runtime.run(async move {
+            let timer = anchoring;
+            // Created here, not on the first produce, so a stopped server's topic still exists
+            // and a miss is the caller's `Timeout` whether or not the broker auto-creates
+            // topics; the consumer also gets its partitions at once rather than after a
+            // metadata refresh. The admin API refuses an empty list as an invalid argument, and a
+            // server whose patterns are all events declared `every_instance` has no group topic.
+            for list in [&topics, &own] {
+                if !list.is_empty() {
+                    create_topics(&base, list, partitions, replication).await?;
                 }
-                create_topics(&base, &[CONTROL.to_owned()], 1, replication).await?;
-                anchor(&base, &group, &topics, &timer).await?;
+            }
+            create_topics(&base, &[CONTROL.to_owned()], 1, replication).await?;
+            anchor(&base, &group, &topics, &timer).await?;
 
-                let mut config = base.clone();
-                config
-                    .set("group.id", &group)
-                    .set("enable.auto.commit", "true")
-                    .set("enable.auto.offset.store", "false")
-                    .set("auto.offset.reset", "latest");
-                let consumer: Arc<Detached<StreamConsumer>> = Arc::new(Detached::new(config.create()?));
-                let names: Vec<&str> = topics.iter().map(String::as_str).collect();
+            let mut config = base.clone();
+            config
+                .set("group.id", &group)
+                .set("enable.auto.commit", "true")
+                .set("enable.auto.offset.store", "false")
+                .set("auto.offset.reset", "latest");
+            let consumer: Arc<Detached<StreamConsumer>> = Arc::new(Detached::new(config.create()?));
+            let names: Vec<&str> = topics.iter().map(String::as_str).collect();
+            // librdkafka refuses an empty subscription as an invalid argument too.
+            if !names.is_empty() {
                 consumer.subscribe(&names)?;
+            }
 
-                let every = if own.is_empty() {
-                    None
-                } else {
-                    Some(own_consumer(&base, format!("{group}.every.{}", uuid::Uuid::new_v4().simple()), &own).await?)
-                };
-                let control = own_consumer(&base, format!("{group}.control.{}", uuid::Uuid::new_v4().simple()), &[CONTROL.to_owned()]).await?;
-                // Detached from its creation, so its drop, wherever the writer ends or the runtime
-                // drops it, runs on a thread of its own rather than on a worker.
-                let producer = Detached::new(producer(&base)?);
-                Ok::<_, BoxError>((consumer, every, control, producer))
-            })
-            .await
-            .map_err(Permanent::new)??;
+            let every = if own.is_empty() {
+                None
+            } else {
+                Some(own_consumer(&base, format!("{group}.every.{}", uuid::Uuid::new_v4().simple()), own).await?)
+            };
+            let control = own_consumer(&base, format!("{group}.control.{}", uuid::Uuid::new_v4().simple()), vec![CONTROL.to_owned()]).await?;
+            // Detached from its creation, so its drop, wherever the writer ends or the runtime
+            // drops it, runs on a thread of its own rather than on a worker.
+            let producer = Detached::new(producer(&base)?);
+            // Assigned last, so `listen` returns as soon as both are reading.
+            let assigned: Vec<&str> = every.iter().chain([&control]).flat_map(|own| own.topics.iter().map(|(topic, _)| topic.as_str())).collect();
+            before_assign(&assigned).await?;
+            let every = every.map(Unassigned::assign).transpose()?;
+            let control = control.assign()?;
+            Ok::<_, BoxError>((consumer, every, control, producer))
+        });
+        // Dropping `connecting` at the bound aborts its task; a blocking librdkafka call it was
+        // waiting on ends on its own thread within that call's timeout.
+        let (consumer, every, control, producer) = match ulo::timeout(&*timer, timed_out.within(), connecting).await {
+            Ok(connected) => connected.map_err(Permanent::new)??,
+            Err(Cut::Expired) => return Err(timed_out.into()),
+            Err(Cut::Refused(refused)) => return Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
+        };
 
         let (phase, _) = watch::channel(Phase::Serving);
         let (deliveries, inbound) = mpsc::unbounded_channel();
@@ -383,9 +442,12 @@ impl Link for Kafka {
         let inbound = panics.guard(receiver_stream(inbound));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
         let writer = runtime.handle().spawn(panics.watch("writer", server_writer(producer, queued))).abort_handle();
+        let (control, control_topics) = control;
+        let mut watched = vec![(Arc::clone(&control), control_topics)];
+        watched.extend(every.as_ref().map(|(every, topics)| (Arc::clone(every), topics.clone())));
         let side = Arc::new(ServerSide {
             consumer,
-            every: every.clone(),
+            every: every.as_ref().map(|(every, _)| Arc::clone(every)),
             writes,
             codec: self.codec,
             runtime: runtime.clone(),
@@ -400,8 +462,9 @@ impl Link for Kafka {
             runtime.handle().spawn(panics.watch("request lane", request_lane(Arc::clone(&side), Arc::clone(&side.consumer)))).abort_handle(),
             runtime.handle().spawn(panics.watch("control lane", control_lane(Arc::clone(&side), control))).abort_handle(),
             writer,
+            runtime.handle().spawn(panics.watch("partition watcher", watch_partitions(side.phase.subscribe(), watched, timer))).abort_handle(),
         ];
-        if let Some(every) = every {
+        if let Some((every, _)) = every {
             tasks.push(runtime.handle().spawn(panics.watch("request lane", request_lane(Arc::clone(&side), every))).abort_handle());
         }
         lock(&self.state).server = Some((side, tasks));
@@ -750,38 +813,141 @@ fn producer(base: &ClientConfig) -> Result<FutureProducer, BoxError> {
     Ok(config.create()?)
 }
 
-/// A consumer of `topics` assigned every partition of each from its end, outside any group's
+/// A consumer of `topics` to be assigned every partition of each at its end, outside any group's
 /// rebalancing, so it reads from `bind` on rather than from a first assignment seconds later: the
 /// control topic's, and the one reading the events every instance receives. Its `group.id` is
 /// this instance's own and it commits nothing.
-async fn own_consumer(base: &ClientConfig, group: String, topics: &[String]) -> Result<Arc<Detached<StreamConsumer>>, BoxError> {
+///
+/// Each partition's end, its high watermark, is read here and assigned as an offset by
+/// [`Unassigned::assign`]. librdkafka resolves a logical `Offset::End` only after `assign` has
+/// returned, when its fetcher first asks the partition's leader, so a record produced between
+/// `bind` returning and that answer would be skipped; an offset read first puts every record
+/// produced after the read at or past it.
+async fn own_consumer(base: &ClientConfig, group: String, topics: Vec<String>) -> Result<Unassigned, BoxError> {
     let mut config = base.clone();
     config.set("group.id", group).set("enable.auto.commit", "false").set("enable.auto.offset.store", "false").set("auto.offset.reset", "latest");
     let consumer: Arc<Detached<StreamConsumer>> = Arc::new(Detached::new(config.create()?));
-    let mut assignment = TopicPartitionList::new();
-    for topic in topics {
-        let reader = Arc::clone(&consumer);
-        let name = topic.clone();
-        // `fetch_metadata` blocks the calling thread.
-        let partitions: Vec<i32> = blocking(move || -> Result<Vec<i32>, BoxError> {
-            let metadata = reader.fetch_metadata(Some(&name), Timeout::After(Duration::from_secs(10)))?;
-            Ok(metadata
-                .topics()
-                .iter()
-                .filter(|found| found.name() == name)
-                .flat_map(|found| found.partitions().iter().map(|partition| partition.id()))
-                .collect())
-        })
-        .await??;
-        if partitions.is_empty() {
-            return Err(format!("the Kafka link found no partition of `{topic}`").into());
+    let reader = Arc::clone(&consumer);
+    // Each topic with its partitions' ids and ends.
+    type Ends = Vec<(String, Vec<(i32, i64)>)>;
+    let ends = blocking(move || -> Result<Ends, BoxError> {
+        let mut ends = Vec::new();
+        for topic in topics {
+            let partitions = partition_ids(&reader, &topic)?;
+            let mut read = Vec::new();
+            for partition in partitions {
+                let (_, high) = reader.fetch_watermarks(&topic, partition, Timeout::After(METADATA_TIMEOUT))?;
+                read.push((partition, high));
+            }
+            ends.push((topic, read));
         }
-        for partition in partitions {
-            assignment.add_partition_offset(topic, partition, Offset::End)?;
+        Ok(ends)
+    })
+    .await??;
+    let mut assignment = TopicPartitionList::new();
+    for (topic, partitions) in &ends {
+        for &(partition, end) in partitions {
+            assignment.add_partition_offset(topic, partition, Offset::Offset(end))?;
         }
     }
-    consumer.assign(&assignment)?;
-    Ok(consumer)
+    let topics = ends.into_iter().map(|(topic, partitions)| (topic, partitions.len())).collect();
+    Ok(Unassigned { consumer, assignment, topics })
+}
+
+/// A consumer of the server's own whose partitions' ends have been read, not yet assigned.
+struct Unassigned {
+    consumer: Arc<Detached<StreamConsumer>>,
+    /// Every partition of each topic at the end read.
+    assignment: TopicPartitionList,
+    /// Each topic and how many partitions it has in `assignment`.
+    topics: Vec<(String, usize)>,
+}
+
+impl Unassigned {
+    fn assign(self) -> Result<Assigned, BoxError> {
+        self.consumer.assign(&self.assignment)?;
+        Ok((self.consumer, self.topics))
+    }
+}
+
+/// A consumer of the server's own, with each topic it was assigned every partition of and how
+/// many partitions that was.
+type Assigned = (Arc<Detached<StreamConsumer>>, Vec<(String, usize)>);
+
+/// What [`Kafka::before_assign`] is unless a test replaces it: nothing to wait for.
+fn no_hold(_topics: &[&str]) -> BoxFuture<'static, Result<(), BoxError>> {
+    Box::pin(std::future::ready(Ok(())))
+}
+
+/// The ids of `topic`'s partitions as the broker's metadata lists them, failing when it lists
+/// none, with the error the metadata reports for the topic if any. A topic whose metadata reports
+/// an error beside its partitions, a leader not yet elected among them, answers the partitions.
+/// Blocks its thread.
+fn partition_ids(consumer: &StreamConsumer, topic: &str) -> Result<Vec<i32>, BoxError> {
+    let metadata = consumer.fetch_metadata(Some(topic), Timeout::After(METADATA_TIMEOUT))?;
+    let found = metadata.topics().iter().find(|found| found.name() == topic);
+    let ids: Vec<i32> = found.map(|found| found.partitions().iter().map(|partition| partition.id()).collect()).unwrap_or_default();
+    if ids.is_empty() {
+        return Err(match found.and_then(|found| found.error()) {
+            Some(error) => format!("the Kafka link found no partition of `{topic}`: {}", RDKafkaErrorCode::from(error)).into(),
+            None => format!("the Kafka link found no partition of `{topic}`").into(),
+        });
+    }
+    Ok(ids)
+}
+
+/// Reads, every [`METADATA_REFRESH`] on the app's `timer`, the partition count of each topic in
+/// `watched`, each a consumer of the server's own beside the topics it was assigned every
+/// partition of and the count it was assigned, and logs a `warn` naming the topic and both counts
+/// when the count read differs from the last one known. Such a consumer reads the partitions it
+/// was assigned at `bind` and no other, so a record produced to a partition added since reaches
+/// none of the instances already listening. A failed read is logged at `debug` and read again at
+/// the next refresh. Ends once the server stops serving, or once the timer refuses a wait.
+async fn watch_partitions(mut phase: watch::Receiver<Phase>, mut watched: Vec<Assigned>, timer: Arc<dyn Timer>) {
+    loop {
+        let refreshed = async {
+            if timer.try_sleep(METADATA_REFRESH).await.is_err() {
+                return false;
+            }
+            for (consumer, topics) in &mut watched {
+                let reader = Arc::clone(consumer);
+                let names: Vec<String> = topics.iter().map(|(topic, _)| topic.clone()).collect();
+                let read = blocking(move || names.iter().map(|topic| partition_ids(&reader, topic).map(|ids| ids.len())).collect::<Result<Vec<_>, _>>()).await;
+                match read.and_then(|counts| counts) {
+                    Ok(counts) => {
+                        for ((topic, known), now) in topics.iter_mut().zip(counts) {
+                            if *known != now {
+                                tracing::warn!(
+                                    topic,
+                                    before = *known,
+                                    after = now,
+                                    "a topic the Kafka link reads every partition of has {now} partitions where it had {}; this instance reads the \
+                                     partitions it was assigned at `bind` and no other, so a record produced to another reaches no instance already \
+                                     listening",
+                                    *known
+                                );
+                                *known = now;
+                            }
+                        }
+                    }
+                    Err(error) => tracing::debug!(%error, "the Kafka link could not read the partition counts of the topics it reads every partition of"),
+                }
+            }
+            true
+        };
+        tokio::select! {
+            changed = phase.changed() => {
+                if changed.is_err() || *phase.borrow() != Phase::Serving {
+                    break;
+                }
+            }
+            kept = refreshed => {
+                if !kept {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// The server side of a bound link: the group's consumer, the reply producer, the calls it holds,
@@ -1832,7 +1998,7 @@ mod tests {
 
         /// A single-node KRaft broker whose one client listener advertises a relay bound before the
         /// container starts, since a Kafka client connects wherever the metadata says.
-        async fn kraft() -> (Relay, ContainerAsync<GenericImage>) {
+        pub(super) async fn kraft() -> (Relay, ContainerAsync<GenericImage>) {
             let relay = Relay::bind().await;
             let advertised = format!(
                 "CLIENT://{},BROKER://localhost:9094",
@@ -1926,6 +2092,373 @@ mod tests {
                     bound.as_secs_f64() * 1e3
                 );
             });
+        }
+    }
+
+    /// A server's consumers of its own, against a broker in a container of its own per test:
+    /// `listen` returns once each is assigned, within `connect_within`, and the partition watcher
+    /// logs a topic whose partition count changed after `bind`. The connect bound and the
+    /// watcher's refresh run on a scripted clock, so neither elapses in real time.
+    #[cfg(feature = "integration")]
+    mod own_consumers {
+        use std::sync::Mutex as StdMutex;
+
+        use rdkafka::admin::NewPartitions;
+        use tokio::sync::Semaphore;
+        use tracing::field::{Field, Visit};
+        use tracing::span::{Attributes, Id, Record as SpanRecord};
+        use tracing::{Event, Level, Metadata};
+        use ulo::testing::ScriptedTimer;
+        use ulo_rpc_conformance::relay::Relay;
+
+        use super::failed_connect::kraft;
+        use super::*;
+
+        /// How long a test waits, in real time, for the link to reach a state it then acts on.
+        const PATIENCE: Duration = Duration::from_secs(30);
+
+        /// The link's `connect_within` in these tests, a length the scripted clock times.
+        const WITHIN: Duration = Duration::from_secs(3);
+
+        /// The `every_instance` topics, one per test.
+        const RELEASED: &str = "own.released.every";
+        const HELD: &str = "own.held.every";
+        const WATCHED: &str = "own.watched.every";
+        const REFUSED: &str = "own.refused.every";
+
+        /// What the refusing seam fails the assignment with.
+        const REFUSAL: &str = "the test refuses the assignment";
+
+        /// Events produced while the assignment is held, and after `listen` returns.
+        const WHILE_HELD: u32 = 5;
+        const AFTER_BIND: u32 = 20;
+
+        /// The app's clock as the link reads it: a wait of [`WITHIN`] or of [`METADATA_REFRESH`]
+        /// ends once the test advances the scripted clock past it, and every other, the anchor's
+        /// backoff among them, in real time.
+        #[derive(Clone, Default)]
+        struct Clock(ScriptedTimer);
+
+        impl Clock {
+            fn scripted(length: Duration) -> bool {
+                length == WITHIN || length == METADATA_REFRESH
+            }
+        }
+
+        impl Timer for Clock {
+            fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+                if Clock::scripted(d) { self.0.sleep(d) } else { Box::pin(tokio::time::sleep(d)) }
+            }
+
+            fn now(&self) -> Instant {
+                Instant::now()
+            }
+
+            fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), Refused>> {
+                if Clock::scripted(d) {
+                    self.0.try_sleep(d)
+                } else {
+                    Box::pin(async move {
+                        tokio::time::sleep(d).await;
+                        Ok(())
+                    })
+                }
+            }
+        }
+
+        /// Holds the assignment of a consumer whose topics include the gate's, entering it, until
+        /// the test releases it; a consumer of other topics passes.
+        struct Gate {
+            topic: &'static str,
+            entered: Semaphore,
+            released: Semaphore,
+        }
+
+        impl Gate {
+            const fn new(topic: &'static str) -> Self {
+                Gate { topic, entered: Semaphore::const_new(0), released: Semaphore::const_new(0) }
+            }
+
+            fn hold(&'static self, topics: &[&str]) -> BoxFuture<'static, Result<(), BoxError>> {
+                let holds = topics.contains(&self.topic);
+                Box::pin(async move {
+                    if holds {
+                        self.entered.add_permits(1);
+                        if let Ok(permit) = self.released.acquire().await {
+                            permit.forget();
+                        }
+                    }
+                    Ok(())
+                })
+            }
+
+            /// Waits until a consumer has entered the gate, failing naming `listening` if it
+            /// returned first.
+            async fn entered_before(&self, listening: &mut tokio::task::JoinHandle<Result<Inbound, BoxError>>) {
+                let entered = tokio::time::timeout(PATIENCE, async {
+                    tokio::select! {
+                        biased;
+                        entered = self.entered.acquire() => entered.expect("the gate is never closed").forget(),
+                        listened = &mut *listening => {
+                            panic!("`listen` returned before its own consumer was assigned: {:?}", listened.map(|outcome| outcome.map(drop)))
+                        }
+                    }
+                })
+                .await;
+                assert!(entered.is_ok(), "no consumer reached its assignment within {PATIENCE:?}");
+            }
+        }
+
+        static RELEASED_GATE: Gate = Gate::new(RELEASED);
+        static HELD_GATE: Gate = Gate::new(HELD);
+
+        fn released_gate(topics: &[&str]) -> BoxFuture<'static, Result<(), BoxError>> {
+            RELEASED_GATE.hold(topics)
+        }
+
+        fn held_gate(topics: &[&str]) -> BoxFuture<'static, Result<(), BoxError>> {
+            HELD_GATE.hold(topics)
+        }
+
+        fn refusing(_topics: &[&str]) -> BoxFuture<'static, Result<(), BoxError>> {
+            Box::pin(std::future::ready(Err(REFUSAL.into())))
+        }
+
+        fn server(relay: &Relay, clock: &Clock, before_assign: fn(&[&str]) -> BoxFuture<'static, Result<(), BoxError>>) -> Arc<Kafka> {
+            let mut link = Kafka::brokers(relay.addr().to_string()).connect_within(WITHIN);
+            link.group = Some("ulo-own-consumers".to_owned());
+            link.timer = Some(Arc::new(clock.clone()));
+            link.before_assign = before_assign;
+            Arc::new(link)
+        }
+
+        fn listening(link: &Arc<Kafka>, topic: &'static str) -> tokio::task::JoinHandle<Result<Inbound, BoxError>> {
+            let link = Arc::clone(link);
+            tokio::spawn(async move { link.listen(&[Subscription::new(topic, Instances::Every)]).await })
+        }
+
+        /// Produces each of `events` to `topic` as an event, its number the payload, and waits
+        /// for the broker to acknowledge each.
+        async fn produce(relay: &Relay, topic: &str, events: std::ops::Range<u32>) {
+            let mut config = ClientConfig::new();
+            config.set("bootstrap.servers", relay.addr().to_string());
+            let producer: FutureProducer = config.create().expect("a producer");
+            for event in events {
+                let payload = event.to_be_bytes();
+                let record = FutureRecord::<str, [u8]>::to(topic).payload(&payload[..]);
+                producer.send(record, Timeout::After(PATIENCE)).await.map_err(|(error, _)| error).expect("the broker took the event");
+            }
+            drop_detached(producer);
+        }
+
+        /// The numbers of the first `count` events `inbound` delivers, or of those it delivered
+        /// within [`PATIENCE`].
+        async fn events(inbound: &mut Inbound, count: usize) -> Vec<u32> {
+            let mut seen = Vec::new();
+            let _ = tokio::time::timeout(PATIENCE, async {
+                while seen.len() < count {
+                    match inbound.next().await {
+                        Some(Delivery { frame: Frame::Evt { data, .. }, .. }) => {
+                            seen.push(u32::from_be_bytes(data.as_bytes().try_into().expect("an event's payload is its number")));
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            })
+            .await;
+            seen
+        }
+
+        /// Waits, in real time, until `done` holds, failing naming `what` after [`PATIENCE`].
+        async fn until(what: &str, done: impl Fn() -> bool) {
+            let deadline = Instant::now() + PATIENCE;
+            while !done() {
+                assert!(Instant::now() < deadline, "{what} did not happen within {PATIENCE:?}");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+
+        /// `listen` returns only once the consumer reading an `every_instance` event's topic is
+        /// assigned. Held before its `assign`, `listen` has not returned while events are
+        /// produced, and once released it returns and every event reaches it: those produced
+        /// while the assignment was held, after the partition's end was read, and the twenty
+        /// produced after `bind`. Planted break: the partitions assigned at librdkafka's logical
+        /// end rather than at the end read before `assign`.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn bind_returns_once_its_own_consumer_is_assigned() {
+            let (relay, _container) = kraft().await;
+            let link = server(&relay, &Clock::default(), released_gate);
+            let mut listening = listening(&link, RELEASED);
+            RELEASED_GATE.entered_before(&mut listening).await;
+            produce(&relay, RELEASED, 0..WHILE_HELD).await;
+            assert!(!listening.is_finished(), "`listen` returned while its own consumer's assignment was held");
+
+            RELEASED_GATE.released.add_permits(1);
+            let listened = tokio::time::timeout(PATIENCE, listening).await.expect("`listen` returned once released").expect("the task completes");
+            let mut inbound = listened.unwrap_or_else(|error| panic!("`listen` failed: {error}"));
+            produce(&relay, RELEASED, WHILE_HELD..WHILE_HELD + AFTER_BIND).await;
+            let seen = events(&mut inbound, (WHILE_HELD + AFTER_BIND) as usize).await;
+            assert_eq!(
+                seen,
+                (0..WHILE_HELD + AFTER_BIND).collect::<Vec<_>>(),
+                "the events read of {WHILE_HELD} produced while the assignment was held and {AFTER_BIND} produced after `bind`"
+            );
+            link.close().await.expect("the link closes");
+        }
+
+        /// An assignment still held when `connect_within` passes fails `listen` with
+        /// `ConnectTimedOut` naming the link, the bound and the brokers. Planted break: `listen`
+        /// not bounded.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn an_assignment_held_past_connect_within_fails_bind_naming_the_link() {
+            let (relay, _container) = kraft().await;
+            let clock = Clock::default();
+            let link = server(&relay, &clock, held_gate);
+            let mut listening = listening(&link, HELD);
+            HELD_GATE.entered_before(&mut listening).await;
+            assert_eq!(clock.0.live(WITHIN), 1, "the connect bound is not armed while `listen` waits on the assignment");
+
+            clock.0.advance(WITHIN);
+            let listened = tokio::time::timeout(PATIENCE, listening).await.expect("`listen` ended at the bound").expect("the task completes");
+            let error = match listened {
+                Ok(_) => panic!("`listen` returned with its own consumer's assignment held past the bound"),
+                Err(error) => error,
+            };
+            let timed_out = error.downcast_ref::<ConnectTimedOut>().unwrap_or_else(|| panic!("`listen` failed otherwise: {error}"));
+            assert_eq!(
+                (timed_out.link(), timed_out.within(), timed_out.address()),
+                ("Kafka", WITHIN, relay.addr().to_string().as_str()),
+                "{error}"
+            );
+            assert!(lock(&link.state).server.is_none(), "a `listen` that failed left a server side");
+        }
+
+        /// The assignment of the consumers of the server's own failing fails `listen`, and no
+        /// server side is left: `listen` waits on the assignment, so its outcome is the
+        /// assignment's. The refusal decides the outcome rather than a timing, so a `listen` that
+        /// leaves the assignment to a task fails this test however quickly or slowly it returns.
+        /// Planted break: the assignment made on a task `listen` does not wait for.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn a_failed_assignment_fails_bind() {
+            let (relay, _container) = kraft().await;
+            let link = server(&relay, &Clock::default(), refusing);
+            let error = match link.listen(&[Subscription::new(REFUSED, Instances::Every)]).await {
+                Ok(_) => panic!("`listen` returned with its own consumers' assignment refused"),
+                Err(error) => error,
+            };
+            assert_eq!(error.to_string(), REFUSAL, "`listen` failed otherwise");
+            assert!(lock(&link.state).server.is_none(), "a `listen` that failed left a server side");
+        }
+
+        /// Advances the scripted clock past one refresh and waits for the watcher to have read
+        /// the partition counts and armed its next wait.
+        async fn refresh(clock: &Clock) {
+            until("the partition watcher arming its wait", || clock.0.live(METADATA_REFRESH) == 1).await;
+            clock.0.advance(METADATA_REFRESH);
+            let now = clock.0.elapsed();
+            until("the partition watcher reading the counts and arming its next wait", || clock.0.pending_at(METADATA_REFRESH) == Some(now)).await;
+        }
+
+        /// A topic read in full by a consumer of the server's own whose partition count changes
+        /// after `bind` is logged at `warn` once, at the next refresh, naming the topic and both
+        /// counts; a refresh finding no change logs nothing. Planted break: the watcher not
+        /// spawned.
+        #[test]
+        fn a_partition_count_change_after_bind_is_logged_at_warn() {
+            let capture = Capture::default();
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a current-thread runtime");
+            tracing::subscriber::with_default(capture.clone(), || {
+                runtime.block_on(async {
+                    let (relay, _container) = kraft().await;
+                    let clock = Clock::default();
+                    let link = server(&relay, &clock, no_hold);
+                    let _inbound = link.listen(&[Subscription::new(WATCHED, Instances::Every)]).await.unwrap_or_else(|error| panic!("`listen` failed: {error}"));
+
+                    refresh(&clock).await;
+                    assert_eq!(capture.warned(), Vec::<String>::new(), "a refresh finding no change logged");
+
+                    let mut config = ClientConfig::new();
+                    config.set("bootstrap.servers", relay.addr().to_string());
+                    let admin: Detached<AdminClient<DefaultClientContext>> = Detached::new(config.create().expect("an admin client"));
+                    for created in admin.create_partitions(&[NewPartitions::new(WATCHED, 3)], &AdminOptions::new()).await.expect("the partitions are created") {
+                        created.unwrap_or_else(|(topic, code)| panic!("`{topic}` refused new partitions: {code}"));
+                    }
+                    let reader = Arc::clone(&lock(&link.state).server.as_ref().expect("a server side").0.every.clone().expect("an every-instance consumer"));
+                    let mut counted = 0;
+                    let deadline = Instant::now() + PATIENCE;
+                    while counted != 3 {
+                        assert!(Instant::now() < deadline, "the broker's metadata showed {counted} partitions of `{WATCHED}` after {PATIENCE:?}");
+                        let reading = Arc::clone(&reader);
+                        counted = blocking(move || partition_ids(&reading, WATCHED).map(|ids| ids.len())).await.expect("the read ran").expect("the metadata reads");
+                    }
+                    drop(reader);
+
+                    refresh(&clock).await;
+                    let warned = capture.warned();
+                    let [line] = warned.as_slice() else { panic!("one `warn` for one change: {warned:?}") };
+                    assert!(line.contains(&format!("topic={WATCHED}")) && line.contains("before=1") && line.contains("after=3"), "{line}");
+
+                    refresh(&clock).await;
+                    assert_eq!(capture.warned().len(), 1, "a refresh finding the changed count again logged again: {:?}", capture.warned());
+                    link.close().await.expect("the link closes");
+                })
+            });
+        }
+
+        /// Every event on the thread it is the default subscriber of, as its level, its message
+        /// and `name=value` for each other field.
+        #[derive(Clone, Default)]
+        struct Capture {
+            events: Arc<StdMutex<Vec<(Level, String)>>>,
+        }
+
+        impl Capture {
+            fn warned(&self) -> Vec<String> {
+                let events = lock(&self.events);
+                events.iter().filter(|(level, line)| *level == Level::WARN && line.contains("reads every partition of")).map(|(_, line)| line.clone()).collect()
+            }
+        }
+
+        impl tracing::Subscriber for Capture {
+            fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+                true
+            }
+
+            fn new_span(&self, _span: &Attributes<'_>) -> Id {
+                Id::from_u64(1)
+            }
+
+            fn record(&self, _span: &Id, _values: &SpanRecord<'_>) {}
+
+            fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+            fn event(&self, event: &Event<'_>) {
+                let mut line = Line::default();
+                event.record(&mut line);
+                lock(&self.events).push((*event.metadata().level(), line.0));
+            }
+
+            fn enter(&self, _span: &Id) {}
+
+            fn exit(&self, _span: &Id) {}
+        }
+
+        #[derive(Default)]
+        struct Line(String);
+
+        impl Visit for Line {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0.insert_str(0, &format!("{value:?}"));
+                } else {
+                    self.0.push_str(&format!(" {}={value:?}", field.name()));
+                }
+            }
+
+            fn record_str(&mut self, field: &Field, value: &str) {
+                self.0.push_str(&format!(" {}={value}", field.name()));
+            }
         }
     }
 }
