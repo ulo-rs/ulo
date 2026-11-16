@@ -21,9 +21,8 @@ use proc_macro::TokenStream;
 /// which is set from `Default`. On an impl block, the constructor is the fn named `new`, or the
 /// one marked `#[construct]`; its parameters are injection points, it may be `async`, and it may
 /// return `Self` or a `Result<Self, E>`. Both marks are read and removed, and a hidden import of
-/// each written beside the item lets an editor answer hover and go-to-definition on it. A mark,
-/// like the attribute itself, is written bare or under `ulo`, `#[ulo::construct]`; any other
-/// qualifier is a compile error at it.
+/// each written beside the item lets an editor answer hover and go-to-definition on it. A mark is
+/// written bare or under `ulo`, `#[ulo::construct]`; any other qualifier is a compile error at it.
 ///
 /// Arguments: a scope, `singleton`, `execution` or `transient` (none means `Auto`), and
 /// `timeout = <Duration expr>`, which writes `CONSTRUCT_TIMEOUT`. `Construct::hooks` is filled by
@@ -34,8 +33,7 @@ use proc_macro::TokenStream;
 /// `controllers` both refuse it at compile time.
 #[proc_macro_attribute]
 pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
-    shared::attrs::check_invocation("injectable")
-        .and_then(|()| construct::expand(construct::Kind::Injectable, attr.into(), item.into()))
+    construct::expand(construct::Kind::Injectable, attr.into(), item.into())
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -58,17 +56,17 @@ pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `#[controller]` too. A `#[controller]` type whose handlers are mounted by hand, a gateway
 /// implementing `Gateway` among them, implements `Handlers` itself.
 ///
-/// It is written bare, `#[controller]`, or as `#[ulo::controller]`; under any other qualifier,
-/// a renamed dependency's included, it is a compile error, and a crate depending on `ulo` under
-/// another name aliases it, `extern crate framework as ulo;`. The same holds for `#[injectable]`,
-/// `#[handlers]` and every marker they read.
+/// Rust resolves the attribute's path, and any path that reaches it is accepted, a re-export or
+/// a renamed dependency's name among them. The code it writes names `::ulo`: a crate depending on
+/// `ulo` under another name aliases it at its root, `extern crate framework as ulo;`. The same
+/// holds for `#[injectable]` and `#[handlers]`; the markers they read are written bare or under
+/// `ulo`.
 ///
 /// On an impl block it stacks with `#[handlers]` in either order, so the constructor and the
 /// handlers can share one impl, `#[controller] #[handlers] impl Greeter { fn new(..) .. }`.
 #[proc_macro_attribute]
 pub fn controller(attr: TokenStream, item: TokenStream) -> TokenStream {
-    shared::attrs::check_invocation("controller")
-        .and_then(|()| construct::expand(construct::Kind::Controller, attr.into(), item.into()))
+    construct::expand(construct::Kind::Controller, attr.into(), item.into())
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -223,8 +221,7 @@ pub fn module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// generic.
 #[proc_macro_attribute]
 pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
-    shared::attrs::check_invocation("handlers")
-        .and_then(|()| handlers::expand(attr.into(), item.into())).unwrap_or_else(syn::Error::into_compile_error).into()
+    handlers::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()
 }
 
 /// Guards for every handler of a `#[handlers]` impl, or for one method: by type (`AuthGuard`),
