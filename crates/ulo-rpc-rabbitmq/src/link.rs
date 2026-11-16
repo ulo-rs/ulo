@@ -62,6 +62,98 @@ fn event_exchange(pattern: &str) -> String {
     format!("{EVENTS}{pattern}")
 }
 
+/// The queue of an instance's own for `pattern`, an event declared `every_instance`: its event
+/// exchange's name and a `.<uuid>` suffix of 33 bytes.
+fn own_queue(pattern: &str) -> String {
+    format!("{}.{}", event_exchange(pattern), uuid::Uuid::new_v4().simple())
+}
+
+/// AMQP 0-9-1 carries an exchange's name, a queue's, a routing key and a header's name as a
+/// `shortstr`, whose length is one octet, so none is longer than 255 bytes. lapin's `ShortString`
+/// panics on a longer one where it converts with `From`, so every name built from a pattern goes
+/// through `try_new`, and a client checks a call's header names before it converts them.
+const MAX_NAME: usize = lapin::types::MAX_SHORT_STRING_LENGTH;
+
+/// The longest pattern the link serves: its event exchange is `ulo.rpc.event.<pattern>`.
+const MAX_PATTERN: usize = MAX_NAME - EVENTS.len();
+
+/// The longest pattern of an event declared `every_instance`: its queue is
+/// `ulo.rpc.event.<pattern>.<uuid>`.
+const MAX_EVERY_INSTANCE_PATTERN: usize = MAX_PATTERN - ".".len() - uuid::fmt::Simple::LENGTH;
+
+/// `name`, a client's `what` for `pattern`, as a `shortstr`, or the refusal of the frame, which
+/// nothing is published for, naming the pattern, the name's length and AMQP's limit.
+fn amqp_name(name: String, pattern: &Pattern, what: &str) -> Result<ShortString, BoxError> {
+    let bytes = name.len();
+    ShortString::try_new(name).map_err(|_| {
+        format!(
+            "pattern `{pattern}` is {} bytes, and its {what} would be {bytes} bytes, past AMQP's {MAX_NAME}-byte limit on a name",
+            pattern.as_str().len()
+        )
+        .into()
+    })
+}
+
+/// The refusal of a client frame on `pattern` whose header name is over AMQP's limit, which
+/// nothing is published for.
+fn header_names(headers: &CallHeaders, pattern: &Pattern) -> Result<(), BoxError> {
+    match headers.iter().map(|(name, _)| name).find(|name| name.len() > MAX_NAME) {
+        None => Ok(()),
+        Some(name) => Err(format!(
+            "a header name on pattern `{pattern}` is {} bytes, past AMQP's {MAX_NAME}-byte limit on a name",
+            name.len()
+        )
+        .into()),
+    }
+}
+
+/// The exchange and the queue `listen` declares for one pattern, the queue bound to the exchange.
+struct Declared {
+    exchange: ShortString,
+    queue: ShortString,
+    /// The queue is this instance's own, exclusive and auto-deleted.
+    own: bool,
+}
+
+/// The names each subscription is served through, built before `listen` connects. A pattern
+/// whose exchange or queue name is over AMQP's 255 bytes is refused, every such pattern named
+/// with its length, as a `Permanent` failure: the declaration would fail whatever the broker.
+fn declared(subscriptions: &[Subscription]) -> Result<Vec<Declared>, BoxError> {
+    let mut declared = Vec::with_capacity(subscriptions.len());
+    let mut refused = Vec::new();
+    for Subscription { pattern, instances, .. } in subscriptions {
+        let pattern = pattern.as_str();
+        let exchange = event_exchange(pattern);
+        let exchange_bytes = exchange.len();
+        // The shared queue, named after the pattern, is shorter than its exchange's name, so the
+        // exchange alone decides whether a pattern reaching one instance fits.
+        let (Ok(exchange), Ok(shared)) = (ShortString::try_new(exchange), ShortString::try_new(pattern)) else {
+            refused.push(format!(
+                "pattern `{pattern}` is {} bytes, and its event exchange `{EVENTS}<pattern>` would be {exchange_bytes} bytes, \
+                 past AMQP's {MAX_NAME}-byte limit on a name; the RabbitMQ link serves a pattern of at most {MAX_PATTERN} bytes",
+                pattern.len(),
+            ));
+            continue;
+        };
+        if *instances != Instances::Every {
+            declared.push(Declared { exchange, queue: shared, own: false });
+            continue;
+        }
+        let queue = own_queue(pattern);
+        let queue_bytes = queue.len();
+        match ShortString::try_new(queue) {
+            Ok(queue) => declared.push(Declared { exchange, queue, own: true }),
+            Err(_) => refused.push(format!(
+                "pattern `{pattern}` is {} bytes and its event is declared `every_instance`, whose queue \
+                 `{EVENTS}<pattern>.<uuid>` would be {queue_bytes} bytes, past AMQP's {MAX_NAME}-byte limit on a name; the \
+                 RabbitMQ link serves an event declared `every_instance` on a pattern of at most {MAX_EVERY_INSTANCE_PATTERN} bytes",
+                pattern.len(),
+            )),
+        }
+    }
+    if refused.is_empty() { Ok(declared) } else { Err(Permanent::new(refused.join("; ")).into()) }
+}
+
 /// RabbitMQ's direct reply-to pseudo-queue: the client consumes it, without acknowledgments, on
 /// the channel it publishes requests on.
 const REPLY_TO: &str = "amq.rabbitmq.reply-to";
@@ -505,9 +597,10 @@ impl Link for RabbitMq {
     }
 
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
+        let declared = declared(subscriptions)?;
         let runtime = self.runtime()?;
         let clock = self.timer.clone().ok_or(NoTimer { link: "RabbitMQ" })?;
-        let (uri, patterns, prefetch) = (uri(&self.url)?, subscriptions.to_vec(), self.prefetch);
+        let (uri, prefetch) = (uri(&self.url)?, self.prefetch);
         let timed_out = ConnectTimedOut::new(self.connect_within, address(&uri), "RabbitMQ");
         let connecting = runtime.run(async move {
             // lapin's auto-recovery retries a first connect too, sixteen times on an
@@ -518,7 +611,7 @@ impl Link for RabbitMq {
             let checked = Connection::connect_uri(uri.clone(), ConnectionProperties::default()).await?;
             let _ = checked.close(200, "connected".into()).await;
             let connection = Connection::connect_uri(uri, ConnectionProperties::default().enable_auto_recover()).await?;
-            match subscribe(&connection, &patterns, prefetch).await {
+            match subscribe(&connection, declared, prefetch).await {
                 Ok((channel, consumers, control)) => Ok((connection, channel, consumers, control)),
                 Err(error) => {
                     let _ = connection.close(200, "bind failed".into()).await;
@@ -735,27 +828,17 @@ fn address(uri: &AMQPUri) -> String {
 /// instance's own, exclusive to its connection and auto-deleted, so the broker deletes it once the
 /// drain cancels its consumer or the connection closes, bound to the same exchange, which copies
 /// each event to every queue bound to it: an event emitted while no instance consumes such a queue
-/// reaches none. Its name is chosen here rather than by the broker, for the topology replay.
-async fn subscribe(connection: &Connection, patterns: &[Subscription], prefetch: u16) -> Result<(Channel, Vec<Consumer>, Consumer), BoxError> {
+/// reaches none. Its name is chosen by [`declared`] rather than by the broker, for the topology
+/// replay.
+async fn subscribe(connection: &Connection, declared: Vec<Declared>, prefetch: u16) -> Result<(Channel, Vec<Consumer>, Consumer), BoxError> {
     let channel = connection.create_channel().await?;
     channel.basic_qos(prefetch, BasicQosOptions { global: true }).await?;
-    let mut consumers = Vec::with_capacity(patterns.len());
-    for Subscription { pattern, instances, .. } in patterns {
-        let exchange = event_exchange(pattern.as_str());
-        channel.exchange_declare(exchange.as_str().into(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default()).await?;
-        let queue: ShortString = match instances {
-            Instances::Every => {
-                let queue: ShortString = format!("{exchange}.{}", uuid::Uuid::new_v4().simple()).into();
-                let own = QueueDeclareOptions { exclusive: true, auto_delete: true, ..Default::default() };
-                channel.queue_declare(queue.clone(), own, FieldTable::default()).await?;
-                queue
-            }
-            _ => {
-                channel.queue_declare(pattern.as_str().into(), QueueDeclareOptions::default(), FieldTable::default()).await?;
-                pattern.as_str().into()
-            }
-        };
-        channel.queue_bind(queue.clone(), exchange.as_str().into(), "".into(), QueueBindOptions::default(), FieldTable::default()).await?;
+    let mut consumers = Vec::with_capacity(declared.len());
+    for Declared { exchange, queue, own } in declared {
+        channel.exchange_declare(exchange.clone(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default()).await?;
+        let options = if own { QueueDeclareOptions { exclusive: true, auto_delete: true, ..Default::default() } } else { QueueDeclareOptions::default() };
+        channel.queue_declare(queue.clone(), options, FieldTable::default()).await?;
+        channel.queue_bind(queue.clone(), exchange, "".into(), QueueBindOptions::default(), FieldTable::default()).await?;
         // An empty tag has the broker assign one; a fixed tag would repeat across the patterns
         // sharing the channel, which the broker refuses.
         let consumer = channel.basic_consume(queue, "".into(), BasicConsumeOptions::default(), FieldTable::default()).await?;
@@ -1172,31 +1255,45 @@ impl ClientSide {
     async fn send(self: &Arc<Self>, pattern: Pattern, frame: Frame, answer: oneshot::Sender<Result<(), BoxError>>, confirming: &mut Confirming) {
         match frame {
             Frame::Req { id, headers, data, .. } => {
+                let key = match header_names(&headers, &pattern).and_then(|()| amqp_name(pattern.as_str().to_owned(), &pattern, "routing key")) {
+                    Ok(key) => key,
+                    Err(refused) => return drop(answer.send(Err(refused))),
+                };
                 lock(&self.calls).insert(id, ClientCall::Unary);
-                let published = self.publish_request(&pattern, id, &headers, None, data.as_bytes()).await;
+                let published = self.publish_request(key, id, &headers, None, data.as_bytes()).await;
                 self.settle(published, Some(id), pattern, answer, confirming);
             }
             Frame::Evt { headers, data, .. } => {
+                if let Err(refused) = header_names(&headers, &pattern) {
+                    return drop(answer.send(Err(refused)));
+                }
                 let mut properties = BasicProperties::default();
                 if let Some(table) = amqp_headers(&headers, None) {
                     properties = properties.with_headers(table);
                 }
-                let exchange = event_exchange(pattern.as_str());
+                // The pattern is shorter than its exchange's name, so it fits once the name does.
+                let names = amqp_name(event_exchange(pattern.as_str()), &pattern, "event exchange `ulo.rpc.event.<pattern>`")
+                    .and_then(|exchange| Ok((exchange, amqp_name(pattern.as_str().to_owned(), &pattern, "routing key")?)));
+                let (exchange, key) = match names {
+                    Ok(names) => names,
+                    Err(refused) => return drop(answer.send(Err(refused))),
+                };
                 if let Err(error) = self.declare_events(&exchange).await {
                     let _ = answer.send(Err(error.into()));
                     return;
                 }
                 // A fanout exchange routes on no key, so the routing key carries the pattern, which
                 // the server reads off the delivery as it does a request's.
-                let published = self
-                    .channel
-                    .basic_publish(exchange.as_str().into(), pattern.as_str().into(), BasicPublishOptions::default(), data.as_bytes(), properties)
-                    .await;
+                let published = self.channel.basic_publish(exchange, key, BasicPublishOptions::default(), data.as_bytes(), properties).await;
                 self.settle(published, None, pattern, answer, confirming);
             }
             Frame::Open { id, headers, .. } => {
+                let key = match header_names(&headers, &pattern).and_then(|()| amqp_name(pattern.as_str().to_owned(), &pattern, "routing key")) {
+                    Ok(key) => key,
+                    Err(refused) => return drop(answer.send(Err(refused))),
+                };
                 lock(&self.calls).insert(id, ClientCall::Streaming { opened: false, held: VecDeque::new(), until: HoldUntil::at_open(&headers) });
-                let published = self.publish_request(&pattern, id, &headers, Some(OPEN), &[]).await;
+                let published = self.publish_request(key, id, &headers, Some(OPEN), &[]).await;
                 self.settle(published, Some(id), pattern, answer, confirming);
             }
             Frame::In { id, data } => {
@@ -1238,12 +1335,12 @@ impl ClientSide {
 
     /// Declares `exchange`, a pattern's event exchange, unless this channel already has; the
     /// declaration matches the server's, so whichever side declares it first, the other's agrees.
-    async fn declare_events(&self, exchange: &str) -> lapin::Result<()> {
-        if lock(&self.exchanges).contains(exchange) {
+    async fn declare_events(&self, exchange: &ShortString) -> lapin::Result<()> {
+        if lock(&self.exchanges).contains(exchange.as_str()) {
             return Ok(());
         }
-        self.channel.exchange_declare(exchange.into(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default()).await?;
-        lock(&self.exchanges).insert(exchange.to_owned());
+        self.channel.exchange_declare(exchange.clone(), ExchangeKind::Fanout, ExchangeDeclareOptions::default(), FieldTable::default()).await?;
+        lock(&self.exchanges).insert(exchange.as_str().to_owned());
         Ok(())
     }
 
@@ -1373,13 +1470,13 @@ impl ClientSide {
 
     /// A `mandatory` publish through the default exchange: a queue named after the pattern takes
     /// it, and with none the broker returns it, which is the miss signal.
-    async fn publish_request(&self, pattern: &Pattern, call: u64, headers: &CallHeaders, kind: Option<&str>, body: &[u8]) -> lapin::Result<PublisherConfirm> {
+    async fn publish_request(&self, pattern: ShortString, call: u64, headers: &CallHeaders, kind: Option<&str>, body: &[u8]) -> lapin::Result<PublisherConfirm> {
         let mut properties = BasicProperties::default().with_reply_to(REPLY_TO.into()).with_correlation_id(self.correlation(call).into());
         if let Some(table) = amqp_headers(headers, kind) {
             properties = properties.with_headers(table);
         }
         let options = BasicPublishOptions { mandatory: true, ..Default::default() };
-        self.channel.basic_publish("".into(), pattern.as_str().into(), options, body, properties).await
+        self.channel.basic_publish("".into(), pattern, options, body, properties).await
     }
 
     async fn publish_control(&self, call: u64, kind: &str, body: &[u8]) -> lapin::Result<PublisherConfirm> {
@@ -1542,6 +1639,77 @@ mod tests {
                 let _ = released.await;
             }
         }
+    }
+
+    /// The names `listen` declares for one pattern of `bytes` bytes, or its refusal's text.
+    fn names(bytes: usize, instances: Instances) -> Result<(String, String, bool), String> {
+        match declared(&[Subscription::new("p".repeat(bytes), instances)]) {
+            Ok(declared) => {
+                let [Declared { exchange, queue, own }] = <[Declared; 1]>::try_from(declared).unwrap_or_else(|_| panic!("one pattern declared other than once"));
+                Ok((exchange.to_string(), queue.to_string(), own))
+            }
+            Err(refused) => {
+                assert!(refused.is::<Permanent>(), "a pattern AMQP cannot name is refused as retryable: {refused}");
+                Err(refused.to_string())
+            }
+        }
+    }
+
+    /// Q29-9: a pattern reaching one instance is served up to 241 bytes, where its event exchange
+    /// `ulo.rpc.event.<pattern>` is 255 bytes, AMQP's limit on a name, and refused one byte past
+    /// it with the pattern, its length and the limit named. Planted break: the exchange's length
+    /// left unchecked, the shared queue alone measured.
+    #[test]
+    fn a_pattern_is_served_up_to_the_length_its_event_exchange_fits_in_255_bytes() {
+        let (exchange, queue, own) = names(241, Instances::One).expect("a 241-byte pattern is served");
+        assert_eq!((exchange.len(), queue.len(), own), (255, 241, false), "the names a 241-byte pattern is declared under");
+        assert_eq!(exchange, format!("ulo.rpc.event.{queue}"), "the event exchange of a 241-byte pattern");
+
+        let refused = names(242, Instances::One).expect_err("a 242-byte pattern was served");
+        let pattern = "p".repeat(242);
+        for part in [format!("pattern `{pattern}` is 242 bytes"), "would be 256 bytes".to_owned(), "AMQP's 255-byte limit".to_owned(), "at most 241 bytes".to_owned()] {
+            assert!(refused.contains(&part), "the refusal of a 242-byte pattern does not say `{part}`: {refused}");
+        }
+        let every = names(242, Instances::Every).expect_err("a 242-byte pattern declared `every_instance` was served");
+        assert_eq!(every, refused, "a pattern no mode can serve is refused other than for its exchange when declared `every_instance`");
+    }
+
+    /// Q29-9: an event declared `every_instance` is served on a pattern up to 208 bytes, where its
+    /// queue `ulo.rpc.event.<pattern>.<uuid>` is 255 bytes, and refused one byte past it naming
+    /// the pattern, its length and the limit, the same pattern reaching one instance still served.
+    /// Planted break: the instance's own queue left unchecked, refused at the broker instead.
+    #[test]
+    fn an_every_instance_event_is_served_up_to_the_length_its_queue_fits_in_255_bytes() {
+        let (exchange, queue, own) = names(208, Instances::Every).expect("a 208-byte pattern declared `every_instance` is served");
+        assert_eq!((exchange.len(), queue.len(), own), (222, 255, true), "the names a 208-byte pattern declared `every_instance` is declared under");
+        let suffix = queue.strip_prefix(&format!("{exchange}.")).unwrap_or_else(|| panic!("the instance's queue `{queue}` is not its exchange's name and a suffix"));
+        assert!(uuid::Uuid::try_parse(suffix).is_ok(), "the instance's queue ends in `{suffix}`, not a uuid");
+
+        let refused = names(209, Instances::Every).expect_err("a 209-byte pattern declared `every_instance` was served");
+        let pattern = "p".repeat(209);
+        for part in [
+            format!("pattern `{pattern}` is 209 bytes and its event is declared `every_instance`"),
+            "would be 256 bytes".to_owned(),
+            "AMQP's 255-byte limit".to_owned(),
+            "at most 208 bytes".to_owned(),
+        ] {
+            assert!(refused.contains(&part), "the refusal of a 209-byte `every_instance` pattern does not say `{part}`: {refused}");
+        }
+        assert!(names(209, Instances::One).is_ok(), "a 209-byte pattern reaching one instance is refused");
+    }
+
+    /// Every pattern AMQP cannot name is in the one refusal, each with its own reason.
+    #[test]
+    fn every_unusable_pattern_is_named_in_one_refusal() {
+        let subscriptions = [
+            Subscription::new("a".repeat(300), Instances::One),
+            Subscription::new("fits", Instances::Every),
+            Subscription::new("b".repeat(230), Instances::Every),
+        ];
+        let refused = declared(&subscriptions).err().expect("two unusable patterns were served").to_string();
+        assert!(refused.contains("is 300 bytes, and its event exchange"), "the 300-byte pattern is not named: {refused}");
+        assert!(refused.contains("is 230 bytes and its event is declared `every_instance`"), "the 230-byte pattern is not named: {refused}");
+        assert!(!refused.contains("`fits`"), "a pattern that fits is named: {refused}");
     }
 
     /// Q21-P6: a client connect that panics fails the call waiting on it `Unavailable` holding the
