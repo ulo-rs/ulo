@@ -16,8 +16,8 @@ The suite is a dev-dependency of the runtime crate. The example below runs it ag
 
 ```toml
 [dev-dependencies]
-ulo-runtime-conformance = "=0.1.0-alpha.2"
-ulo-runtime-smol = "=0.1.0-alpha.2"
+ulo-runtime-conformance = "=0.1.0-alpha.3"
+ulo-runtime-smol = "=0.1.0-alpha.3"
 ```
 
 Each crate is pinned with `=`, since a caret on a pre-release also takes a later alpha, which may

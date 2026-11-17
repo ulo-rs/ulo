@@ -14,9 +14,9 @@ which stands in for your link:
 
 ```toml
 [dev-dependencies]
-ulo = "=0.1.0-alpha.2"
-ulo-rpc-conformance = { version = "=0.1.0-alpha.2", features = ["tokio"] }
-ulo-rpc-tcp = "=0.1.0-alpha.2"
+ulo = "=0.1.0-alpha.3"
+ulo-rpc-conformance = { version = "=0.1.0-alpha.3", features = ["tokio"] }
+ulo-rpc-tcp = "=0.1.0-alpha.3"
 ```
 
 Each crate is pinned with `=`, since a caret on a pre-release also takes a later alpha, which may
