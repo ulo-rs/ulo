@@ -188,7 +188,7 @@ fn percent_decode(text: &str) -> String {
 
 /// The password component of `url` in each spelling a library error might print, for
 /// `Store::secrets`. The whole URL is registered by the section read, as every `Secret` leaf is.
-#[cfg(any(feature = "postgres", feature = "mysql", feature = "sqlite"))]
+#[cfg(any(feature = "postgres", feature = "mysql"))]
 pub(crate) fn password_secrets(url: &str) -> Vec<Secret<String>> {
     password_forms(url).into_iter().map(Secret::new).collect()
 }
