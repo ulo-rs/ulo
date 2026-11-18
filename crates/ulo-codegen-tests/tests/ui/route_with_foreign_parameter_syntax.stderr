@@ -1,0 +1,47 @@
+error: invalid route pattern: `:id` is matched as literal text, not as a parameter; write `{id}`
+  --> tests/ui/route_with_foreign_parameter_syntax.rs:11:21
+   |
+11 |     #[ulo_http::get("/raw/:id")]
+   |                     ^^^^^^^^^^
+
+error: invalid route pattern: `*rest` is matched as literal text, not as a catch-all; write `{*rest}`
+  --> tests/ui/route_with_foreign_parameter_syntax.rs:16:21
+   |
+16 |     #[ulo_http::get("/files/*rest")]
+   |                     ^^^^^^^^^^^^^^
+
+error[E0599]: no associated function or constant named `__ulo_mount_raw` found for struct `Files` in the current scope
+  --> tests/ui/route_with_foreign_parameter_syntax.rs:12:8
+   |
+ 7 | struct Files;
+   | ------------ associated function or constant `__ulo_mount_raw` not found for this struct
+...
+12 |     fn raw(&self) -> &'static str {
+   |        ^^^ associated function or constant not found in `Files`
+
+error[E0599]: no associated function or constant named `__ulo_mount_files` found for struct `Files` in the current scope
+  --> tests/ui/route_with_foreign_parameter_syntax.rs:17:8
+   |
+ 7 | struct Files;
+   | ------------ associated function or constant `__ulo_mount_files` not found for this struct
+...
+17 |     fn files(&self) -> &'static str {
+   |        ^^^^^ associated function or constant not found in `Files`
+
+error[E0599]: no associated function or constant named `__ULO_CHECKS_raw` found for struct `Files` in the current scope
+  --> tests/ui/route_with_foreign_parameter_syntax.rs:12:8
+   |
+ 7 | struct Files;
+   | ------------ associated function or constant `__ULO_CHECKS_raw` not found for this struct
+...
+12 |     fn raw(&self) -> &'static str {
+   |        ^^^ associated function or constant not found in `Files`
+
+error[E0599]: no associated function or constant named `__ULO_CHECKS_files` found for struct `Files` in the current scope
+  --> tests/ui/route_with_foreign_parameter_syntax.rs:17:8
+   |
+ 7 | struct Files;
+   | ------------ associated function or constant `__ULO_CHECKS_files` not found for this struct
+...
+17 |     fn files(&self) -> &'static str {
+   |        ^^^^^ associated function or constant not found in `Files`

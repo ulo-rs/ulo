@@ -41,7 +41,7 @@ pub(crate) enum Segment {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PatternError {
     pub(crate) pattern: String,
-    pub(crate) reason: &'static str,
+    pub(crate) reason: Cow<'static, str>,
 }
 
 impl fmt::Display for PatternError {
@@ -388,15 +388,17 @@ pub(crate) fn split(path: &str) -> Vec<(usize, &str)> {
 }
 
 /// The grammar: a leading `/`; segments of static text, `{name}`, or a final `{*name}`; no brace
-/// elsewhere; no empty segment; no name twice. A name is non-empty, starts with `_` or a letter,
-/// and continues with `_`, letters and digits. With `scope`, a final `*` is the wildcard, parsed
-/// as a `Rest`.
+/// elsewhere; no empty segment; no name twice; no segment beginning with `:` or `*`, the
+/// parameter and catch-all spellings of other routers, which would otherwise match as literal
+/// text. A `:` or `*` inside a segment is literal. A name is non-empty, starts with `_` or a
+/// letter, and continues with `_`, letters and digits. With `scope`, a final `*` is the wildcard,
+/// parsed as a `Rest`.
 ///
 /// `ulo-http-macros/src/pattern.rs` checks the same grammar with the same reasons, in the same
 /// order; a change here is made there too.
-fn parse_segments(text: &str, scope: bool) -> Result<Vec<Segment>, &'static str> {
+fn parse_segments(text: &str, scope: bool) -> Result<Vec<Segment>, Cow<'static, str>> {
     if !text.starts_with('/') {
-        return Err("a pattern starts with `/`");
+        return Err("a pattern starts with `/`".into());
     }
     let normalized = normalize(text);
     if normalized == "/" {
@@ -408,21 +410,25 @@ fn parse_segments(text: &str, scope: bool) -> Result<Vec<Segment>, &'static str>
     let mut names: Vec<&str> = Vec::new();
     for (index, piece) in pieces.into_iter().enumerate() {
         if piece.is_empty() {
-            return Err("a segment between two `/` is empty");
+            return Err("a segment between two `/` is empty".into());
         }
         let segment = if scope && piece == "*" {
             if index != last {
-                return Err("`*` is the last segment only");
+                return Err("`*` is the last segment only".into());
             }
             Segment::Rest(Arc::from("*"))
+        } else if let Some(name) = piece.strip_prefix(':') {
+            return Err(foreign_parameter(piece, name).into());
+        } else if let Some(name) = piece.strip_prefix('*') {
+            return Err(foreign_catch_all(piece, name).into());
         } else if let Some(inner) = piece.strip_prefix('{') {
             let Some(inner) = inner.strip_suffix('}') else {
-                return Err("a `{` opens a segment that does not end with `}`");
+                return Err("a `{` opens a segment that does not end with `}`".into());
             };
             if let Some(name) = inner.strip_prefix('*') {
                 check_name(name)?;
                 if index != last {
-                    return Err("`{*name}` is the last segment only");
+                    return Err("`{*name}` is the last segment only".into());
                 }
                 named(&mut names, name)?;
                 Segment::Rest(Arc::from(name))
@@ -432,7 +438,7 @@ fn parse_segments(text: &str, scope: bool) -> Result<Vec<Segment>, &'static str>
                 Segment::Param(Arc::from(inner))
             }
         } else if piece.contains(['{', '}']) {
-            return Err("a brace appears outside a whole `{name}` segment");
+            return Err("a brace appears outside a whole `{name}` segment".into());
         } else {
             // Decoded as a request segment is, so the router, a scope at runtime and the
             // comparison of a scope with a route pattern in `prepare` read one form whichever
@@ -442,6 +448,20 @@ fn parse_segments(text: &str, scope: bool) -> Result<Vec<Segment>, &'static str>
         segments.push(segment);
     }
     Ok(segments)
+}
+
+/// The refusal of a segment written `:name`, another router's parameter: the help names `{name}`
+/// when `name` is one, and `{id}` otherwise.
+fn foreign_parameter(piece: &str, name: &str) -> String {
+    let name = if check_name(name).is_ok() { name } else { "id" };
+    format!("`{piece}` is matched as literal text, not as a parameter; write `{{{name}}}`")
+}
+
+/// The refusal of a segment written `*name` or `*`, another router's catch-all: the help names
+/// `{*name}` when `name` is one, and `{*rest}` otherwise.
+fn foreign_catch_all(piece: &str, name: &str) -> String {
+    let name = if check_name(name).is_ok() { name } else { "rest" };
+    format!("`{piece}` is matched as literal text, not as a catch-all; write `{{*{name}}}`")
 }
 
 /// Records `name`, refusing one already recorded. Checked segment by segment, as
@@ -536,6 +556,24 @@ mod tests {
         // A fixed-length exclusion shares exactly its own path with a rest route below it.
         assert_eq!(claims("/admin/health", "/admin/health", "/admin/{*rest}"), Some(true));
         assert_eq!(claims("/admin/health/x", "/admin/health", "/admin/{*rest}"), Some(false));
+    }
+
+    #[test]
+    fn a_segment_beginning_with_a_colon_or_a_star_is_refused_and_one_holding_either_later_is_literal() {
+        let reason = |text: &str| Pattern::parse(text).map(|_| ()).map_err(|error| error.reason.into_owned());
+        assert_eq!(reason("/raw/:id"), Err("`:id` is matched as literal text, not as a parameter; write `{id}`".to_owned()));
+        assert_eq!(reason("/:"), Err("`:` is matched as literal text, not as a parameter; write `{id}`".to_owned()));
+        assert_eq!(reason("/files/*rest"), Err("`*rest` is matched as literal text, not as a catch-all; write `{*rest}`".to_owned()));
+        assert_eq!(reason("/files/*"), Err("`*` is matched as literal text, not as a catch-all; write `{*rest}`".to_owned()));
+        assert_eq!(reason("/*9/x"), Err("`*9` is matched as literal text, not as a catch-all; write `{*rest}`".to_owned()));
+        for text in ["/v1/projects:undelete", "/a:b", "/a*b", "/files/{*rest}", "/x/{id}"] {
+            assert_eq!(reason(text), Ok(()), "{text}");
+        }
+
+        let scope = |text: &str| ScopePattern::parse(text).map(|_| ()).map_err(|error| error.reason.into_owned());
+        assert_eq!(scope("/admin/*"), Ok(()), "a final `*` is a scope's wildcard");
+        assert_eq!(scope("/admin/:page"), Err("`:page` is matched as literal text, not as a parameter; write `{page}`".to_owned()));
+        assert_eq!(scope("/admin/*all"), Err("`*all` is matched as literal text, not as a catch-all; write `{*all}`".to_owned()));
     }
 
     #[test]
