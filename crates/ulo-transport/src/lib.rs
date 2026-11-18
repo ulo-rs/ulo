@@ -33,7 +33,7 @@ pub mod __private;
 /// deriving crate depends on.
 #[doc(hidden)]
 pub mod __derive {
-    pub use crate::__private::validate;
+    pub use crate::__private::{classify, validate};
 }
 
 pub use admission::{Admission, ConnectionAdmission, Permit};

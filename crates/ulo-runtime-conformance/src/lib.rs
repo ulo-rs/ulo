@@ -59,9 +59,29 @@ pub type Run = Box<dyn Fn(BoxFuture<'static, ()>) -> BoxFuture<'static, Result<(
 /// });
 /// ```
 ///
-/// A declared name that is no scenario fails to compile. The shut-down scenario run on a harness
-/// whose `stoppable` answers `None` fails rather than passing, so a runtime leaving out the
-/// declaration fails too.
+/// A declared name that is no scenario fails to compile, and so does a name declared twice:
+///
+/// ```compile_fail
+/// # use std::future::Future;
+/// # use std::sync::Arc;
+/// # use ulo_runtime_conformance::{Harness, Stoppable, runtime_suite};
+/// # use ulo_runtime_smol::{Executor, Smol};
+/// # struct OnSmol;
+/// # impl Harness for OnSmol {
+/// #     type Runtime = Smol;
+/// #     fn runtime() -> Smol { Smol::current().expect("inside `block_on`") }
+/// #     fn block_on<F: Future>(fut: F) -> F::Output { Smol::new(Arc::new(Executor::new())).block_on(fut) }
+/// #     fn stoppable() -> Option<Stoppable<Smol>> { None }
+/// # }
+/// runtime_suite!(OnSmol; not_applicable {
+///     a_shut_down_runtime_refuses_spawning_and_timing_without_panicking: "a `Smol` cannot shut down",
+///     run_on_a_shut_down_runtime_answers_runtime_shut_down: "a `Smol` cannot shut down",
+///     run_on_a_shut_down_runtime_answers_runtime_shut_down: "a second reason for the same scenario",
+/// });
+/// ```
+///
+/// The shut-down scenario run on a harness whose `stoppable` answers `None` fails rather than
+/// passing, so a runtime leaving out the declaration fails too.
 #[macro_export]
 macro_rules! runtime_suite {
     ($harness:ty $(,)?) => {
@@ -90,6 +110,12 @@ macro_rules! runtime_suite {
         // a test build or any other: the stamped functions exist in a test build alone, and a
         // doctest is none.
         $(const _: () = __ulo_runtime_conformance_scenarios::$skip;)*
+        // A name declared twice is defined twice here (E0428). The stamper would match the first
+        // declaration alone and drop the second's reason.
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_runtime_conformance_declared {
+            $(pub(super) const $skip: () = ();)*
+        }
         $crate::runtime_suite!(@cases $harness;
             a_returned_future_is_finished => task::finished,
             a_dropped_handle_detaches => task::detached,

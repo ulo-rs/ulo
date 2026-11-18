@@ -26,6 +26,9 @@ use ulo_ws::{
 
 use support::{Record, Running, close_frame, hang_up, next_json, send_json, upgrade, within};
 
+/// `WsModule`'s `max_message` for the gateways on the HTTP port, none of which sets its own.
+const MAX_MESSAGE: u64 = 256;
+
 /// The upgrade header naming the visitor, which `OnConnect` files in the directory.
 const NAME: &str = "x-name";
 
@@ -171,7 +174,7 @@ impl Module for Root {
     }
 
     fn register(&self, m: &mut ModuleDef<'_>) {
-        m.import(WsModule::for_root().max_connections(Count::Max(2)));
+        m.import(WsModule::for_root().max_connections(Count::Max(2)).max_message(MAX_MESSAGE));
         m.value(Directory::default());
         m.value(self.inits.clone());
         m.controller::<Lobby>();
@@ -288,6 +291,11 @@ async fn ws_module_limits_govern_the_gateways_on_the_http_port() {
     let mut annex = app.connect("/annex", &[]).await;
     send_json(&mut annex, &json!({ "event": "ping", "id": 1 })).await;
     assert_eq!(next_json(&mut annex).await, json!({ "id": 1, "data": "pong" }));
+    // A message over the module's `max_message` closes its connection with 1009.
+    let mut long = app.connect("/annex", &[]).await;
+    send_json(&mut long, &json!({ "event": "ping", "id": 2, "data": "x".repeat(MAX_MESSAGE as usize) })).await;
+    assert_eq!(close_frame(&mut long).await.map(|(code, _)| code), Some(1009));
+    hang_up(long).await;
     for socket in [first, second, annex] {
         hang_up(socket).await;
     }

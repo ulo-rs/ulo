@@ -463,7 +463,7 @@ impl Places {
     }
 
     fn try_take(&self) -> bool {
-        self.held.fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| (held < self.limit).then_some(held + 1)).is_ok()
+        increment_below(&self.held, self.limit)
     }
 
     fn give_back(&self, places: usize) {
@@ -749,12 +749,22 @@ struct Slot(Arc<GatewayRuntime>);
 impl Slot {
     fn acquire(gateway: &Arc<GatewayRuntime>) -> Option<Slot> {
         let limit = gateway.limits.max_connections.unwrap_or(usize::MAX);
-        gateway
-            .live
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| (live < limit).then_some(live + 1))
-            .ok()
-            .map(|_| Slot(Arc::clone(gateway)))
+        increment_below(&gateway.live, limit).then(|| Slot(Arc::clone(gateway)))
     }
+}
+
+/// Adds one to `counter` when it is below `limit`, in one atomic step. Written as a
+/// `compare_exchange_weak` loop because `fetch_update` is deprecated from Rust 1.99 and its
+/// replacement, `try_update`, is not in the 1.88 floor.
+fn increment_below(counter: &AtomicUsize, limit: usize) -> bool {
+    let mut current = counter.load(Ordering::Acquire);
+    while current < limit {
+        match counter.compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
+        }
+    }
+    false
 }
 
 impl Drop for Slot {

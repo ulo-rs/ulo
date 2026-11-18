@@ -1,0 +1,18 @@
+error[E0277]: `#[derive(Classify)]` needs `NoteNotFound` to implement `std::error::Error` and be `Send + Sync + 'static`
+ --> tests/ui/classify_without_error.rs:7:12
+  |
+7 | pub struct NoteNotFound;
+  |            ^^^^^^^^^^^^ not an `Error + Send + Sync + 'static` type
+  |
+help: the trait `std::error::Error` is not implemented for `NoteNotFound`
+ --> tests/ui/classify_without_error.rs:7:1
+  |
+7 | pub struct NoteNotFound;
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+  = note: derive `Display` and `Error` with thiserror: `#[derive(Debug, thiserror::Error, Classify)]`, with an `#[error("..")]` on the type or on each variant
+  = note: required for `NoteNotFound` to implement `ulo_transport::__private::classify::ErrorBounds`
+note: required by a bound in `ulo_transport::__private::classify::bounds`
+ --> $WORKSPACE/crates/ulo-transport/src/__private.rs
+  |
+  |     pub fn bounds<T: ?Sized + ErrorBounds>() {}
+  |                               ^^^^^^^^^^^ required by this bound in `bounds`
