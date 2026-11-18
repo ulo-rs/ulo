@@ -149,7 +149,7 @@ A permanent misconfiguration is never reported as a retryable `Unavailable`.
 ### 3.3 Runtimes are given, never found, at two levels
 
 The application picks its runtime. Nothing looks one up ambiently. The independence rule has two
-levels, and CI enforces both for every member through `runtime-levels.txt`:
+levels, and CI enforces both for every member through `ci/runtime-levels.txt`:
 
 - **Runtime-free:** no `tokio` crate anywhere in the dependency tree. This covers the core, the
   shared SPI, the hubs and their plug-point types, `ulo-net`, `ulo-runtime-smol`, the smol TCP
@@ -199,7 +199,7 @@ would exist, one shared copy is required. Copies left behind have drifted every 
 ### 3.8 `unsafe` only where listed, and checked where it can be
 
 The workspace lint level is `unsafe_code = "deny"`. A module opts out only if it's on
-`unsafe-allowed.txt`, marked `pure-rust` (checked by Miri in CI) or `syscall` (Miri can't execute
+`ci/unsafe-allowed.txt`, marked `pure-rust` (checked by Miri in CI) or `syscall` (Miri can't execute
 it; it rests on its safety comment and its tests). A faster `unsafe` path that Miri can check is
 preferred to a slower safe copy. The cost was measured in the case that decided this.
 

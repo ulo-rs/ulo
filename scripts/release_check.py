@@ -30,10 +30,10 @@ three steps against it and stops at the first that fails:
    permits every break. A major release is therefore checked as a minor one: its breaks are listed
    in the log and need no entry, since the version accepts them. Each crate must report a run of
    more than zero checks, and each break of a crate that is not a major release must be accepted
-   in `semver-breaks.txt`. A crate BASELINE does not publish, one added since or made publishable
+   in `ci/semver-breaks.txt`. A crate BASELINE does not publish, one added since or made publishable
    since, has no release to compare with; the summary names each one.
 
-`semver-breaks.txt` lists `break <package> <lint> <count>  # reason`: a break since the last
+`ci/semver-breaks.txt` lists `break <package> <lint> <count>  # reason`: a break since the last
 release that is accepted, with the number of distinct items the lint reports in that package. The
 check fails on a break no entry accepts, on an entry whose count differs from the run's, and on an
 entry nothing matches. An `against <version>` line, required once there is an entry, names the
@@ -60,7 +60,7 @@ import sys
 import tempfile
 
 CONFIG = "release-plz.toml"
-BREAKS = "semver-breaks.txt"
+BREAKS = "ci/semver-breaks.txt"
 GROUP = "core"
 ANCHOR = "ulo"
 
@@ -303,7 +303,7 @@ def parse_semver_log(log):
 
 
 def read_breaks(text):
-    """`{(package, lint): (count, reason)}` from `semver-breaks.txt`."""
+    """`{(package, lint): (count, reason)}` from `ci/semver-breaks.txt`."""
     entries = {}
     for n, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
@@ -325,7 +325,7 @@ def read_breaks(text):
 
 
 def read_against(text):
-    """The release `semver-breaks.txt` is written against, from its `against <version>` line, or
+    """The release `ci/semver-breaks.txt` is written against, from its `against <version>` line, or
     `None` for a file with no entries and no line. A file with entries and no line, or two lines,
     is a usage error: an entry is accepted only against the release it was written for."""
     versions = []

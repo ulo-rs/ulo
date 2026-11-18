@@ -12,7 +12,7 @@ keywords = ["ulo", "opentelemetry", "tracing", "observability"]
 categories = ["development-tools::debugging"]
 
 # No feature of this crate enables an `rt-*`, `experimental_*` or `testing` feature of
-# `opentelemetry_sdk`: the tree holds no tokio, and `runtime-levels.txt` reads it with
+# `opentelemetry_sdk`: the tree holds no tokio, and `ci/runtime-levels.txt` reads it with
 # `--all-features`.
 
 [dependencies]

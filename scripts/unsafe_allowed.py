@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`unsafe` only where `unsafe-allowed.txt` lists it.
+"""`unsafe` only where `ci/unsafe-allowed.txt` lists it.
 
     python3 scripts/unsafe_allowed.py check        # fails on `unsafe` outside the list
     python3 scripts/unsafe_allowed.py miri         # runs Miri over the pure-Rust entries' tests
@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ran_a_test import ran_a_test  # noqa: E402  the definition `template_matrix.py` shares
 
 ROOT = Path(__file__).resolve().parent.parent
-LIST = ROOT / "unsafe-allowed.txt"
+LIST = ROOT / "ci/unsafe-allowed.txt"
 SELFTEST = ROOT / "scripts" / "unsafe_allowed_selftest.txt"
 
 OPT_OUT = re.compile(r"#!\[\s*allow\s*\(\s*unsafe_code\s*\)\s*\]")
@@ -98,7 +98,7 @@ def entry_findings(entries):
     return findings
 
 
-def located(findings, name="unsafe-allowed.txt"):
+def located(findings, name="ci/unsafe-allowed.txt"):
     return [f"{name}:{number}: {finding}" for number, finding in findings]
 
 
@@ -249,7 +249,7 @@ def check():
     for entry in entries:
         path = ROOT / entry.path
         if not path.is_file():
-            findings.append(f"unsafe-allowed.txt:{entry.number}: `{entry.path}` is no file")
+            findings.append(f"ci/unsafe-allowed.txt:{entry.number}: `{entry.path}` is no file")
             continue
         allowed.add(path.resolve())
         if not OPT_OUT.search(code_only(path.read_text())):
@@ -273,10 +273,10 @@ def check():
             code = code_only(text)
             where = path.relative_to(ROOT)
             for m in UNSAFE.finditer(code):
-                findings.append(f"{where}:{line_of(code, m.start())}: `unsafe` outside the modules unsafe-allowed.txt lists")
+                findings.append(f"{where}:{line_of(code, m.start())}: `unsafe` outside the modules ci/unsafe-allowed.txt lists")
             for m in LINT.finditer(code):
                 if not STRICT.search(code[:m.start()]):
-                    findings.append(f"{where}:{line_of(code, m.start())}: `unsafe_code` relaxed outside the modules unsafe-allowed.txt lists")
+                    findings.append(f"{where}:{line_of(code, m.start())}: `unsafe_code` relaxed outside the modules ci/unsafe-allowed.txt lists")
 
     for finding in findings:
         print(finding)
@@ -333,7 +333,7 @@ def miri(dry_run):
             print(f"skipped, a system call Miri cannot execute: {entry.path}: {entry.reason}")
     pure = [entry for entry in entries if entry.kind == PURE]
     if not pure:
-        print("unsafe-allowed.txt lists no pure-Rust entry: Miri has nothing to run")
+        print("ci/unsafe-allowed.txt lists no pure-Rust entry: Miri has nothing to run")
         return 0
     failures = []
     for entry in pure:

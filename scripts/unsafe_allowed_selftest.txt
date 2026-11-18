@@ -1,4 +1,4 @@
-# Planted lines for `scripts/unsafe_allowed.py`, which runs the rules of `unsafe-allowed.txt`'s
+# Planted lines for `scripts/unsafe_allowed.py`, which runs the rules of `ci/unsafe-allowed.txt`'s
 # grammar over this file before `check` and before `miri`, and fails unless each line under an
 # `# expect: <finding>` comment is refused with a finding containing that text and nothing else,
 # and every other line passes. Only the grammar is checked here: the paths name no file.
