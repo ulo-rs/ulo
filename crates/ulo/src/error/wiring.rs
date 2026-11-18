@@ -747,7 +747,14 @@ impl WiringError {
                     }
                 }
                 let head = format!("dependency cycle: {}", closed_loop(steps.iter().map(|(k, _)| show(k)).collect()));
-                tree(f, head, steps.iter().map(|(k, m)| format!("`{}` in {}", show(k), show_module(m))).collect())
+                let mut items: Vec<String> = steps.iter().map(|(k, m)| format!("`{}` in {}", show(k), show_module(m))).collect();
+                // A collection or a factory closure is an edge like any other read, so neither
+                // breaks the cycle; a `ModuleRef` declares no key.
+                items.push(
+                    "help: remove one of these reads, or read one of them through `ModuleRef` when it is used rather than at construction"
+                        .to_owned(),
+                );
+                tree(f, head, items)
             }
             WiringError::ScopeViolation { binding, declared, by_closure, controller, module, path } => {
                 // The path's steps are printed short by the graph, so its first step is matched
