@@ -18,6 +18,11 @@ section (`## Install` up to the next `## ` heading) of each README in `READMES`,
 A README with no Install section, or an Install section that names no version, fails too: a check
 that found nothing to compare would pass for the wrong reason.
 
+`cargo install ulo-cli` is read separately, in the files of `CLI_INSTALL`: the two READMEs, the CLI's,
+the `ulo` crate page and the devcontainer. Cargo skips a pre-release unless one is named, so while
+the workspace version is a pre-release each command must carry `--version` and the workspace
+version; a file with no such command fails too.
+
     python3 scripts/check_readme_install.py [ROOT]
     python3 scripts/check_readme_install.py --self-test
 
@@ -31,6 +36,8 @@ import sys
 import tempfile
 
 READMES = ["README.md", "crates/ulo/README.md", "crates/ulo-rpc-conformance/README.md", "crates/ulo-runtime-conformance/README.md"]
+CLI_INSTALL = ["README.md", "crates/ulo/README.md", "crates/ulo-cli/README.md", "crates/ulo/src/lib.rs", ".devcontainer/devcontainer.json"]
+INSTALL_COMMAND = re.compile(r"cargo\s+install\s+ulo-cli\b([^\n\"`]*)")
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"
 # What a dependency or `cargo add` may write: cargo reads `"0.1"` as `^0.1`, a claim about the
 # version as much as `"0.1.0"` is.
@@ -104,6 +111,28 @@ def check(root):
             elif not tagged and "-" in version and operator != "=":
                 problems.append((name, f"Install line {line}: {what} `{operator}{written}` on a pre-release; pin it `={version}`"))
     return problems, read
+
+
+def cli_install(root):
+    """Every `(file, message)` problem with a `cargo install ulo-cli` command under `root`."""
+    version = workspace_version(root)
+    prerelease = "-" in version
+    problems = []
+    for name in CLI_INSTALL:
+        path = root / name
+        if not path.is_file():
+            problems.append((name, "missing"))
+            continue
+        commands = INSTALL_COMMAND.findall(path.read_text())
+        if not commands:
+            problems.append((name, "names no `cargo install ulo-cli` command"))
+        for rest in commands:
+            named = re.search(r"--version\s+=?(" + VERSION + ")", rest)
+            if named is None and prerelease:
+                problems.append((name, f"`cargo install ulo-cli{rest.rstrip()}` names no version, and cargo skips the pre-release `{version}`; add `--version {version}`"))
+            elif named is not None and named.group(1) != version:
+                problems.append((name, f"`cargo install ulo-cli` names `{named.group(1)}`, the workspace version is `{version}`"))
+    return problems
 
 
 GOOD = """# x
@@ -185,14 +214,49 @@ def self_test():
                 sys.exit(f"check_readme_install.py: self-test: the {label} mismatch was not refused")
 
 
+def self_test_cli():
+    good = "run `cargo install ulo-cli --version {v}` then `ulo new x`\n"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = pathlib.Path(tmp)
+
+        def write(version, text):
+            (root / "Cargo.toml").write_text(f'[workspace]\nmembers = []\n\n[workspace.package]\nversion = "{version}"\n')
+            for name in CLI_INSTALL:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(text)
+
+        text = good.format(v="1.2.3-alpha.2")
+        write("1.2.3-alpha.2", text)
+        if cli_install(root):
+            sys.exit(f"check_readme_install.py: self-test: the matching install command gave {cli_install(root)}")
+        write("1.2.3-alpha.3", text)
+        if len(cli_install(root)) != len(CLI_INSTALL):
+            sys.exit("check_readme_install.py: self-test: a workspace version bump did not flag every file")
+        for label, text in {
+            "unpinned command on a pre-release": "run `cargo install ulo-cli` then `ulo new x`\n",
+            "no command": "nothing to install\n",
+            "wrong version": good.format(v="1.2.2-alpha.2"),
+        }.items():
+            write("1.2.3-alpha.2", text)
+            if len(cli_install(root)) != len(CLI_INSTALL):
+                sys.exit(f"check_readme_install.py: self-test: the {label} was not refused once per file")
+        text = "run `cargo install ulo-cli` then `ulo new x`\n"
+        write("1.2.3", text)
+        if cli_install(root):
+            sys.exit(f"check_readme_install.py: self-test: a bare command on a stable version was refused: {cli_install(root)}")
+
+
 def main(argv):
     if argv == ["--self-test"]:
         self_test()
+        self_test_cli()
         print("check_readme_install.py: self-test passed")
         return 0
     root = pathlib.Path(argv[0]) if argv else pathlib.Path(__file__).resolve().parent.parent
     self_test()
+    self_test_cli()
     problems, read = check(root)
+    problems += cli_install(root)
     for name, claim in read:
         print(f"{name}: {claim}")
     for name, message in problems:
