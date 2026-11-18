@@ -25,6 +25,26 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
+Or start from a template. `ulo new` writes a working application with health probes and tests; a
+pre-release is installed by naming its version:
+
+```bash
+cargo install ulo-cli --version 0.1.0-alpha.3
+ulo new my-app && cd my-app && cargo run
+```
+
+To try it without building on your own machine, open the repository in a
+[Codespace](https://codespaces.new/ulo-rs/ulo), which has the CLI installed, or use a throwaway
+container. The application listens on `127.0.0.1` by default, which a published container port
+cannot reach, so the address is overridden:
+
+```bash
+docker run --rm -it -p 3000:3000 rust:1 bash
+cargo install ulo-cli --version 0.1.0-alpha.3
+ulo new my-app && cd my-app
+APP_SERVER__ADDRESS=0.0.0.0:3000 cargo run
+```
+
 ## Quick start
 
 A module, one controller with one route, and the phases that start an application. This is
@@ -159,9 +179,10 @@ transports), and `ulo-cli` (`ulo new`, `ulo generate`, `ulo dev`).
 
 ## Where to go next
 
-The repository, <https://github.com/ulo-rs/ulo>, holds the design in
-`docs/experiments/di-redesign/DESIGN.md` and forty-one runnable examples in `examples/`, one concept
-each, from `01-hello` to `41-one-guard-two-transports`. `cargo doc --open` renders the API docs.
+The documentation site, <https://ulo-rs.vercel.app/>, is the guide. The repository,
+<https://github.com/ulo-rs/ulo>, holds forty-one runnable examples in `examples/`, one concept each,
+from `01-hello` to `41-one-guard-two-transports`, and the design rationale in
+`docs/experiments/di-redesign/DESIGN.md`.
 
 ## License
 
