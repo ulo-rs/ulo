@@ -18,10 +18,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
-use ulo::{App, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, Timer, controller, handlers};
+use ulo::{App, AppBuilder, BoxError, BoxFuture, ConnectError, Dep, FailureReason, Module, ModuleDef, ModuleIdentity, Signal, StartupError, Timer, controller, handlers};
 use ulo_transport::Count;
 use ulo_ws::{
-    AfterInit, BroadcastAdapter, ConnId, ConnectCx, ConnectRefused, GatewayRef, NodeId, OnConnect, Payload, Rooms, Target, WsCx, WsModule,
+    AfterInit, BroadcastAdapter, ConnId, ConnectCx, ConnectRefused, GatewayRef, NodeId, OnConnect, Payload, Rooms, Target, Ws, WsCx, WsModule,
 };
 
 use support::{Record, Running, close_frame, hang_up, next_json, send_json, upgrade, within};
@@ -139,8 +139,8 @@ impl Annex {
     }
 }
 
-/// A gateway declared for the standalone server, which this app does not bind: the HTTP port does
-/// not serve it.
+/// A gateway declared for the standalone server, which this app does not bind and declares unserved
+/// with `AppBuilder::unserved::<Ws>()`: the HTTP port does not serve it.
 #[controller]
 struct Elsewhere;
 
@@ -186,7 +186,13 @@ impl Module for Root {
 
 async fn start() -> (Running, Inits) {
     let inits = Inits(Record::new());
-    let app = Running::start(Root { inits: inits.clone() }, ulo_http_hyper::Server::new("127.0.0.1:0")).await;
+    let app = Running::start_configured(
+        Root { inits: inits.clone() },
+        ulo_http_hyper::Server::new("127.0.0.1:0"),
+        ulo_runtime_tokio::Tokio::current(),
+        AppBuilder::unserved::<Ws>,
+    )
+    .await;
     (app, inits)
 }
 
@@ -253,6 +259,7 @@ async fn after_init_runs_once_with_two_http_servers_sharing_the_hand_off() {
         "the app's start",
         App::builder(Root { inits: inits.clone() })
             .runtime(ulo_runtime_tokio::Tokio::current())
+            .unserved::<Ws>()
             .wire()
             .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
             .connect(),

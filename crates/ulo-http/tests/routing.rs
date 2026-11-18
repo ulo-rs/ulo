@@ -2,7 +2,7 @@
 //! parameters are decoded but for `%2F` and typed, a path with a `.` or `..` segment or a `\`,
 //! raw or as `%5C`, is refused before routing, a static segment outranks a parameter, one path carries one
 //! handler per verb, and a route table that cannot be built is refused by `listen()` naming the
-//! controllers involved.
+//! controllers involved, a segment written `:id` or `*rest` among them.
 
 mod o1_support;
 
@@ -433,4 +433,59 @@ async fn a_route_whose_static_segment_holds_a_backslash_is_refused_naming_the_ro
         assert!(text.contains(&expected), "{expected}\n{error}");
     }
     assert!(!text.contains("twice_encoded"), "`%255C` decodes to the text `%5C`, which a request reaches: {error}");
+}
+
+#[controller]
+struct Tenants;
+
+#[handlers]
+impl Tenants {
+    #[ulo_http::get("/items")]
+    fn items(&self) -> &'static str {
+        "items"
+    }
+}
+
+fn colon_parameter(m: &mut ModuleDef<'_>) {
+    m.controller::<Tenants>().at("/t/:tenant");
+}
+
+fn star_catch_all(m: &mut ModuleDef<'_>) {
+    m.controller::<Tenants>().at("/files/*path");
+}
+
+fn colon_inside_a_segment(m: &mut ModuleDef<'_>) {
+    m.controller::<Tenants>().at("/v1:beta");
+}
+
+/// A literal route is refused by the attribute at compile time; a prefix read at runtime reaches
+/// the same grammar at `listen()`, which names the handler.
+#[tokio::test]
+async fn a_segment_beginning_with_a_colon_is_refused_naming_the_handler_and_the_parameter_spelling() {
+    let error = refused(colon_parameter).await;
+
+    assert_eq!(refusals(&error), 1, "{error}");
+    assert_eq!(refusal_names(&error), [TypeName::of::<Tenants>()], "{error}");
+    let expected = "`Tenants::items`: `/t/:tenant/items` is not a route pattern: `:tenant` is matched as literal text, not as a \
+                    parameter; write `{tenant}`";
+    assert!(error.to_string().contains(expected), "{expected}\n{error}");
+}
+
+#[tokio::test]
+async fn a_segment_beginning_with_a_star_is_refused_naming_the_handler_and_the_catch_all_spelling() {
+    let error = refused(star_catch_all).await;
+
+    assert_eq!(refusals(&error), 1, "{error}");
+    let expected = "`Tenants::items`: `/files/*path/items` is not a route pattern: `*path` is matched as literal text, not as a \
+                    catch-all; write `{*path}`";
+    assert!(error.to_string().contains(expected), "{expected}\n{error}");
+}
+
+#[tokio::test]
+async fn a_colon_inside_a_segment_is_literal_text() {
+    let app = start(colon_inside_a_segment).await;
+
+    let reply = app.send(Call::get("/v1:beta/items")).await;
+    assert_eq!((reply.status, reply.text()), (StatusCode::OK, "items".to_owned()));
+    app.stop().await;
 }

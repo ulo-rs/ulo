@@ -445,7 +445,13 @@ fn freeze(
             let Some(&binding) = binding_ids.get(controller.binding) else { continue };
             let controller_key = graph.key_name(binding);
             let mut decls = Vec::new();
-            (controller.mount)(&mut Mount::new(&mut decls));
+            let mut mount = Mount::new(&mut decls);
+            (controller.mount)(&mut mount);
+            if let Some(served) = mount.served {
+                for decl in &mut decls {
+                    decl.served = Some(served);
+                }
+            }
             for decl in &decls {
                 declare_transport_inputs(graph, decl, &mut transports_seen, &mut declared.transport_inputs);
             }

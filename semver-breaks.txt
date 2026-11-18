@@ -8,5 +8,8 @@
 against 0.1.0-alpha.3
 
 # Breaks cargo-semver-checks does not lint, listed for the release notes (RELEASING.md, step 3).
+# unchecked ulo App::listen  # refuses, as one `StartupError::Configure` entry per controller naming it and its transport, every controller no queued server serves, a WebSocket gateway declared `port = own` with no standalone server among them, where it bound and never served it; a binary serving no `T` declares it with `AppBuilder::unserved::<T>()`
+# unchecked ulo-http routes  # a route segment beginning with `:` or `*`, `/raw/:id` or `/files/*rest`, is a compile error on a route literal and a `Configure` entry naming the handler for a pattern joined at runtime, and a pre-dispatch scope or exclusion holding one fails `prepare`, where each matched as literal text; a scope's final `*` stays its wildcard
+# unchecked ulo module  # a configured `#[module]`'s field whose type is a `Secret<T>` written through an alias, or an `Option`, `Vec`, `BTreeMap` or `HashMap` of one, is registered for redaction and requires `T: Display`, so such a field over a `T` that is not `Display` fails to compile at the field, where it compiled and went unregistered
 # unchecked ulo-rpc-conformance conformance_suite  # a scenario named twice in `not_applicable` fails to compile (E0428), where the second reason was dropped
 # unchecked ulo-runtime-conformance runtime_suite  # a scenario named twice in `not_applicable` fails to compile (E0428), where the second reason was dropped

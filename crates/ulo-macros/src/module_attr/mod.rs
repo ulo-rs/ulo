@@ -2,7 +2,10 @@
 //!
 //! A unit struct is identified by type (`ModuleIdentity::of_type::<Self>()`); a struct with
 //! fields is a configured module, identified by value (`ModuleIdentity::of_value(self)`, which
-//! needs `Eq + Hash + Clone`), and every `Secret<_>` field is registered with `m.secret(..)`.
+//! needs `Eq + Hash + Clone`). Every field's secrets are registered with `m.secret(..)`, decided
+//! by the field's type through the probe in `ulo::__private::secret_field`: a `Secret<_>` field
+//! however its type is spelled, and an `Option`, `Vec` or map over one. A secret inside another
+//! type the field holds is not reached.
 //! `register` never returns early: `expr?` lowers to `m.try_value(expr)`.
 //!
 //! `register` writes, in order: `global`, the secrets, the imports, the providers, the
@@ -21,7 +24,7 @@ mod providers;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{Ident, Index, ItemStruct, Member, Type};
+use syn::{Ident, Index, ItemStruct, Member};
 
 use ulo_handler_codegen::restore::restore_item;
 
@@ -106,27 +109,30 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &Token
     })
 }
 
-/// `m.secret(&self.<field>);` for each field whose type's last path segment is `Secret`.
+/// The secret probe on every field (`ulo::__private::secret_field`): a field whose type holds
+/// secrets registers each with `m.secret(..)`, and any other registers nothing.
 pub(crate) fn secret_fields(item: &ItemStruct) -> TokenStream {
+    let ulo = ulo();
     let m = module_def_param();
     // `self` keeps the call-site span of the `&self` the generated `register` declares; the call
     // around it is spanned at the field, where a `Secret<T>` whose `T` is not `Display` fails.
     let this = quote!(self);
-    let calls = item.fields.iter().enumerate().filter(|(_, field)| is_secret(&field.ty)).map(|(index, field)| {
+    let calls = item.fields.iter().enumerate().map(|(index, field)| {
         let member = match &field.ident {
             Some(ident) => Member::Named(ident.clone()),
             None => Member::Unnamed(Index { index: index as u32, span: field.ty.span() }),
         };
         quote_spanned! {field.ty.span()=>
-            #m.secret(&#this.#member);
+            (&#ulo::__private::secret_field::Probe(&#this.#member)).__ulo_register_secret(#m);
         }
     });
-    quote!(#(#calls)*)
-}
-
-fn is_secret(ty: &Type) -> bool {
-    match ty {
-        Type::Path(path) => path.qself.is_none() && path.path.segments.last().is_some_and(|s| s.ident == "Secret"),
-        _ => false,
+    if item.fields.is_empty() {
+        return TokenStream::new();
+    }
+    quote! {
+        {
+            use #ulo::__private::secret_field::{PlainArm as _, SecretArm as _};
+            #(#calls)*
+        }
     }
 }

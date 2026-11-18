@@ -72,11 +72,28 @@ pub struct Mount<'a> {
     pub(crate) handlers: &'a mut Vec<HandlerDecl>,
     /// The `K`s [`once`](Self::once) has run for during this controller's mount.
     pub(crate) once: HashSet<TypeId>,
+    /// What [`served_by`](Self::served_by) declared, applied to every handler of the controller
+    /// once its mount returns.
+    pub(crate) served: Option<Served>,
 }
 
 impl<'a> Mount<'a> {
     pub(crate) fn new(handlers: &'a mut Vec<HandlerDecl>) -> Self {
-        Mount { handlers, once: HashSet::new() }
+        Mount { handlers, once: HashSet::new(), served: None }
+    }
+
+    /// Declares this controller a `T` controller served by a server whose transport is `S`, for
+    /// every handler it mounts, whatever marker each mounts under. Without it, each handler is
+    /// served by a server of its own transport.
+    ///
+    /// `listen()` refuses a controller no bound server serves (transports DESIGN §2.7, X6), and
+    /// reads this declaration to decide which server that is and which transport the refusal
+    /// names: `ulo-ws` declares `served_by::<Ws, Http>()` for a gateway on the HTTP server's port
+    /// and `served_by::<Ws, Ws>()` for one declared `port = own`, so the connect handler it mounts
+    /// under `WsConnect` counts as the gateway's, and `AppBuilder::unserved::<Ws>()` covers both.
+    /// A later call replaces an earlier one.
+    pub fn served_by<T: Transport, S: Transport>(&mut self) {
+        self.served = Some(Served { transport: TypeName::of::<T>(), server: TypeName::of::<S>() });
     }
 
     /// One handler, declared through its [`HandlerSpec`]. Records the three role keys of `T`,
@@ -89,6 +106,7 @@ impl<'a> Mount<'a> {
         method.deps("method", &mut enhancer_deps);
         self.handlers.push(HandlerDecl {
             transport: TypeName::of::<T>(),
+            served: None,
             key: T::KEY,
             reads_prefix: T::READS_PREFIX,
             inputs: T::inputs,
@@ -208,6 +226,9 @@ pub(crate) struct ControllerRecord {
 #[derive(Clone)]
 pub(crate) struct HandlerDecl {
     pub(crate) transport: TypeName,
+    /// The controller's [`Mount::served_by`] declaration, set on each of its handlers once its
+    /// mount returns.
+    pub(crate) served: Option<Served>,
     /// `Transport::KEY`.
     pub(crate) key: &'static str,
     /// `Transport::READS_PREFIX`.
@@ -230,6 +251,21 @@ pub(crate) struct HandlerDecl {
     /// The two `EnhancerSpec<T>` tiers, controller then method.
     pub(crate) specs: Arc<dyn Any + Send + Sync>,
     pub(crate) handler: Arc<dyn Any + Send + Sync>,
+}
+
+/// Which transport a handler's controller is, for the refusal and the opt-out, and the transport of
+/// the server that serves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Served {
+    pub(crate) transport: TypeName,
+    pub(crate) server: TypeName,
+}
+
+impl HandlerDecl {
+    /// What serves this handler: its controller's declaration, or its own transport's server.
+    pub(crate) fn served(&self) -> Served {
+        self.served.unwrap_or(Served { transport: self.transport, server: self.transport })
+    }
 }
 
 #[derive(Clone)]

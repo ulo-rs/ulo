@@ -3,13 +3,16 @@
 //! step by hand, since this crate cannot depend on the crate that re-exports it, and give the same
 //! reasons.
 
+use std::borrow::Cow;
+
 /// Why `text` is not a route pattern, or `Ok`: a leading `/`; segments of static text, `{name}`,
-/// or a final `{*name}`; no brace elsewhere; no empty segment; no name twice. A name is
-/// non-empty, starts with `_` or a letter, and continues with `_`, letters and digits. One
-/// trailing slash is insignificant, so `/files/{*rest}/` ends in its rest segment.
-pub(crate) fn check(text: &str) -> Result<(), &'static str> {
+/// or a final `{*name}`; no brace elsewhere; no empty segment; no name twice; no segment beginning
+/// with `:` or `*`, which would match as literal text. A name is non-empty, starts with `_` or a
+/// letter, and continues with `_`, letters and digits. One trailing slash is insignificant, so
+/// `/files/{*rest}/` ends in its rest segment.
+pub(crate) fn check(text: &str) -> Result<(), Cow<'static, str>> {
     if !text.starts_with('/') {
-        return Err("a pattern starts with `/`");
+        return Err("a pattern starts with `/`".into());
     }
     let normalized = match text.strip_suffix('/') {
         Some(stripped) if !stripped.is_empty() => stripped,
@@ -23,17 +26,25 @@ pub(crate) fn check(text: &str) -> Result<(), &'static str> {
     let mut names: Vec<&str> = Vec::new();
     for (index, piece) in pieces.into_iter().enumerate() {
         if piece.is_empty() {
-            return Err("a segment between two `/` is empty");
+            return Err("a segment between two `/` is empty".into());
+        }
+        if let Some(name) = piece.strip_prefix(':') {
+            let name = if check_name(name).is_ok() { name } else { "id" };
+            return Err(format!("`{piece}` is matched as literal text, not as a parameter; write `{{{name}}}`").into());
+        }
+        if let Some(name) = piece.strip_prefix('*') {
+            let name = if check_name(name).is_ok() { name } else { "rest" };
+            return Err(format!("`{piece}` is matched as literal text, not as a catch-all; write `{{*{name}}}`").into());
         }
         if let Some(inner) = piece.strip_prefix('{') {
             let Some(inner) = inner.strip_suffix('}') else {
-                return Err("a `{` opens a segment that does not end with `}`");
+                return Err("a `{` opens a segment that does not end with `}`".into());
             };
             let name = match inner.strip_prefix('*') {
                 Some(name) => {
                     check_name(name)?;
                     if index != last {
-                        return Err("`{*name}` is the last segment only");
+                        return Err("`{*name}` is the last segment only".into());
                     }
                     name
                 }
@@ -43,11 +54,11 @@ pub(crate) fn check(text: &str) -> Result<(), &'static str> {
                 }
             };
             if names.contains(&name) {
-                return Err("a parameter name appears twice");
+                return Err("a parameter name appears twice".into());
             }
             names.push(name);
         } else if piece.contains(['{', '}']) {
-            return Err("a brace appears outside a whole `{name}` segment");
+            return Err("a brace appears outside a whole `{name}` segment".into());
         }
     }
     Ok(())
