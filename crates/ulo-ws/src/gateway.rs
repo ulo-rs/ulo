@@ -253,7 +253,9 @@ pub enum Overflow {
 /// `port = own` on the attribute, is a standalone server on a port of its own, such as
 /// `ulo_ws_hyper::Server`, serving through
 /// [`GatewayTable::own_port`](crate::GatewayTable::own_port). Each serves only the gateways
-/// naming it, so no gateway is reachable on a port its author did not choose.
+/// naming it, so no gateway is reachable on a port its author did not choose, and `listen()`
+/// refuses a gateway whose server the app does not bind, naming it as a `Ws` controller, unless
+/// `AppBuilder::unserved::<Ws>()` declares the binary serves no WebSocket.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Port {
     #[default]
@@ -580,8 +582,14 @@ async fn resolve<G: Send + Sync + 'static>(module: &ModuleRef) -> Result<Arc<G>,
 }
 
 /// Mounts `G`'s connect handler, carrying `handler`, with `G`'s connect guards and the session
-/// factory's reads as the handler's dependencies.
+/// factory's reads as the handler's dependencies, and declares the gateway a `Ws` controller served
+/// by the server its `port` names: the HTTP server for `Port::Http`, a standalone server of `Ws`
+/// for `Port::Own`, which `listen()` reads to refuse a gateway no bound server serves.
 pub(crate) fn mount<G: GatewayConfig>(m: &mut Mount<'_>, handler: ConnectHandler) {
+    match handler.settings.port {
+        Port::Http => m.served_by::<Ws, ulo_http::Http>(),
+        Port::Own => m.served_by::<Ws, Ws>(),
+    }
     let mut guards = EnhancerSpec::<WsConnect>::new();
     G::connect_guards(&mut guards);
     let route = handler.settings.path.clone();

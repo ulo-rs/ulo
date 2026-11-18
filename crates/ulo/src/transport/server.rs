@@ -4,15 +4,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use crate::app::AppHandle;
-use crate::error::RuntimeMissing;
+use crate::error::{PrepareEntry, PrepareError, RuntimeMissing};
 use crate::graph::scopes::input_reads;
+use crate::graph::{BindingId, Graph};
 use crate::key::{BindingKind, Key};
 use crate::module::handle::ModuleRef;
 use crate::module::meta::Meta;
 use crate::runtime::Runtime;
 use crate::timer::{BoxError, BoxFuture, Timer};
 use crate::transport::Transport;
-use crate::transport::controller::MountedHandler;
+use crate::transport::controller::{MountedHandler, Served};
 use crate::type_name::TypeName;
 
 /// Implemented by a transport's server: handed to `app.bind(..)`, prepared and bound by
@@ -244,6 +245,48 @@ pub(crate) fn mounted_parts<T: Transport>(
         return Err(RuntimeMissing { transport: TypeName::of::<T>() });
     };
     Ok((mounted_handlers::<T>(app), runtime))
+}
+
+/// One entry per controller whose handlers no server among `servers` serves, as
+/// `(transport, error)` for `ConfigureErrors::collect`, in mount order: a controller is passed
+/// when a server of the transport that serves it is bound, or when `unserved` names that
+/// transport or the controller's own (transports DESIGN §2.7, X6). A controller with handlers
+/// served by two transports, neither bound, gets an entry for each.
+pub(crate) fn unserved_controllers(graph: &Graph, servers: &[TypeName], unserved: &[TypeName]) -> Vec<(TypeName, BoxError)> {
+    let mut refused: Vec<(BindingId, Served)> = Vec::new();
+    for handler in &graph.handlers {
+        let served = handler.decl.served();
+        let passed = servers.contains(&served.server) || unserved.contains(&served.transport) || unserved.contains(&served.server);
+        if !passed && !refused.contains(&(handler.controller, served)) {
+            refused.push((handler.controller, served));
+        }
+    }
+    refused
+        .into_iter()
+        .map(|(controller, served)| {
+            let binding = graph.binding(controller);
+            let module = graph.module(binding.origin).name.clone();
+            let location = binding.record.location;
+            let controller = binding.record.built;
+            let Served { transport, server } = served;
+            let entry = PrepareEntry::new([controller, transport, server]).at(location).about("controller");
+            let error = PrepareError::new([controller, transport, server], move |full| {
+                let name = |ty: TypeName| if full.contains(&ty) { format!("{ty:#}") } else { ty.to_string() };
+                let (controller, transport, server) = (name(controller), name(transport), name(server));
+                let handlers = if transport == server {
+                    format!("has `{transport}` handlers, and the app binds no `{server}` server")
+                } else {
+                    format!("has `{transport}` handlers a `{server}` server serves, and the app binds none")
+                };
+                format!(
+                    "the controller `{controller}` of module {module}, registered at {location}, {handlers}, so they would never \
+                     run: bind one, or write `AppBuilder::unserved::<{transport}>()` for a binary that serves no `{transport}`"
+                )
+            })
+            .with_entries(vec![entry]);
+            (transport, Box::new(error) as BoxError)
+        })
+        .collect()
 }
 
 /// The graph's handlers for `T`, typed again, in mount order.

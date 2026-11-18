@@ -23,7 +23,7 @@ use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role};
-use ulo::{App, AppHandle, Module, Runtime, Server, Signal};
+use ulo::{App, AppBuilder, AppHandle, Module, Runtime, Server, Signal};
 
 pub type Socket = WebSocketStream<TcpStream>;
 
@@ -53,9 +53,17 @@ impl Running {
 
     /// [`start`](Self::start) with `runtime` as the app's runtime.
     pub async fn start_on(root: impl Module, server: impl Server, runtime: impl Runtime) -> Running {
-        let app = App::builder(root)
-            .runtime(runtime)
-            .drain_timeout(Duration::from_secs(4))
+        Running::start_configured(root, server, runtime, |builder| builder).await
+    }
+
+    /// [`start_on`](Self::start_on) with `configure` applied to the app's builder.
+    pub async fn start_configured(
+        root: impl Module,
+        server: impl Server,
+        runtime: impl Runtime,
+        configure: impl FnOnce(AppBuilder) -> AppBuilder,
+    ) -> Running {
+        let app = configure(App::builder(root).runtime(runtime).drain_timeout(Duration::from_secs(4)))
             .wire()
             .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
             .connect()

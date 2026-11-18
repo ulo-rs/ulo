@@ -42,7 +42,8 @@ use crate::runtime::{Clocked, Runtime};
 use crate::signal::Signal;
 use crate::testing::TestPlan;
 use crate::timer::{BoxError, BoxFuture, Defaults, Timer};
-use crate::transport::server::{BoundAddr, ErasedServer, Server};
+use crate::transport::Transport;
+use crate::transport::server::{BoundAddr, ErasedServer, Server, unserved_controllers};
 use crate::type_name::TypeName;
 
 pub use handle::{AppHandle, Phase};
@@ -131,6 +132,8 @@ pub(crate) struct AppConfig {
     hook_timeout_at: Option<&'static Location<'static>>,
     construct_timeout_at: Option<&'static Location<'static>>,
     pub(crate) trace: TraceMode,
+    /// The transports `unserved` named, whose controllers `listen()` passes with no server.
+    pub(crate) unserved: Vec<TypeName>,
 }
 
 impl AppConfig {
@@ -286,6 +289,28 @@ impl AppBuilder {
         self
     }
 
+    /// Declares that this binary serves no `T`: `listen()` passes the controllers of transport `T`
+    /// with no server bound for them, where it otherwise refuses each as a `StartupError::Configure`
+    /// entry (transports DESIGN §2.7, X6). For one set of modules shared by two binaries, an HTTP
+    /// API and a worker consuming RPC, each binary names the transports it leaves unserved:
+    ///
+    /// ```ignore
+    /// # // reason: names the transport crates' markers, which the core does not depend on
+    /// let api = App::builder(AppModule).unserved::<ulo_rpc::Rpc>();
+    /// let worker = App::builder(AppModule).unserved::<ulo_http::Http>().unserved::<ulo_ws::Ws>();
+    /// ```
+    ///
+    /// `T` is the marker a controller's refusal names. A WebSocket gateway is a `Ws` controller
+    /// wherever it is served, so `unserved::<ulo_ws::Ws>()` passes gateways on the HTTP server's
+    /// port and on their own alike, and `unserved::<ulo_http::Http>()` passes those on the HTTP
+    /// server's port too, which no HTTP server is there to serve. A server bound for `T` still
+    /// serves its controllers. An app that never calls `listen()`, a job running `App::execute`
+    /// or a test through `TestApp`, needs none of this.
+    pub fn unserved<T: Transport>(mut self) -> Self {
+        self.config.unserved.push(TypeName::of::<T>());
+        self
+    }
+
     /// Builds the graph and validates everything, collecting every error in one pass. No
     /// instances, no I/O.
     pub fn wire(self) -> Result<App<Wired>, StartupError> {
@@ -365,7 +390,11 @@ impl App<Connected> {
     ///    reported together as `StartupError::Configure`; nothing has bound yet, so a
     ///    configuration error is always reported before a port conflict. A `prepare` that panics
     ///    is caught and reported as that server's entry, its `source` holding a
-    ///    [`PreparePanicked`], and the other servers still prepare.
+    ///    [`PreparePanicked`], and the other servers still prepare. The same report carries an
+    ///    entry, ahead of the servers', for each controller no queued server serves, naming the
+    ///    controller and its transport, unless [`AppBuilder::unserved`] names that transport: a
+    ///    controller of a transport the app binds no server for, and a WebSocket gateway declared
+    ///    `port = own` with no standalone WebSocket server queued.
     /// 2. `bind` on each server in order. When one fails, those already bound are closed before
     ///    the error returns, so a refused app holds no sockets.
     ///
@@ -383,10 +412,12 @@ impl App<Connected> {
         }
         let handle = self.handle();
 
+        let transports: Vec<TypeName> = queued.iter().map(|server| server.transport_name()).collect();
+        let mut refused = unserved_controllers(&self.shared.graph(), &transports, &self.shared.config.unserved);
+
         // A panic in one server's `prepare` is that server's failure: the others still prepare,
         // and the panicked server drops with the rest when `listen` returns, which is where a
         // transport lets go of what its `prepare` took.
-        let mut refused: Vec<(TypeName, BoxError)> = Vec::new();
         for server in &mut queued {
             let transport = server.transport_name();
             match CatchUnwind::new(async { server.prepare(&handle).await }).await {
