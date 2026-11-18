@@ -14,10 +14,46 @@
 //! # Start here
 //!
 //! This page documents the core's types. To build an application, begin with the guide at
-//! <https://ulo-rs.vercel.app/>, or with the quick start in the repository README, which is
-//! compiled as a doctest. `cargo install ulo-cli --version 0.1.0-alpha.3` then `ulo new my-app`
-//! writes a working project, and `examples/` in the repository holds one runnable application per
-//! concept.
+//! <https://ulo-rs.vercel.app/>. `cargo install ulo-cli --version 0.1.0-alpha.3` then
+//! `ulo new my-app` writes a working project, and `examples/` in the repository holds one runnable
+//! application per concept.
+//!
+//! A module, one controller with one route, and the phases that start an application
+//! (`examples/01-hello`), with `ulo-http`, `ulo-http-hyper` and `ulo-runtime-tokio` beside `ulo`:
+//!
+//! ```no_run
+//! use ulo::{App, controller, handlers, module};
+//! use ulo_http_hyper::Server;
+//! use ulo_runtime_tokio::{Tokio, shutdown_signal};
+//!
+//! #[controller]
+//! pub struct HelloController;
+//!
+//! #[handlers]
+//! impl HelloController {
+//!     #[ulo_http::get("/")]
+//!     fn hello(&self) -> &'static str {
+//!         "Hello, ulo!"
+//!     }
+//! }
+//!
+//! #[module(controllers = [HelloController])]
+//! pub struct AppModule;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let app = App::builder(AppModule)
+//!         .runtime(Tokio::current())
+//!         .wire()?
+//!         .connect()
+//!         .await?
+//!         .bind(Server::new("127.0.0.1:3000"))
+//!         .listen()
+//!         .await?;
+//!     app.serve(shutdown_signal()).await?;
+//!     Ok(())
+//! }
+//! ```
 
 // The README blocks are compiled, not rendered: the `//!` docs above stay the crate's page.
 #[cfg(doctest)]
