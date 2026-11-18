@@ -701,6 +701,133 @@ pub mod contribution_key {
     impl<K: ?Sized> KeyArm<K> for &Probe<K> {}
 }
 
+/// The probe `#[module]` writes for every field of a configured module, so a field's secrets are
+/// registered by its type rather than by how its type is spelled:
+///
+/// ```text
+/// (&::ulo::__private::secret_field::Probe(&self.field)).__ulo_register_secret(m);
+/// ```
+///
+/// with `SecretArm` and `PlainArm` imported anonymously. A field whose type implements
+/// [`HoldsSecrets`](secret_field::HoldsSecrets) takes the first arm, on `Probe`, whatever alias
+/// or path names the type; any other takes the no-op arm one autoref further, and carries no
+/// bound. A held secret's inner type is required to be `Display` by the first arm's method, so a
+/// `Secret<T>` whose `T` is not fails to compile at the field rather than going unregistered:
+/// lookup checks an impl's where-clauses and never a method's.
+///
+/// A secret inside another type, a user struct holding a `Secret<_>` field among them, is not
+/// reached: that type implements no `HoldsSecrets`.
+pub mod secret_field {
+    use std::collections::{BTreeMap, HashMap};
+    use std::fmt::Display;
+
+    use crate::module::def::ModuleDef;
+    use crate::redact::Secret;
+
+    pub struct Probe<'a, F: ?Sized>(pub &'a F);
+
+    /// A field type whose secrets `#[module]` registers: `Secret<T>`, and an `Option`, a `Vec`, a
+    /// `BTreeMap`'s or a `HashMap`'s values over one that does.
+    pub trait HoldsSecrets {
+        /// The type each held secret wraps, which `m.secret` writes through `Display`.
+        type Text: ?Sized;
+
+        fn __ulo_register_secrets(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display;
+    }
+
+    impl<T> HoldsSecrets for Secret<T> {
+        type Text = T;
+
+        fn __ulo_register_secrets(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display,
+        {
+            m.secret(self);
+        }
+    }
+
+    impl<S: HoldsSecrets> HoldsSecrets for Option<S> {
+        type Text = S::Text;
+
+        fn __ulo_register_secrets(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display,
+        {
+            if let Some(held) = self {
+                held.__ulo_register_secrets(m);
+            }
+        }
+    }
+
+    impl<S: HoldsSecrets> HoldsSecrets for Vec<S> {
+        type Text = S::Text;
+
+        fn __ulo_register_secrets(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display,
+        {
+            for held in self {
+                held.__ulo_register_secrets(m);
+            }
+        }
+    }
+
+    impl<K, S: HoldsSecrets> HoldsSecrets for BTreeMap<K, S> {
+        type Text = S::Text;
+
+        fn __ulo_register_secrets(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display,
+        {
+            for held in self.values() {
+                held.__ulo_register_secrets(m);
+            }
+        }
+    }
+
+    impl<K, S: HoldsSecrets, H> HoldsSecrets for HashMap<K, S, H> {
+        type Text = S::Text;
+
+        fn __ulo_register_secrets(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display,
+        {
+            for held in self.values() {
+                held.__ulo_register_secrets(m);
+            }
+        }
+    }
+
+    /// The first arm: the field holds secrets.
+    pub trait SecretArm {
+        type Text: ?Sized;
+
+        fn __ulo_register_secret(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display;
+    }
+
+    impl<F: HoldsSecrets + ?Sized> SecretArm for Probe<'_, F> {
+        type Text = F::Text;
+
+        fn __ulo_register_secret(&self, m: &mut ModuleDef<'_>)
+        where
+            Self::Text: Display,
+        {
+            self.0.__ulo_register_secrets(m);
+        }
+    }
+
+    /// The second arm: any other field, which registers nothing.
+    pub trait PlainArm {
+        fn __ulo_register_secret(&self, _m: &mut ModuleDef<'_>) {}
+    }
+
+    impl<F: ?Sized> PlainArm for &Probe<'_, F> {}
+}
+
 /// The probes that read [`Controller`](crate::Controller), the mark of a controller, where the
 /// type is concrete. A controller is reached through its transport and injected by no binding
 /// but another controller, so a module lists it under `controllers` and nowhere else.

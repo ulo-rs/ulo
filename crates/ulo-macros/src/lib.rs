@@ -80,7 +80,12 @@ pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 /// A module: `imports`, `providers`, `controllers`, `exports` and `global`, lowered to a
 /// `Module` impl whose `register` calls the value API. A struct with fields is a configured
-/// module, identified by value, and every `Secret<_>` field is registered for redaction.
+/// module, identified by value, and the secrets its fields hold are registered for redaction:
+/// a field whose type is a `Secret<_>`, through an alias or a path as well, or an `Option`, `Vec`,
+/// `BTreeMap` or `HashMap` of one, decided by the field's type. A `Secret<_>` inside another type,
+/// a struct of the application's holding one, is not reached: register it with `m.secret(..)` in
+/// a module written with `ModuleDef`, or read it through configuration, which registers each
+/// secret as it reads it.
 ///
 /// Provider entries: `Type` (`provide::<Type>()`), `Type as dyn Trait` (`also_as`), `expr?`
 /// (`try_value`), `expr` (`value`), `with = |..| ..` (`with`, or `try_with` when the closure's

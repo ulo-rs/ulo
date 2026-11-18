@@ -66,8 +66,10 @@ impl Error for Redacted {
 }
 
 /// A value the redaction function replaces wherever it appears in an error this graph reports,
-/// once registered: by `m.secret(&self.url)`, by `#[module]` for every `Secret<_>` field of a
-/// configured module, or by binding it with `m.value(..)`.
+/// once registered: by `m.secret(&self.url)`, by `#[module]` for each field of a configured module
+/// whose type is a `Secret<_>` or an `Option`, `Vec`, `BTreeMap` or `HashMap` of one, or by
+/// binding it with `m.value(..)`. A `Secret<_>` inside another type a `#[module]` field holds is
+/// not reached, and needs `m.secret(..)`.
 ///
 /// `m.value(..)` registers a `Secret<String>` or a `Secret<&'static str>`. Any other `Secret<T>`
 /// needs `m.secret(&s)` beside it, or its text stays visible in reports.
