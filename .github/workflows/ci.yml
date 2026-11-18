@@ -480,6 +480,9 @@ jobs:
           python3 scripts/require_tests.py
           room_made_between_a_failed_attempt_and_the_wait_wakes_the_reply
           the_linger_runs_on_the_clock_the_loop_was_given
+          a_connect_dropped_while_its_loop_reads_the_connack_subscribes_nothing
+          a_listen_dropped_while_its_loop_reads_the_connack_subscribes_nothing
+          a_listen_that_finished_subscribes_again_after_a_reconnect
           connecting_over_tls_does_not_stall_the_thread
           -- cargo test -p ulo-rpc-mqtt --features integration --lib --locked
       - run: >-

@@ -117,6 +117,10 @@ pub struct Mqtt {
     /// The link's watched tasks whose futures live, read through [`Mqtt::live_tasks`].
     #[cfg(feature = "conformance-probe")]
     pub(crate) live_tasks: Arc<std::sync::atomic::AtomicUsize>,
+    /// Handed to the next handshake, whose loop runs it between reading the CONNACK and queuing
+    /// its subscriptions.
+    #[cfg(test)]
+    answered: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[derive(Default)]
@@ -224,7 +228,19 @@ impl Mqtt {
             planted: None,
             #[cfg(feature = "conformance-probe")]
             live_tasks: Arc::default(),
+            #[cfg(test)]
+            answered: Mutex::default(),
         }
+    }
+
+    /// The handshake a `connect` or `listen` shares with the event loop it spawns.
+    fn handshake(&self) -> Arc<Handshake> {
+        let handshake = Handshake::default();
+        #[cfg(test)]
+        {
+            *lock(&handshake.answered) = lock(&self.answered).take();
+        }
+        Arc::new(handshake)
     }
 
     /// The client side as the RPC conformance suite reads it. Built by the `conformance-probe`
@@ -431,10 +447,12 @@ impl Link for Mqtt {
         let panics = self.panics(self.app_runtime.clone().unwrap_or_else(|| Arc::new(runtime.clone())));
         let inbound = panics.guard(receiver_stream(inbound));
         let (ready, bound) = oneshot::channel();
-        let served = Arc::clone(&side);
-        let event_loop = Loop::spawn(&runtime, timer, move |written| panics.watch("event loop", serve(served, eventloop, ready, written)));
+        let (served, handshake) = (Arc::clone(&side), self.handshake());
+        let shaken = Arc::clone(&handshake);
+        let event_loop =
+            Loop::spawn(&runtime, timer, move |written| panics.watch("event loop", serve(served, eventloop, shaken, ready, written)));
         // Until the broker answers, a `listen` dropped mid-handshake takes the event loop with it.
-        let pending = AbortOnDrop::new(event_loop.task.abort_handle());
+        let pending = Pending::new(handshake, event_loop.task.abort_handle());
         // `bind`'s outcome waits for the first CONNACK and the SUBACK of every subscription, so a
         // broker without shared subscriptions, or one refusing a filter, fails `bind`.
         let outcome = bound.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into()));
@@ -488,15 +506,17 @@ impl Link for Mqtt {
         let (ready, subscribed) = oneshot::channel();
         // The clock of the runtime the client was handed, the app's inside an app.
         let timer = Arc::clone(handed) as Arc<dyn Timer>;
-        let looped = Arc::clone(&side);
+        let (looped, handshake) = (Arc::clone(&side), self.handshake());
+        let shaken = Arc::clone(&handshake);
         let panics = self.panics(Arc::clone(handed));
         let replies = panics.guard(receiver_stream(replies));
         let explaining = panics.clone();
-        let event_loop =
-            Loop::spawn(&runtime, timer, move |written| panics.watch_feeder("event loop", client_loop(looped, eventloop, frames, ready, written)));
+        let event_loop = Loop::spawn(&runtime, timer, move |written| {
+            panics.watch_feeder("event loop", client_loop(looped, eventloop, shaken, frames, ready, written))
+        });
         // Until the broker answers, a `connect` dropped mid-handshake, a call's timeout cutting it
         // short, takes the event loop with it.
-        let pending = AbortOnDrop::new(event_loop.task.abort_handle());
+        let pending = Pending::new(handshake, event_loop.task.abort_handle());
         // The reply subscription is in place before the first request can be published.
         let outcome = subscribed.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into()));
         outcome?;
@@ -633,24 +653,59 @@ impl Drop for Unconfirmed {
     }
 }
 
-/// Aborts a task when dropped, unless disarmed first.
-struct AbortOnDrop(Option<AbortHandle>);
+/// A `connect` or `listen` waiting for the broker's answer, which, dropped first, abandons the
+/// handshake and aborts the event loop, unless disarmed first. The abort takes effect only once
+/// the loop's current poll ends, and one poll can read the CONNACK and write the SUBSCRIBE; the
+/// abandonment is what stops that SUBSCRIBE.
+struct Pending {
+    handshake: Arc<Handshake>,
+    task: Option<AbortHandle>,
+}
 
-impl AbortOnDrop {
-    fn new(task: AbortHandle) -> Self {
-        AbortOnDrop(Some(task))
+impl Pending {
+    fn new(handshake: Arc<Handshake>, task: AbortHandle) -> Self {
+        Pending { handshake, task: Some(task) }
     }
 
     fn disarm(mut self) {
-        self.0 = None;
+        self.task = None;
     }
 }
 
-impl Drop for AbortOnDrop {
+impl Drop for Pending {
     fn drop(&mut self) {
-        if let Some(task) = self.0.take() {
+        if let Some(task) = self.task.take() {
+            *lock(&self.handshake.abandoned) = true;
             task.abort();
         }
+    }
+}
+
+/// The handshake between a `connect` or `listen` and the event loop it spawned.
+#[derive(Default)]
+struct Handshake {
+    /// Set when the waiting future is dropped before the broker answers, under the lock the loop
+    /// queues its subscriptions under.
+    abandoned: Mutex<bool>,
+    /// Run once by the loop between reading a CONNACK and queuing its subscriptions.
+    #[cfg(test)]
+    answered: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Handshake {
+    /// Queues the loop's subscriptions through `subscribe`, `None` once the handshake is
+    /// abandoned: the lock is held across the queuing, so nothing is queued after the waiting
+    /// future's drop has returned.
+    fn subscribe<T>(&self, subscribe: impl FnOnce() -> T) -> Option<T> {
+        #[cfg(test)]
+        {
+            let answered = lock(&self.answered).take();
+            if let Some(answered) = answered {
+                answered();
+            }
+        }
+        let abandoned = lock(&self.abandoned);
+        (!*abandoned).then(subscribe)
     }
 }
 
@@ -1282,8 +1337,15 @@ impl Drop for LoopEnded {
 /// Polls the server connection until it fails after `close`, which, once the DISCONNECT `close`
 /// queued is written, is the broker closing it, or until [`linger`]'s grace drops it. On every
 /// CONNACK it subscribes again, rumqttc keeping no subscription across a reconnect: the
-/// patterns' filters while serving, the control topic always.
-async fn serve(side: Arc<ServerSide>, mut eventloop: EventLoop, ready: oneshot::Sender<Result<(), BoxError>>, mut written: Written) {
+/// patterns' filters while serving, the control topic always. A CONNACK read once the `listen`
+/// waiting on it has been dropped ends the loop unsubscribed.
+async fn serve(
+    side: Arc<ServerSide>,
+    mut eventloop: EventLoop,
+    handshake: Arc<Handshake>,
+    ready: oneshot::Sender<Result<(), BoxError>>,
+    mut written: Written,
+) {
     let _ended = LoopEnded(Arc::clone(&side.replies));
     let mut ready = Some(ready);
     loop {
@@ -1310,7 +1372,9 @@ async fn serve(side: Arc<ServerSide>, mut eventloop: EventLoop, ready: oneshot::
                         }
                         None => tracing::error!("{error}; after a reconnect the link stays subscribed to the control topic alone"),
                     }
-                    let _ = side.client.try_subscribe(CONTROL, side.qos);
+                    if handshake.subscribe(|| drop(side.client.try_subscribe(CONTROL, side.qos))).is_none() {
+                        return;
+                    }
                     continue;
                 }
                 let serving = *side.phase.borrow() == Phase::Serving;
@@ -1319,7 +1383,9 @@ async fn serve(side: Arc<ServerSide>, mut eventloop: EventLoop, ready: oneshot::
                     filters.extend(side.filters.iter().map(|filter| Filter::new(filter.clone(), side.qos)));
                 }
                 filters.push(Filter::new(CONTROL, side.qos));
-                if let Err(error) = side.client.try_subscribe_many(filters)
+                let subscribing = || side.client.try_subscribe_many(filters).map_err(|error| error.to_string());
+                let Some(subscribed) = handshake.subscribe(subscribing) else { return };
+                if let Err(error) = subscribed
                     && let Some(ready) = ready.take()
                 {
                     let _ = ready.send(Err(format!("the MQTT link could not subscribe: {error}").into()));
@@ -1673,10 +1739,12 @@ impl ClientSide {
 }
 
 /// Polls the client connection until it fails, which, once the DISCONNECT `close` queued is
-/// written, is the broker closing it, or until [`linger`]'s grace drops it.
+/// written, is the broker closing it, or until [`linger`]'s grace drops it. A CONNACK read once the
+/// `connect` waiting on it has been dropped ends the loop unsubscribed.
 async fn client_loop(
     side: Arc<ClientSide>,
     mut eventloop: EventLoop,
+    handshake: Arc<Handshake>,
     frames: mpsc::UnboundedSender<Frame>,
     ready: oneshot::Sender<Result<(), BoxError>>,
     mut written: Written,
@@ -1688,7 +1756,9 @@ async fn client_loop(
                 if let Some(max) = connack.properties.and_then(|properties| properties.max_packet_size) {
                     side.max_packet.store(u64::from(max), Ordering::Relaxed);
                 }
-                if let Err(error) = side.client.try_subscribe(side.reply_topic.clone(), side.qos)
+                let subscribing = || side.client.try_subscribe(side.reply_topic.clone(), side.qos).map_err(|error| error.to_string());
+                let Some(subscribed) = handshake.subscribe(subscribing) else { return };
+                if let Err(error) = subscribed
                     && let Some(ready) = ready.take()
                 {
                     let _ = ready.send(Err(format!("the MQTT link could not subscribe to its reply topic: {error}").into()));
@@ -2123,6 +2193,114 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
+    }
+
+    /// F663: an abort takes effect only once the task's current poll ends, so the event loop of a
+    /// `connect` dropped while that poll reads the CONNACK would go on, in the same poll, to queue
+    /// and write the SUBSCRIBE. The loop is held between the CONNACK and its subscriptions, its
+    /// thread blocked so the poll stays running, while the `connect` is dropped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_connect_dropped_while_its_loop_reads_the_connack_subscribes_nothing() {
+        let broker = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("the broker's socket binds");
+        let link = Mqtt::url(format!("mqtt://{}", broker.local_addr().expect("the broker's socket has an address")));
+        let held = hold_at_the_connack(&link);
+        let connecting = tokio::spawn(async move { link.connect(&(Arc::new(Tokio::current()) as Arc<dyn Runtime>)).await.map(drop) });
+        dropped_mid_poll(broker, held, connecting, "connect").await;
+    }
+
+    /// F663: as [`a_connect_dropped_while_its_loop_reads_the_connack_subscribes_nothing`], for a
+    /// server's `listen`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_listen_dropped_while_its_loop_reads_the_connack_subscribes_nothing() {
+        let broker = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("the broker's socket binds");
+        let mut link = Mqtt::url(format!("mqtt://{}", broker.local_addr().expect("the broker's socket has an address"))).group("held");
+        let app = App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        link.prepare(&app.handle()).await.expect("the link prepares");
+        let held = hold_at_the_connack(&link);
+        let listening = tokio::spawn(async move { link.listen(&[Pattern::from("held.call").into()]).await.map(drop) });
+        dropped_mid_poll(broker, held, listening, "listen").await;
+    }
+
+    /// The loop of `link`'s next handshake, held between reading the CONNACK and queuing its
+    /// subscriptions: the receiver answers once it is held, and the sender's send or drop
+    /// releases it.
+    fn hold_at_the_connack(link: &Mqtt) -> (oneshot::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (reached, at_connack) = oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        *lock(&link.answered) = Some(Box::new(move || {
+            let _ = reached.send(());
+            let _ = released.recv();
+        }));
+        (at_connack, release)
+    }
+
+    /// Answers the CONNECT at once, drops the waiting future while its loop is held at the
+    /// CONNACK, releases the loop, then requires the connection to end with no SUBSCRIBE on it.
+    async fn dropped_mid_poll(
+        broker: tokio::net::TcpListener,
+        (at_connack, release): (oneshot::Receiver<()>, std::sync::mpsc::Sender<()>),
+        waiting: tokio::task::JoinHandle<Result<(), BoxError>>,
+        what: &str,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        const PATIENCE: Duration = Duration::from_secs(5);
+        // An MQTT 5 CONNACK: no session present, reason code success, no properties.
+        const CONNACK: [u8; 5] = [0x20, 0x03, 0x00, 0x00, 0x00];
+        let (mut stream, _) = tokio::time::timeout(PATIENCE, broker.accept()).await.expect("the link connects").expect("the broker accepts");
+        let mut buffer = [0u8; 512];
+        let read = tokio::time::timeout(PATIENCE, stream.read(&mut buffer)).await.expect("the link sends").expect("the broker reads");
+        assert!(read > 0 && buffer[0] >> 4 == 1, "the link's first packet is not a CONNECT: {:02x?}", &buffer[..read]);
+        stream.write_all(&CONNACK).await.expect("the broker answers");
+        tokio::time::timeout(PATIENCE, at_connack).await.expect("the loop reached the CONNACK").expect("the hold reports");
+        waiting.abort();
+        let dropped = waiting.await;
+        assert!(dropped.is_err_and(|join| join.is_cancelled()), "the `{what}` finished while its loop was held");
+        drop(release);
+        loop {
+            match tokio::time::timeout(PATIENCE, stream.read(&mut buffer)).await {
+                Ok(Ok(0) | Err(_)) => return,
+                Ok(Ok(read)) => assert_ne!(buffer[0] >> 4, 8, "the loop of a dropped `{what}` subscribed: {:02x?}", &buffer[..read]),
+                Err(_) => panic!("the connection of a dropped `{what}` was still open {PATIENCE:?} after its loop was released"),
+            }
+        }
+    }
+
+    /// A `listen` that finished leaves its handshake unabandoned: the event loop subscribes again
+    /// on the CONNACK that follows a lost connection.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_listen_that_finished_subscribes_again_after_a_reconnect() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        const PATIENCE: Duration = Duration::from_secs(5);
+        // An MQTT 5 CONNACK: no session present, reason code success, no properties.
+        const CONNACK: [u8; 5] = [0x20, 0x03, 0x00, 0x00, 0x00];
+        let broker = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("the broker's socket binds");
+        let mut link = Mqtt::url(format!("mqtt://{}", broker.local_addr().expect("the broker's socket has an address"))).group("again");
+        let app = App::builder(Root).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        link.prepare(&app.handle()).await.expect("the link prepares");
+        let listening = tokio::spawn(async move {
+            let inbound = link.listen(&[Pattern::from("again.call").into()]).await;
+            (link, inbound)
+        });
+        let mut buffer = [0u8; 512];
+        let (mut stream, _) = tokio::time::timeout(PATIENCE, broker.accept()).await.expect("the link connects").expect("the broker accepts");
+        let read = tokio::time::timeout(PATIENCE, stream.read(&mut buffer)).await.expect("the link sends").expect("the broker reads");
+        assert!(read > 0 && buffer[0] >> 4 == 1, "the link's first packet is not a CONNECT: {:02x?}", &buffer[..read]);
+        stream.write_all(&CONNACK).await.expect("the broker answers the CONNECT");
+        let read = tokio::time::timeout(PATIENCE, stream.read(&mut buffer)).await.expect("the link subscribes").expect("the broker reads");
+        assert!(read > 3 && buffer[0] >> 4 == 8, "the link's packet after the CONNACK is not a SUBSCRIBE: {:02x?}", &buffer[..read]);
+        // A SUBACK granting QoS 1 to both filters, the pattern's `$share` filter and the control
+        // topic, under the SUBSCRIBE's packet id.
+        stream.write_all(&[0x90, 0x05, buffer[2], buffer[3], 0x00, 0x01, 0x01]).await.expect("the broker answers the SUBSCRIBE");
+        let (link, inbound) = tokio::time::timeout(PATIENCE, listening).await.expect("the listen returns").expect("the listen's task ends");
+        let _inbound = inbound.expect("the listen binds");
+        drop(stream);
+        let (mut stream, _) = tokio::time::timeout(PATIENCE, broker.accept()).await.expect("the link reconnects").expect("the broker accepts");
+        let read = tokio::time::timeout(PATIENCE, stream.read(&mut buffer)).await.expect("the link sends").expect("the broker reads");
+        assert!(read > 0 && buffer[0] >> 4 == 1, "the link's first packet after the reconnect is not a CONNECT: {:02x?}", &buffer[..read]);
+        stream.write_all(&CONNACK).await.expect("the broker answers the CONNECT");
+        let read = tokio::time::timeout(PATIENCE, stream.read(&mut buffer)).await.expect("the link subscribes again").expect("the broker reads");
+        assert!(read > 0 && buffer[0] >> 4 == 8, "the link did not subscribe again after the reconnect: {:02x?}", &buffer[..read]);
+        drop(link);
     }
 
     /// An event loop that never ends and never reports its DISCONNECT written, timed on `runtime`.
