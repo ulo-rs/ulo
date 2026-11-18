@@ -33,6 +33,18 @@ cargo install ulo-cli --version 0.1.0-alpha.3
 ulo new my-app && cd my-app && cargo run
 ```
 
+To try it without building on your own machine, open the repository in a
+[Codespace](https://codespaces.new/ulo-rs/ulo), which has the CLI installed, or use a throwaway
+container. The application listens on `127.0.0.1` by default, which a published container port
+cannot reach, so the address is overridden:
+
+```bash
+docker run --rm -it -p 3000:3000 rust:1 bash
+cargo install ulo-cli --version 0.1.0-alpha.3
+ulo new my-app && cd my-app
+APP_SERVER__ADDRESS=0.0.0.0:3000 cargo run
+```
+
 ## Quick start
 
 A module, one controller with one route, and the phases that start an application. This is
