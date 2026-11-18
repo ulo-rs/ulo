@@ -11,7 +11,8 @@
 //! the upgrade under `refuse = handshake` and closed 1013 after it under `refuse = close`, and a
 //! connect guard decides before the slot is taken. Under `max_inflight = 1` a connection's answers leave in the order their
 //! messages arrived, the first answer held before its queueing through `conformance-probe`'s
-//! `AnswerHold`.
+//! `AnswerHold`. The table's `GatewayDefaults::max_message` bounds a gateway whose attribute sets
+//! none.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -661,6 +662,30 @@ async fn a_connection_phase_that_meets_the_drain_is_refused_503() {
 
 /// How long the probe holds `first`'s answer when `second` does not reach its own queueing.
 const HELD: Duration = Duration::from_millis(300);
+
+/// `GatewayDefaults::max_message` bounds a gateway whose attribute sets none: a message within it
+/// is answered, and one over it closes the connection with 1009.
+#[tokio::test]
+async fn the_defaults_max_message_closes_a_connection_over_it_with_1009() {
+    let app = start_with(GatewayDefaults::default().max_message(64)).await;
+    let Handshake::Switch(switch) = app.table.handshake(head("/plain", |_| {}), None).await else {
+        panic!("a valid upgrade request to a gateway was refused");
+    };
+    let (server, mut client) = pipe().await;
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+
+    let short = json!({ "event": "echo", "id": 1, "data": "short" }).to_string();
+    assert!(short.len() <= 64, "{short}");
+    client.send(Message::text(short)).await.expect("the message was sent");
+    let reply = within("the reply", client.next()).await.expect("the connection ended").expect("a read failed");
+    let reply: Value = serde_json::from_str(reply.to_text().expect("a text reply")).expect("a JSON reply");
+    assert_eq!(reply, json!({ "id": 1, "data": "short" }));
+
+    let long = json!({ "event": "echo", "id": 2, "data": "x".repeat(64) }).to_string();
+    client.send(Message::text(long)).await.expect("the message was sent");
+    assert_eq!(close_code("the connection over `max_message`", &mut client).await, 1009);
+    app.stop().await;
+}
 
 /// F420: under `max_inflight = 1` a connection's answers leave in the order their messages
 /// arrived. The client sends `first` and `second` at once; the probe holds `first`'s answer before

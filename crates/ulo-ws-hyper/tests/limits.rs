@@ -2,7 +2,8 @@
 //! of its own on the standalone server: one frame over `max_message`, `max_inflight` of two,
 //! `max_outbound` under both overflow policies, the slow consumer's Close written before anything
 //! queued, and the two in-flight bounds' own values: a connection's 64 by default, and the
-//! server's across its connections. The suite (`tests/conformance.rs`) runs a message over the limit after reassembly,
+//! server's across its connections. The server's own `max_message` bounds a gateway whose
+//! attribute sets none. The suite (`tests/conformance.rs`) runs a message over the limit after reassembly,
 //! `max_connections`, `max_inflight` of one, a streamed answer under `max_outbound`, and
 //! keep-alive. The counts are written as integer literals, which the attribute rewrites to
 //! `Count::Max`, and once as an expression.
@@ -391,6 +392,20 @@ async fn a_message_over_the_limit_closes_with_1009() {
     hang_up(socket).await;
     let ends = ended.0.at_least(1, "the oversized connection's end").await;
     assert_eq!(ends, vec![("/small".to_owned(), DisconnectReason::ProtocolError)]);
+    app.stop().await;
+}
+
+/// The server's `max_message` bounds a gateway whose attribute sets none.
+#[tokio::test]
+async fn the_server_s_max_message_closes_a_connection_over_it_with_1009() {
+    let Started { app, .. } = start_on(ulo_ws_hyper::Server::new("127.0.0.1:0").max_message(64)).await;
+    let mut socket = app.connect("/strict", &[]).await;
+    send_json(&mut socket, &json!({ "event": "echo", "id": 1, "data": "short" })).await;
+    assert_eq!(next_json(&mut socket).await, json!({ "id": 1, "data": "short" }));
+
+    send_json(&mut socket, &json!({ "event": "echo", "id": 2, "data": "x".repeat(64) })).await;
+    assert_eq!(close_frame(&mut socket).await.map(|(code, _)| code), Some(1009));
+    hang_up(socket).await;
     app.stop().await;
 }
 

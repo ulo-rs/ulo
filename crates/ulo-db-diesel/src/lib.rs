@@ -2,9 +2,14 @@
 //! connections for Postgres and MySQL, and for SQLite through `SyncConnectionWrapper`.
 //!
 //! ```ignore
-//! # // reason: needs diesel_migrations' embed_migrations!, which this crate does not depend on
+//! # // reason: embed_migrations! reads a migrations directory beside the manifest at compile time, and this crate has none
+//! use diesel_migrations::EmbeddedMigrations;
+//! use ulo_db_diesel::{DieselMigrations, DieselModule, Postgres};
+//!
+//! const MIGRATIONS: EmbeddedMigrations = diesel_migrations::embed_migrations!();
+//!
 //! m.import(DieselModule::<Postgres>::from_config(&config, "database")
-//!     .migrate(DieselMigrations::new(diesel_migrations::embed_migrations!())));
+//!     .migrate(DieselMigrations::new(MIGRATIONS)));
 //! ```
 //!
 //! One feature per engine, `postgres`, `mysql` and `sqlite`, each bringing its store. Every store

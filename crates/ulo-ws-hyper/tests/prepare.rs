@@ -1,7 +1,8 @@
 //! The standalone server's `prepare` report lists its failures in one order on every run: the
 //! server's two timeouts, then what the gateway table refuses (the server's gateway defaults, its
 //! gateways, the absence of any `port = own` one), then its endpoints. A zero server-wide
-//! in-flight bound is among the table's refusals.
+//! in-flight bound is among the table's refusals, and so is a zero `max_message`, whose refusal
+//! names the 64 MiB default an unset one leaves.
 
 use ulo::{App, Bound, Module, ModuleDef, ModuleIdentity, Signal, StartupError};
 use ulo_transport::Count;
@@ -79,4 +80,30 @@ async fn a_zero_server_wide_in_flight_bound_is_refused() {
         }
     };
     assert!(text.contains("ulo_ws_hyper::Server: `.server_max_inflight(Count::Max(0))`"), "{text}");
+}
+
+#[tokio::test]
+async fn a_zero_max_message_is_refused_naming_the_default_unset_leaves() {
+    let server = ulo_ws_hyper::Server::new("127.0.0.1:0").max_message(0);
+    let bound = App::builder(Empty)
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .wire()
+        .expect("the app wires")
+        .connect()
+        .await
+        .expect("the app connects")
+        .bind(server)
+        .listen()
+        .await;
+    let text = match bound {
+        Err(StartupError::Configure(refused)) => refused.to_string(),
+        Err(other) => panic!("expected a `Configure` refusal, got: {other}"),
+        Ok(app) => {
+            let _ = app.handle().close(Signal::new("prepare")).await;
+            panic!("a server closing every connection at its first message listened");
+        }
+    };
+    let hint = "ulo_ws_hyper::Server: `.max_message(0)` would close every connection with 1009 at its first message; \
+                leave it unset for the 64 MiB default";
+    assert!(text.contains(hint), "{text}");
 }

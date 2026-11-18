@@ -86,6 +86,43 @@ fn a_service_reading_itself_is_a_cycle() {
 }
 
 #[test]
+fn a_cycle_entry_names_each_step_and_how_to_cut_it() {
+    let errors = wire_err(Mod::<Root>::new(|m| {
+        m.singleton(|_b: Dep<SB>| async { SA });
+        m.singleton(|_a: Dep<SA>| async { SB });
+    }));
+    let cycle = errors.iter().find(|e| matches!(e, WiringError::Cycle { .. })).expect("a cycle entry");
+    let root = mod_name::<Root>();
+    assert_eq!(
+        cycle.to_string(),
+        format!(
+            "dependency cycle: SA → SB → SA\n\
+             ├─ `SA` in {root}\n\
+             ├─ `SB` in {root}\n\
+             └─ help: remove one of these reads, or read one of them through `ModuleRef` when it is used rather than at construction"
+        )
+    );
+}
+
+/// The cut the entry's help names: `Host` holds a `ModuleRef` in place of `Dep<SB>`, which
+/// declares no key, so `SB` reading `Host` closes no cycle, and once `connect` has returned `Host`
+/// reads `SB` through it.
+#[tokio::test]
+async fn a_module_ref_in_place_of_one_read_cuts_the_cycle() {
+    let app = wires(Mod::<Root>::new(|m| {
+        m.singleton(|here: ulo::ModuleRef| async { Host(here) });
+        m.singleton(|_host: Dep<Host>| async { SB });
+    }))
+    .connect()
+    .await
+    .expect("the app connects");
+    let host = app.get::<Host>().await.expect("`Host` is bound");
+    assert!(host.0.get::<SB>().await.is_ok(), "`SB` is read through the `ModuleRef` once `connect` has returned");
+}
+
+struct Host(ulo::ModuleRef);
+
+#[test]
 fn two_separate_tangles_are_two_entries() {
     let errors = wire_err(Mod::<Root>::new(|m| {
         m.singleton(|_b: Dep<SB>| async { SA });

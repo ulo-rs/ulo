@@ -173,9 +173,29 @@ pub trait Broker: Sized + Send + Sync + 'static {
 /// });
 /// ```
 ///
-/// A declared name that is no scenario fails to compile. A scenario run on a link it does not
-/// apply to fails rather than passing, so a link leaving out a declaration it needs fails too;
-/// `cargo test -- --ignored` runs the declared ones, which then fail the same way.
+/// A declared name that is no scenario fails to compile, and so does a name declared twice:
+///
+/// ```compile_fail
+/// # use std::net::{Ipv4Addr, SocketAddr};
+/// # use ulo_rpc_conformance::{Broker, OnTokio};
+/// # use ulo_rpc_tcp::Tcp;
+/// # struct Loopback;
+/// # impl Broker for Loopback {
+/// #     type Harness = OnTokio;
+/// #     type Link = Tcp;
+/// #     async fn start() -> Self { Loopback }
+/// #     fn link(&self) -> Tcp { Tcp::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))) }
+/// #     async fn disrupt(&self) {}
+/// # }
+/// ulo_rpc_conformance::conformance_suite!(Loopback; not_applicable {
+///     recovery_after_disrupt: "TCP here holds no connection to lose",
+///     recovery_after_disrupt: "a second reason for the same scenario",
+/// });
+/// ```
+///
+/// A scenario run on a link it does not apply to fails rather than passing, so a link leaving out
+/// a declaration it needs fails too; `cargo test -- --ignored` runs the declared ones, which then
+/// fail the same way.
 #[macro_export]
 macro_rules! conformance_suite {
     ($broker:ty $(,)?) => {
@@ -204,6 +224,12 @@ macro_rules! conformance_suite {
         // a test build or any other: the stamped functions exist in a test build alone, and a
         // doctest is none.
         $(const _: () = __ulo_rpc_conformance_scenarios::$skip;)*
+        // A name declared twice is defined twice here (E0428). The stamper would match the first
+        // declaration alone and drop the second's reason.
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_rpc_conformance_declared {
+            $(pub(super) const $skip: () = ();)*
+        }
         $crate::conformance_suite!(@cases $broker;
             unary_round_trip => unary::round_trip,
             handler_takes_its_context => unary::context_parameter,
