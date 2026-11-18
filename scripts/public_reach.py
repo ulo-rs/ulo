@@ -5,7 +5,7 @@ through a public path or a re-export, so a user never adds a dependency no docum
 write a type a handler takes or returns. Types of `std`, `core`, `alloc` and `ulo` are exempt:
 every application depends on `ulo` directly.
 
-`public-reach.txt` lists the crates the rule is checked on (`crate <package>`) and the findings
+`ci/public-reach.txt` lists the crates the rule is checked on (`crate <package>`) and the findings
 accepted as they stand (`allow <crate> <item> <type>`, each with its reason after a `#`). The
 check builds each crate's rustdoc JSON with the nightly toolchain given, scans it, and fails on a
 finding the file does not allow and on an allowance no finding matches, so the list cannot hold a
@@ -268,7 +268,7 @@ def report(findings):
 
 def config(root):
     crates, allowed = [], {}
-    for number, line in enumerate((root / "public-reach.txt").read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate((root / "ci/public-reach.txt").read_text(encoding="utf-8").splitlines(), 1):
         text = line.split("#", 1)[0].split()
         if not text:
             continue
@@ -277,7 +277,7 @@ def config(root):
         elif text[0] == "allow" and len(text) == 4 and "#" in line and line.split("#", 1)[1].strip():
             allowed[tuple(text[1:])] = number
         else:
-            sys.exit(f"public-reach.txt:{number}: neither `crate <package>` nor `allow <crate> <item> <type>  # reason`")
+            sys.exit(f"ci/public-reach.txt:{number}: neither `crate <package>` nor `allow <crate> <item> <type>  # reason`")
     return crates, allowed
 
 
@@ -296,7 +296,7 @@ def check(root, toolchain):
     stale = sorted(number for key, number in allowed.items() if key not in findings)
     report(unexpected)
     for number in stale:
-        print(f"public-reach.txt:{number}: allows a finding the scan no longer makes; delete the line")
+        print(f"ci/public-reach.txt:{number}: allows a finding the scan no longer makes; delete the line")
     return 1 if unexpected or stale else 0
 
 

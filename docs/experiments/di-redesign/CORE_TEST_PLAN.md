@@ -535,7 +535,7 @@ Batches: O1 = G9-G15 (HTTP, ~25 tests), O2 = G17, G19-G21, G25 (~18), O3 = G16, 
 - E10: `WiringError::ZeroDefault { knob, at }`: `wiring_timer.rs :: a_zero_construct_or_hook_default_is_refused_at_the_call_that_set_it` (both knobs, their lines, with and without a `Timer`) and `a_zero_drain_or_shutdown_window_is_accepted`. `TestApp`'s two knob methods are `#[track_caller]` but no test pins their line.
 - E11: `Option<S>::from_container` is no longer an `async fn`; `ulo-codegen-tests/tests/optional_trait_object.rs` compiles both positions with both spellings and reads `Some` and `None` at runtime. F469 closed.
 - E13: no code. `ulo-db-sqlx/tests/mysql_reach.rs` and `ulo-db-seaorm/tests/root_cert_env.rs` assert `PERMANENT:NotFound` at the first ping over TCP and `RETRYABLE:NotFound` over a socket, with `create` succeeding.
-- E14: `ulo-otel-otlp` features `ureq` (default) and `reqwest-blocking`, additive; `OtlpExporter::http_over(Client)` names the client; reqwest has no `system-proxy`. `tests/wire.rs` runs under default, reqwest-only and all features; `runtime-levels.txt` lists the three sets.
+- E14: `ulo-otel-otlp` features `ureq` (default) and `reqwest-blocking`, additive; `OtlpExporter::http_over(Client)` names the client; reqwest has no `system-proxy`. `tests/wire.rs` runs under default, reqwest-only and all features; `ci/runtime-levels.txt` lists the three sets.
 
 ### Eleventh response status (E1, E2, E3, E4, E5)
 
@@ -677,11 +677,11 @@ Breaks planted in the working tree, one at a time, each anchor asserted once and
 ### Q28-14 status (the RPC suite published)
 
 - Leaves: `scripts/release_check.py lockstep` derives `ulo-conformance-support` and `ulo-rpc-conformance` as leaves, 17 core crates and 40 leaves, since neither owns a doc-hidden module and no core crate depends on either through a normal or build dependency (transports decision 166).
-- The stamping macros expand to `Slots` and `startup_failed`, public items of the support crate; `ulo-rpc-conformance`'s `tests/harness.rs` holds `Slots` at its public path, and `private-paths.txt` carries no allowance for either suite.
+- The stamping macros expand to `Slots` and `startup_failed`, public items of the support crate; `ulo-rpc-conformance`'s `tests/harness.rs` holds `Slots` at its public path, and `ci/private-paths.txt` carries no allowance for either suite.
 - First publication: `release_check.py --self-test` plants a crate absent from the baseline, which the semver step names in its summary, and requires every crate in both trees checked or listed apart.
 - The README's first run compiles as a doctest of `ulo-rpc-conformance`: the suite stamped over the TCP link, declaring the three held-`cancel` scenarios not applicable as `ulo-rpc-tcp`'s own `tests/conformance.rs` does. The doctest is no test build, so the scenarios are not stamped in it, and the macro refuses a declared name that is no scenario against a module of the scenario names, present in every build. `check_readme_install.py` holds the Install section to the workspace version.
 - `failures_dir`: `ulo-conformance-support`'s `failures::tests` read the target directory off a test binary's path, with and without a target triple, and beside a binary in no `deps` directory.
-- `public-reach.txt` lists both crates; `Broker::probe` is doc-hidden, as the `ClientProbe` it names is.
+- `ci/public-reach.txt` lists both crates; `Broker::probe` is doc-hidden, as the `ClientProbe` it names is.
 
 Breaks planted, each in a scratch copy, the working tree untouched:
 
@@ -700,7 +700,7 @@ Breaks planted, each in a scratch copy, the working tree untouched:
 ### Q29-13 status (the runtime suite published)
 
 - Leaf: `scripts/release_check.py lockstep` derives `ulo-runtime-conformance` as a leaf, 17 core crates and 41 leaves, since it owns no doc-hidden module and no core crate depends on it through a normal or build dependency (transports decision 175).
-- Public surface: `public-reach.txt` lists the crate with no allowance, so `Harness`, `Stoppable` and `Run` name only types `ulo` exports.
+- Public surface: `ci/public-reach.txt` lists the crate with no allowance, so `Harness`, `Stoppable` and `Run` name only types `ulo` exports.
 - The README's first run compiles as a doctest of `ulo-runtime-conformance`: the suite stamped over `ulo-runtime-smol`, declaring the two shut-down scenarios not applicable as that crate's own `tests/conformance.rs` does.
 - `runtime_suite!` stamps an ignored scenario with a literal reason, which libtest prints; a harness answering `None` from `stoppable` without the declaration fails the two shut-down scenarios, naming the declaration.
 - `check_readme_install.py` reads the crate's README.

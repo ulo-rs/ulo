@@ -29,7 +29,7 @@ jobs:
       - run: python3 scripts/check_doctests.py
       - run: python3 scripts/check_readme_install.py
       # No crate's source names another crate's `__private` or `__derive` module outside generated
-      # code, but for the entries `private-paths.txt` gives a reason; a stale entry fails too. The
+      # code, but for the entries `ci/private-paths.txt` gives a reason; a stale entry fails too. The
       # self-test runs first, inside the check, on planted violations and legal uses.
       - run: python3 scripts/private_paths.py check
       - run: cargo clippy -p 'ex-*' --all-targets --no-deps --locked -- -D warnings
@@ -43,7 +43,7 @@ jobs:
       # The registry alone: `cargo tree` downloads every crate in the lock to read its manifest,
       # about 90 s cold, and compiles nothing.
       - uses: Swatinem/rust-cache@v2
-      # Each member held to its level in `runtime-levels.txt` (transports DESIGN §8): no tokio in a
+      # Each member held to its level in `ci/runtime-levels.txt` (transports DESIGN §8): no tokio in a
       # runtime-free crate's tree; in a runtime-neutral one no tokio feature beyond `sync`, and
       # `io-util` and `bytes` on the HTTP/2 path; and no member without an entry. A job of its own
       # rather than a step in `check`, so a crate leaving its level fails under its own name and
@@ -317,7 +317,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # Every type a listed crate's public signatures name is reachable from that crate (DESIGN
       # §0.7). The script self-tests on a planted unexported type first, then builds each crate's
-      # rustdoc JSON and fails on a finding `public-reach.txt` does not allow and on an allowance
+      # rustdoc JSON and fails on a finding `ci/public-reach.txt` does not allow and on an allowance
       # nothing matches.
       - run: python3 scripts/public_reach.py check nightly-2026-10-11
 
@@ -415,7 +415,7 @@ jobs:
       # The lockstep rule on `release-plz.toml`'s core; `release-plz update` against the last
       # release's manifests rather than the crates on crates.io, with no token; and `cargo
       # semver-checks` of every publishable library crate, a break failing unless
-      # `semver-breaks.txt` accepts it. A run that checks fewer crates than the two trees share
+      # `ci/semver-breaks.txt` accepts it. A run that checks fewer crates than the two trees share
       # fails, as does one whose lints were all skipped.
       - run: python3 scripts/release_check.py check "$RUNNER_TEMP/baseline"
 
@@ -432,7 +432,7 @@ jobs:
         with:
           toolchain: nightly-2026-10-11
           components: miri, rust-src
-      # `unsafe` only where `unsafe-allowed.txt` lists it: the workspace denies `unsafe_code`, a
+      # `unsafe` only where `ci/unsafe-allowed.txt` lists it: the workspace denies `unsafe_code`, a
       # listed module opts out with `#![allow(unsafe_code)]`, and this fails on `unsafe` or a
       # relaxed `unsafe_code` anywhere else, on a member that does not inherit the workspace's
       # lints, on a listed file that does not opt out, and on an entry whose kind is missing or

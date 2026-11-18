@@ -53,7 +53,7 @@ at the first step that fails:
 3. **Semver.** `cargo semver-checks` compares every publishable library crate with the last
    release. A version that Cargo's caret requirement on the released one still accepts, an
    unchanged version or a pre-release step among them, is held to a compatible release, and every
-   break must be accepted in `semver-breaks.txt`. Any other version is a major release, which
+   break must be accepted in `ci/semver-breaks.txt`. Any other version is a major release, which
    accepts its breaks without an entry; it is still run as a compatible release, which lists them
    in the log, since a major release type skips every lint. Every crate must report more than zero
    checks run, so a run that skipped its lints fails rather than passing empty. Proc-macro crates
@@ -63,7 +63,7 @@ at the first step that fails:
 
 cargo-semver-checks has no lint for a changed type: a parameter or return type that changes, or a
 tuple struct's field that stops being public, passes step 3. A change making such a break adds a
-comment line to `semver-breaks.txt` in the form `# unchecked <package> <item>  # reason`, which
+comment line to `ci/semver-breaks.txt` in the form `# unchecked <package> <item>  # reason`, which
 the script skips. The pull request that cuts a release lists those lines in the release's notes
 beside the `break` entries; the first change after the tag replaces both.
 
@@ -71,7 +71,7 @@ beside the `break` entries; the first change after the tag replaces both.
 
 Each finding starts a line on stderr, prefixed with its step; a finding about a break lists the
 items it counts on the lines below it. A message with no prefix and exit status 2 is a usage
-error or a malformed line in `semver-breaks.txt`. One prefixed `self-test:` means the script no
+error or a malformed line in `ci/semver-breaks.txt`. One prefixed `self-test:` means the script no
 longer refuses a violation it plants, a fault in the script rather than in the tree.
 
 | Finding | What to do |
@@ -82,9 +82,9 @@ longer refuses a violation it plants, a fault in the script rather than in the t
 | `release-plz: update exited N` | The log above it carries release-plz's error, such as a key `release-plz.toml` may not hold. |
 | `release-plz: release-plz did not version X` or `determined no version` | release-plz passed over `X`, or over every crate: its log above shows what it printed instead. |
 | `release-plz: after the update, ...` | The versions release-plz would write break the lockstep rule; the rest of the line is a `lockstep:` finding. |
-| `semver: X breaks L and semver-breaks.txt does not accept it` | Restore the item, or, when the break is wanted, add the `break` line the finding prints, with its reason. |
-| `semver: X breaks L in N items and semver-breaks.txt accepts M` | The finding lists the items now reported; set the count to their number. |
-| `semver: semver-breaks.txt accepts X L, which this run did not report` | Remove the entry. |
+| `semver: X breaks L and ci/semver-breaks.txt does not accept it` | Restore the item, or, when the break is wanted, add the `break` line the finding prints, with its reason. |
+| `semver: X breaks L in N items and ci/semver-breaks.txt accepts M` | The finding lists the items now reported; set the count to their number. |
+| `semver: ci/semver-breaks.txt accepts X L, which this run did not report` | Remove the entry. |
 | `semver: X is at V, behind the release's W` | Give `X` a version no lower than the release's. |
 | `semver: X ran no checks` or `X was not checked` | The run proved nothing for `X`: the log shows the rustdoc build that failed or the lints that were skipped. |
 | `semver: X is a major release, whose version accepts its breaks; remove X L ...` | Remove the entry. |
@@ -123,7 +123,7 @@ While that version is a pre-release the Install sections pin each crate `=<versi
 script refuses any other operator: a caret on a pre-release also takes a later pre-release of the
 same version, which may break the first.
 The release is tagged `v<version>`. From that tag on, `release check` compares with the new release
-and the `against` line in `semver-breaks.txt` no longer matches it, so its entries are not applied.
+and the `against` line in `ci/semver-breaks.txt` no longer matches it, so its entries are not applied.
 The first change that breaks a public item replaces the file with entries for the breaks since the
 new release and sets `against` to it.
 

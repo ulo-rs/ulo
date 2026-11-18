@@ -1,6 +1,6 @@
 //! [`FuturesIo`]: a stream between `futures-io`'s I/O traits and hyper's.
 
-// Listed in `unsafe-allowed.txt` as pure Rust, so the `miri` CI job runs this module's tests under
+// Listed in `ci/unsafe-allowed.txt` as pure Rust, so the `miri` CI job runs this module's tests under
 // Miri: handing hyper's uninitialized read buffer to a `futures-io` reader, which takes
 // initialized memory, goes through `ReadBufCursor::as_mut` and `advance`, both `unsafe`.
 #![allow(unsafe_code)]

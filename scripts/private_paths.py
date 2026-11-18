@@ -18,7 +18,7 @@ reads every package's `.rs` source under `crates/` and `examples/` and reports e
   `use a::{__private}` are read as the full paths they import.
 
 Not scanned: a package whose manifest says `proc-macro = true`, and each package listed as
-`emitter` in `private-paths.txt`: both write these paths into the code they generate, which is the
+`emitter` in `ci/private-paths.txt`: both write these paths into the code they generate, which is the
 module's purpose. Comments, string and character literals are skipped, as is doc text outside a
 code block; a fenced block in a `///`, `//!`, `/** */` or `/*! */` comment that rustdoc compiles
 (no tag, `rust`, `no_run`, `should_panic`, an `edition` tag) is scanned as code, and one marked
@@ -33,7 +33,7 @@ under a glob import of another crate in a submodule, or a head aliasing another 
 name of one of the package's modules, is taken as the package's own; and a module the package
 declares that glob-re-exports another crate is taken as the package's own.
 
-`private-paths.txt` lists `emitter <package>` and `allow <package> <path>` entries, each with its
+`ci/private-paths.txt` lists `emitter <package>` and `allow <package> <path>` entries, each with its
 reason after a `#`. `<path>` is the reported path up to the item after `__private`, or the module
 itself for a re-export of it: `ulo_transport::__private::Param`, `ulo_transport::__derive`. The
 check fails on a finding no entry allows, on an entry no finding matches, and on an `emitter` that
@@ -60,7 +60,7 @@ import tempfile
 
 HIDDEN = ("__private", "__derive")
 OWN_HEADS = {"crate", "self", "super", "$crate"}
-ALLOW_FILE = "private-paths.txt"
+ALLOW_FILE = "ci/private-paths.txt"
 COMPILED_TAGS = {"", "rust", "no_run", "should_panic"}
 
 
@@ -543,6 +543,7 @@ def self_test():
                 failures.append(f"planted legal uses in `{package}` reported: {[(p.name, k) for p, _, k in hits]}")
 
         allow = root / ALLOW_FILE
+        allow.parent.mkdir(exist_ok=True)
         entries = "".join(f"allow user {k}  # planted\n" for _, k in sorted(expected)) + "emitter codegen  # planted\n"
         allow.write_text(entries, encoding="utf-8")
         cases = [

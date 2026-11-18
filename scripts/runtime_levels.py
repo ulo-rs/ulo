@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Each workspace member held to the runtime level `runtime-levels.txt` gives it.
+"""Each workspace member held to the runtime level `ci/runtime-levels.txt` gives it.
 
     python3 scripts/runtime_levels.py            # reads the trees, fails on a crate off its level
     python3 scripts/runtime_levels.py --locked   # the same, cargo refusing to touch Cargo.lock
@@ -53,7 +53,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-LIST = ROOT / "runtime-levels.txt"
+LIST = ROOT / "ci/runtime-levels.txt"
 
 # The tokio features each checked level allows. `default` is tokio's empty default feature.
 ALLOWED = {
@@ -106,22 +106,22 @@ def entries():
         if len(head) >= 2 and head[1] == DIRECT_TOKIO_UTIL:
             crate, reason = head[0], head[2].strip() if len(head) == 3 else ""
             if not reason:
-                raise ListError(f"runtime-levels.txt:{number}: a `{DIRECT_TOKIO_UTIL}` line gives its reason after the keyword, got `{line}`")
+                raise ListError(f"ci/runtime-levels.txt:{number}: a `{DIRECT_TOKIO_UTIL}` line gives its reason after the keyword, got `{line}`")
             if crate in allowances:
-                raise ListError(f"runtime-levels.txt:{number}: `{crate}` has a second `{DIRECT_TOKIO_UTIL}` line")
+                raise ListError(f"ci/runtime-levels.txt:{number}: `{crate}` has a second `{DIRECT_TOKIO_UTIL}` line")
             allowances[crate] = number
             continue
         tokens = shlex.split(line)
         if len(tokens) < 2:
-            raise ListError(f"runtime-levels.txt:{number}: expected `<crate> <level> [flags]`, got `{line}`")
+            raise ListError(f"ci/runtime-levels.txt:{number}: expected `<crate> <level> [flags]`, got `{line}`")
         crate, level, flags = tokens[0], tokens[1], tokens[2:]
         if level not in LEVELS:
-            raise ListError(f"runtime-levels.txt:{number}: `{level}` is no level; one of {', '.join(LEVELS)}")
+            raise ListError(f"ci/runtime-levels.txt:{number}: `{level}` is no level; one of {', '.join(LEVELS)}")
         if not valid_flags(flags):
-            raise ListError(f"runtime-levels.txt:{number}: flags may only select features (--features, -F, --all-features, --no-default-features), got `{' '.join(flags)}`")
+            raise ListError(f"ci/runtime-levels.txt:{number}: flags may only select features (--features, -F, --all-features, --no-default-features), got `{' '.join(flags)}`")
         key = (crate, tuple(flags))
         if key in seen:
-            raise ListError(f"runtime-levels.txt:{number}: `{crate}` with `{' '.join(flags)}` is listed twice")
+            raise ListError(f"ci/runtime-levels.txt:{number}: `{crate}` with `{' '.join(flags)}` is listed twice")
         seen.add(key)
         found.append((number, crate, level, flags))
     return found, allowances
@@ -216,14 +216,14 @@ def main(argv):
     failures, errors = [], []
     for number, crate, _, _ in listed:
         if crate not in workspace:
-            errors.append(f"runtime-levels.txt:{number}: `{crate}` is no workspace member")
+            errors.append(f"ci/runtime-levels.txt:{number}: `{crate}` is no workspace member")
     for crate, number in allowances.items():
         if crate not in workspace:
-            errors.append(f"runtime-levels.txt:{number}: `{DIRECT_TOKIO_UTIL}` names `{crate}`, which is no workspace member")
+            errors.append(f"ci/runtime-levels.txt:{number}: `{DIRECT_TOKIO_UTIL}` names `{crate}`, which is no workspace member")
     classified = {crate for _, crate, _, _ in listed}
     for crate in workspace:
         if crate not in classified:
-            failures.append(f"{crate}: a workspace member runtime-levels.txt does not classify")
+            failures.append(f"{crate}: a workspace member ci/runtime-levels.txt does not classify")
     if errors:
         for line in failures:
             print(f"fail: {line}")
@@ -272,7 +272,7 @@ def main(argv):
                 used.add(package)
                 listed_util.append(package)
             else:
-                found.append(f"{name}: {level}, but workspace member {package} depends on tokio-util directly and runtime-levels.txt has no `{DIRECT_TOKIO_UTIL}` line for it")
+                found.append(f"{name}: {level}, but workspace member {package} depends on tokio-util directly and ci/runtime-levels.txt has no `{DIRECT_TOKIO_UTIL}` line for it")
         if listed_util:
             shown += f"; tokio-util direct from {', '.join(listed_util)}, listed"
         failures.extend(found)
@@ -282,7 +282,7 @@ def main(argv):
     if not errors:
         for crate, number in sorted(allowances.items(), key=lambda item: item[1]):
             if crate not in used:
-                failures.append(f"runtime-levels.txt:{number}: `{DIRECT_TOKIO_UTIL}` for {crate}, but no runtime-neutral entry's tree has {crate} depending on tokio-util directly")
+                failures.append(f"ci/runtime-levels.txt:{number}: `{DIRECT_TOKIO_UTIL}` for {crate}, but no runtime-neutral entry's tree has {crate} depending on tokio-util directly")
 
     for line in failures:
         print(f"fail: {line}")

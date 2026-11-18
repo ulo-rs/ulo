@@ -9,7 +9,7 @@
 //! `#[tokio::main]` the runtime's threads exist before user code runs. A child spawned later reads
 //! a `LISTEN_PID` that is not its own and ignores them.
 
-// Listed in `unsafe-allowed.txt`: adopting an inherited descriptor and reading a socket's listen
+// Listed in `ci/unsafe-allowed.txt`: adopting an inherited descriptor and reading a socket's listen
 // state have no safe API.
 #![allow(unsafe_code)]
 
