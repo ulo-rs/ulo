@@ -89,8 +89,18 @@ pub(crate) fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     };
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    // The bound is higher-ranked, which rustc checks where the impl is used rather than where it
+    // is written, and under it `ErrorBounds`'s supertraits answer `Classify`'s. A type without them
+    // fails once, at `bounds`, with `ErrorBounds`'s note.
+    let mut bounded = input.generics.where_clause.clone().unwrap_or_else(|| syn::parse_quote!(where));
+    bounded.predicates.push(syn::parse_quote!(for<'__ulo> Self: #root::__derive::classify::ErrorBounds));
     Ok(quote! {
-        impl #impl_generics #root::Classify for #name #ty_generics #where_clause {
+        const _: () = {
+            fn bounds #impl_generics () #where_clause {
+                #root::__derive::classify::bounds::<#name #ty_generics>();
+            }
+        };
+        impl #impl_generics #root::Classify for #name #ty_generics #bounded {
             fn classify(&self) -> #root::ErrorKind {
                 #body
             }
