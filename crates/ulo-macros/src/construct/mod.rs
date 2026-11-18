@@ -80,8 +80,6 @@ pub(crate) fn expand(kind: Kind, attr: TokenStream, item: TokenStream) -> syn::R
     }
 }
 
-/// A string literal among `attr`'s arguments, `#[controller("/users")]` or
-/// `#[controller(singleton, "/users")]`.
 fn route_prefix(attr: &TokenStream) -> Option<LitStr> {
     attr.clone().into_iter().find_map(|token| syn::parse2::<LitStr>(token.into()).ok())
 }
