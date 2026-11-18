@@ -10,6 +10,14 @@
 //! The macros name this crate as `::ulo`. A crate that depends on it under another name,
 //! `framework = { package = "ulo", .. }` in its manifest, writes `extern crate framework as ulo;`
 //! at its root for any `ulo` macro to expand.
+//!
+//! # Start here
+//!
+//! This page documents the core's types. To build an application, begin with the guide at
+//! <https://ulo-rs.vercel.app/>, or with the quick start in the repository README, which is
+//! compiled as a doctest. `cargo install ulo-cli --version 0.1.0-alpha.3` then `ulo new my-app`
+//! writes a working project, and `examples/` in the repository holds one runnable application per
+//! concept.
 
 // The README blocks are compiled, not rendered: the `//!` docs above stay the crate's page.
 #[cfg(doctest)]

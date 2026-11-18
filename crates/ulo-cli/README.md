@@ -4,7 +4,7 @@
 source changes.
 
 ```bash
-cargo install ulo-cli
+cargo install ulo-cli --version 0.1.0-alpha.3
 ```
 
 ## Create a project

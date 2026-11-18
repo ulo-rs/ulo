@@ -25,6 +25,14 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
+Or start from a template. `ulo new` writes a working application with health probes and tests; a
+pre-release is installed by naming its version:
+
+```bash
+cargo install ulo-cli --version 0.1.0-alpha.3
+ulo new my-app && cd my-app && cargo run
+```
+
 ## Quick start
 
 A module, one controller with one route, and the phases that start an application. This is
@@ -159,11 +167,13 @@ transports), and `ulo-cli` (`ulo new`, `ulo generate`, `ulo dev`).
 
 ## Where to go next
 
-- [`docs/experiments/di-redesign/DESIGN.md`](docs/experiments/di-redesign/DESIGN.md) is the design:
-  keys, bindings, scopes, executions, modules, lifecycle, and each transport's contract.
+- The documentation site, <https://ulo-rs.vercel.app/>, is the guide: getting started, core
+  concepts, each transport, testing, deployment and recipes.
 - [`examples/`](examples) holds one runnable application per concept, below. Run one with
   `cargo run -p ex-01-hello`; the directory's README says what each needs.
 - `cargo doc --open` renders the API docs.
+- [`docs/experiments/di-redesign/DESIGN.md`](docs/experiments/di-redesign/DESIGN.md) is the design
+  rationale: keys, bindings, scopes, executions, modules, lifecycle, and each transport's contract.
 
 | Example | Shows |
 | --- | --- |
