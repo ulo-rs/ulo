@@ -14,6 +14,8 @@ use crate::scope::{Auto, PerExecution, Scope, ScopeKind, Singleton, Transient};
 use crate::timer::BoxError;
 use crate::type_name::TypeName;
 
+type ContributeMarker<U, Q, M> = PhantomData<fn() -> (PhantomData<U>, Q, M)>;
+
 /// Contributions to the collection `U @ Q`, read as `Many<U, Q>` or, by a transport, through
 /// `Resolver::entries` (§3.2, §7).
 ///
@@ -44,7 +46,7 @@ pub struct Contribute<'m, U: ?Sized, Q = (), M = Plain> {
     /// `true` exactly when `M` is `Enhancer`: each record this builder pushes is listed in
     /// `ModuleNode::enhancers`.
     enhancer: bool,
-    _u: PhantomData<fn() -> (PhantomData<U>, Q, M)>,
+    _u: ContributeMarker<U, Q, M>,
 }
 
 /// The mark of the builder [`ModuleDef::contribute`](crate::ModuleDef::contribute) returns.

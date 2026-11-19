@@ -287,9 +287,11 @@ impl Handlers for Unmarked {
     fn mount(_: &mut Mount<'_>) {}
 }
 
+type ProvidedEntry = (String, String, Option<String>, u32, Option<u32>);
+
 /// Each `ControllerProvided` entry as (key, provider module, controller module, the two lines),
 /// and the report.
-fn provided_beside(register: impl Module + 'static) -> (Vec<(String, String, Option<String>, u32, Option<u32>)>, String) {
+fn provided_beside(register: impl Module + 'static) -> (Vec<ProvidedEntry>, String) {
     let errors = match App::builder(register).wire() {
         Err(StartupError::Wiring(errors)) => errors,
         Err(other) => panic!("expected a wiring refusal, got {other}"),
@@ -340,7 +342,8 @@ fn an_unmarked_controller_also_registered_as_a_controller_is_refused_naming_both
 
 #[test]
 fn an_unmarked_controller_bound_by_value_factory_or_contribution_is_refused() {
-    let cases: [(&str, fn(&mut ModuleDef<'_>)); 4] = [
+    type Case = (&'static str, fn(&mut ModuleDef<'_>));
+    let cases: [Case; 4] = [
         ("value", |m| {
             m.controller::<Unmarked>();
             m.value(Unmarked);

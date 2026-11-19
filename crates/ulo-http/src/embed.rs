@@ -963,11 +963,13 @@ impl Shared {
     }
 }
 
+type HostCopyFn<A> = Box<dyn for<'r> Fn(&<A as Embed>::HostRequest<'r>, &mut http::Extensions) + Send + Sync>;
+
 /// One `Embedded::forward` registration: the type it supplies, and the copy into a request's
 /// extensions.
 struct HostCopy<A: Embed> {
     ty: TypeName,
-    run: Box<dyn for<'r> Fn(&A::HostRequest<'r>, &mut http::Extensions) + Send + Sync>,
+    run: HostCopyFn<A>,
 }
 
 /// The handle to an [`Embedded`] server for host `A`: cheap to clone, usable before `listen()`.

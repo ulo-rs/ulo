@@ -262,9 +262,11 @@ impl<M: Method, V: IntoGrpcReply> Value<M> for ReplyProbe<M, V> {
     }
 }
 
+type LateReply = Box<dyn FnOnce(&GrpcCx) -> Result<Reply, IntoReplyError> + Send>;
+
 /// A handler's output as its reply, built once the call's context is known: a stream needs it for
 /// the late path its `Err` items take.
-pub struct Answer(Box<dyn FnOnce(&GrpcCx) -> Result<Reply, IntoReplyError> + Send>);
+pub struct Answer(LateReply);
 
 impl Answer {
     fn value<V: IntoGrpcReply>(value: V) -> Answer {

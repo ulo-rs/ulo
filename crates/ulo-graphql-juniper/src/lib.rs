@@ -31,6 +31,8 @@ use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, RequestF
 /// The root node the engine reads.
 type Root<Q, M, Sub> = RootNode<'static, Q, M, Sub>;
 
+type SchemaMarker<Q, M, Sub> = PhantomData<fn() -> (Q, M, Sub)>;
+
 /// The engine over the root node `RootNode<'static, Q, M, Sub>`, read as a `Dep`.
 ///
 /// `Q::Context` is resolved with the visibility of the module that binds the engine, inside the
@@ -41,7 +43,7 @@ type Root<Q, M, Sub> = RootNode<'static, Q, M, Sub>;
 /// A subscription answers one response per event of its root field; a query or mutation sent to
 /// `subscribe` answers one response.
 pub struct Juniper<Q, M, Sub> {
-    pub(crate) _schema: PhantomData<fn() -> (Q, M, Sub)>,
+    pub(crate) _schema: SchemaMarker<Q, M, Sub>,
     /// The `Arc<RootNode<'static, Q, M, Sub>>`, erased: a field naming `RootNode<'static, Q, M, Sub>`
     /// would need juniper's bounds on the struct itself.
     root: Arc<dyn Any + Send + Sync>,

@@ -140,10 +140,12 @@ pub(crate) struct Supply {
     pub(crate) location: &'static Location<'static>,
 }
 
+type ResolveMiddleware = fn(ModuleRef) -> BoxFuture<'static, Result<Arc<dyn ErasedMiddleware>, LookupError>>;
+
 /// What an entry runs.
 pub(crate) enum Step {
     /// Resolved per request through the declaring module, carrying the request's execution.
-    ByType(fn(ModuleRef) -> BoxFuture<'static, Result<Arc<dyn ErasedMiddleware>, LookupError>>),
+    ByType(ResolveMiddleware),
     Value(Arc<dyn ErasedMiddleware>),
     Layer(Arc<dyn ErasedLayer>),
     /// Copies one type from the request's `http::Extensions` into the execution's.
@@ -438,7 +440,7 @@ pub(crate) struct Runnable {
 
 #[derive(Clone)]
 enum Action {
-    ByType(fn(ModuleRef) -> BoxFuture<'static, Result<Arc<dyn ErasedMiddleware>, LookupError>>),
+    ByType(ResolveMiddleware),
     Value(Arc<dyn ErasedMiddleware>),
     Layer(LayeredService),
     Adopt(Adopt),

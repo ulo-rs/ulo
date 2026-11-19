@@ -43,7 +43,7 @@ use ulo_transport::{Classify, Count, Detail, Details, ErrorKind};
 use crate::codec::Codec;
 use crate::dispatch::{SHAPE_UNSUPPORTED, quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
-use crate::link::{ConnectTimedOut, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NameTooLong, NoDestination, Outbound, Pattern, ReplyTo};
+use crate::link::{ConnectTimedOut, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NameTooLong, NoDestination, Outbound, Pattern, ReplyTo, SendFrame};
 use crate::queue::{self, Drain, Feed, Overflow};
 use crate::server::shape_name;
 use crate::trace;
@@ -313,7 +313,7 @@ pub(crate) struct ClientInner {
 
 /// One connection of the link's client side.
 struct Conn {
-    send: Box<dyn Fn(Pattern, Frame, Option<ReplyTo>) -> BoxFuture<'static, Result<(), BoxError>> + Send + Sync>,
+    send: SendFrame,
     pending: Mutex<HashMap<u64, Waiting>>,
     /// False once the reply lane ended or the server sent `goaway`: no new call goes over it.
     open: AtomicBool,

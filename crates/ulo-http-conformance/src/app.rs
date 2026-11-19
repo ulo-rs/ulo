@@ -256,11 +256,13 @@ impl ErrorHandler<Http> for Reshape {
     }
 }
 
+type Ends = Arc<Mutex<Vec<(StreamOutcome, Option<CancelReason>)>>>;
+
 /// What `GET /endless` recorded when its stream ended: the outcome and the execution's
 /// cancellation reason read then.
 #[derive(Clone)]
 pub struct Probe {
-    ends: Arc<Mutex<Vec<(StreamOutcome, Option<CancelReason>)>>>,
+    ends: Ends,
     held: Arc<Mutex<Held>>,
     pub(crate) gate: Gate,
 }

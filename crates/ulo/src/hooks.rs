@@ -144,10 +144,14 @@ pub(crate) struct TraitHook<T> {
     pub(crate) run: TraitHookFn<T>,
 }
 
+type StartupFn<T> = Box<dyn for<'a> Fn(&'a T) -> BoxFuture<'a, Result<(), BoxError>> + Send + Sync>;
+type DestroyFn<T> = Box<dyn for<'a> Fn(&'a T) -> BoxFuture<'a, ()> + Send + Sync>;
+type SignalledFn<T> = Box<dyn for<'a> Fn(&'a T, &'a Signal) -> BoxFuture<'a, ()> + Send + Sync>;
+
 pub(crate) enum TraitHookFn<T> {
-    Startup(Box<dyn for<'a> Fn(&'a T) -> BoxFuture<'a, Result<(), BoxError>> + Send + Sync>),
-    Destroy(Box<dyn for<'a> Fn(&'a T) -> BoxFuture<'a, ()> + Send + Sync>),
-    Signalled(Box<dyn for<'a> Fn(&'a T, &'a Signal) -> BoxFuture<'a, ()> + Send + Sync>),
+    Startup(StartupFn<T>),
+    Destroy(DestroyFn<T>),
+    Signalled(SignalledFn<T>),
 }
 
 /// One hook as the lifecycle runner executes it, erased over the instance type: a trait hook
