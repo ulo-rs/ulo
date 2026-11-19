@@ -169,6 +169,10 @@ const NO_RUNTIME: &str = "the Redis link has no tokio runtime: build it inside o
 impl Link for Redis {
     const NAME: &'static str = "redis";
 
+    fn endpoint(&self) -> Option<&str> {
+        Some(&self.url)
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::FanOut)
             .codec(self.codec)
@@ -760,4 +764,16 @@ fn receiver_stream<T: Send + 'static>(receiver: mpsc::UnboundedReceiver<T>) -> f
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The server's shed log names the link by it, redacted there.
+    #[test]
+    fn the_endpoint_is_the_url_as_given() {
+        let url = "redis://:pw@cache:6379/2?protocol=resp3";
+        assert_eq!(Link::endpoint(&Redis::url(url)), Some(url));
+    }
 }

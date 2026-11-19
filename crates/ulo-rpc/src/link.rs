@@ -131,6 +131,16 @@ pub trait Link: Send + Sync + 'static {
     fn bound(&self) -> Vec<BoundAddr> {
         Vec::new()
     }
+
+    /// The broker the link was configured with, as given: a URL, or a comma-separated list of
+    /// URLs or `host:port`. A server binding no address names itself by it in its shed log's
+    /// `server` field, after [`NAME`](Self::NAME), each element written through
+    /// `ulo::secrets::setting_url`, so neither a password nor a query reaches the log. `None`
+    /// leaves the field at `NAME` alone, so a link wrapping another forwards it as it forwards
+    /// `bound`; a link answering [`bound`](Self::bound) is named by its addresses instead.
+    fn endpoint(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// What a link's server side delivers.

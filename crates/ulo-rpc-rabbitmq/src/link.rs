@@ -555,6 +555,10 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for RabbitMq {
     const NAME: &'static str = "rabbitmq";
 
+    fn endpoint(&self) -> Option<&str> {
+        Some(&self.url)
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::Competing)
             .codec(self.codec)
@@ -1619,6 +1623,13 @@ mod tests {
     use ulo_rpc::{ErrorKind, RpcClient};
 
     use super::*;
+
+    /// The server's shed log names the link by it, redacted there.
+    #[test]
+    fn the_endpoint_is_the_url_as_given() {
+        let url = "amqp://user:pw@broker:5672/%2f?heartbeat=10";
+        assert_eq!(Link::endpoint(&RabbitMq::url(url)), Some(url));
+    }
 
     /// The server's writer stopped before it publishes a reply to a named queue, for a test to
     /// run `close` while the reply waits.

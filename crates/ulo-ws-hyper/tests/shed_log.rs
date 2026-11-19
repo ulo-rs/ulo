@@ -1,7 +1,7 @@
 //! A connection refused over a gateway's `max_connections` is counted into the server's
 //! `ShedLog` (transports DESIGN §2.8, §4.2): the first refusal writes a `warn` naming the connect
-//! phase's transport at once, and the refusals after it within the interval are written when the
-//! server drops with the app, none lost.
+//! phase's transport and the server's bound address at once, and the refusals after it within the
+//! interval are written when the server drops with the app, none lost.
 //!
 //! One test in this binary: a `tracing` callsite first reached on a thread with no subscriber,
 //! while another thread installs one, can keep the interest it computed without it.
@@ -42,12 +42,12 @@ impl Module for Root {
     }
 }
 
-/// Every `ShedLog` line written at `warn`, as its `ulo.transport` and `shed` fields.
+/// Every `ShedLog` line written at `warn`, as its `ulo.transport`, `server` and `shed` fields.
 #[derive(Clone, Default)]
-struct ShedLines(Arc<Mutex<Vec<(String, u64)>>>);
+struct ShedLines(Arc<Mutex<Vec<(String, String, u64)>>>);
 
 impl ShedLines {
-    fn written(&self) -> Vec<(String, u64)> {
+    fn written(&self) -> Vec<(String, String, u64)> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }
@@ -55,13 +55,16 @@ impl ShedLines {
 #[derive(Default)]
 struct ShedLine {
     transport: String,
+    server: String,
     shed: Option<u64>,
 }
 
 impl Visit for ShedLine {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "ulo.transport" {
-            self.transport = value.to_owned();
+        match field.name() {
+            "ulo.transport" => self.transport = value.to_owned(),
+            "server" => self.server = value.to_owned(),
+            _ => {}
         }
     }
 
@@ -87,7 +90,7 @@ impl tracing::Subscriber for ShedLines {
         let mut line = ShedLine::default();
         event.record(&mut line);
         if let Some(shed) = line.shed {
-            self.0.lock().unwrap_or_else(PoisonError::into_inner).push((line.transport, shed));
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).push((line.transport, line.server, shed));
         }
     }
     fn enter(&self, _: &Id) {}
@@ -99,19 +102,17 @@ async fn a_connection_refused_over_max_connections_is_logged_at_warn_and_none_is
     let lines = ShedLines::default();
     let _logged = tracing::subscriber::set_default(lines.clone());
     let app = Running::start(Root, ulo_ws_hyper::Server::new("127.0.0.1:0")).await;
+    let line = |shed| ("ws_connect".to_owned(), app.addr.to_string(), shed);
     let admitted = app.connect("/one", &[]).await;
     for _ in 0..3 {
         let mut refused = app.connect("/one", &[]).await;
         assert_eq!(close_frame(&mut refused).await.map(|(code, _)| code), Some(1013), "a connection over the bound was admitted");
         hang_up(refused).await;
     }
-    assert_eq!(lines.written(), vec![("ws_connect".to_owned(), 1)], "the first refusal's line, the next two counted");
+    assert_eq!(lines.written(), vec![line(1)], "the first refusal's line, the next two counted");
 
+    let (first, residue) = (line(1), line(2));
     hang_up(admitted).await;
     app.stop().await;
-    assert_eq!(
-        lines.written(),
-        vec![("ws_connect".to_owned(), 1), ("ws_connect".to_owned(), 2)],
-        "the two counted refusals, written once the server drops"
-    );
+    assert_eq!(lines.written(), vec![first, residue], "the two counted refusals, written once the server drops");
 }

@@ -341,6 +341,10 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for Nats {
     const NAME: &'static str = "nats";
 
+    fn endpoint(&self) -> Option<&str> {
+        Some(&self.url)
+    }
+
     fn capabilities(&self) -> Capabilities {
         let max_payload = self.max_payload.load(Ordering::Relaxed);
         Capabilities::new(DeliveryMode::Competing)
@@ -1904,6 +1908,13 @@ mod tests {
     use ulo_rpc::{RpcClient, Server};
 
     use super::*;
+
+    /// The server's shed log names the link by it, redacted there.
+    #[test]
+    fn the_endpoint_is_the_url_as_given() {
+        let url = "nats://user:pw@a:4222?token=t,nats://b:4222";
+        assert_eq!(Link::endpoint(&Nats::url(url)), Some(url));
+    }
 
     /// A request lane stopped where it is about to hold a call, for a test to run `close` there.
     pub(super) mod gate {

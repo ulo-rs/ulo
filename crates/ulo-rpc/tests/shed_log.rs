@@ -1,7 +1,8 @@
 //! A call shed over `max_inflight` is counted into the server's `ShedLog` (transports DESIGN §2.8),
 //! a request refused with its `RetryAfter` and an event left unacknowledged alike: the first
-//! refusal writes a `warn` naming the transport at once, and the refusals after it within the
-//! interval are written when the server drops with the app, none lost.
+//! refusal writes a `warn` naming the transport, and the server by its link and bound address, at
+//! once, and the refusals after it within the interval are written when the server drops with the
+//! app, none lost.
 //!
 //! One test in this binary: a `tracing` callsite first reached on a thread with no subscriber,
 //! while another thread installs one, can keep the interest it computed without it.
@@ -74,16 +75,16 @@ impl Module for Root {
     }
 }
 
-/// The `ShedLog` lines written at `warn`, as their `ulo.transport` and `shed` fields, and every
-/// message written at `debug`.
+/// The `ShedLog` lines written at `warn`, as their `ulo.transport`, `server` and `shed` fields,
+/// and every message written at `debug`.
 #[derive(Clone, Default)]
 struct Lines {
-    shed: Arc<Mutex<Vec<(String, u64)>>>,
+    shed: Arc<Mutex<Vec<(String, String, u64)>>>,
     debug: Arc<Mutex<Vec<String>>>,
 }
 
 impl Lines {
-    fn shed(&self) -> Vec<(String, u64)> {
+    fn shed(&self) -> Vec<(String, String, u64)> {
         self.shed.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
@@ -96,13 +97,16 @@ impl Lines {
 struct Line {
     message: String,
     transport: String,
+    server: String,
     shed: Option<u64>,
 }
 
 impl Visit for Line {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "ulo.transport" {
-            self.transport = value.to_owned();
+        match field.name() {
+            "ulo.transport" => self.transport = value.to_owned(),
+            "server" => self.server = value.to_owned(),
+            _ => {}
         }
     }
 
@@ -132,7 +136,7 @@ impl tracing::Subscriber for Lines {
         let mut line = Line::default();
         event.record(&mut line);
         match (*event.metadata().level(), line.shed) {
-            (Level::WARN, Some(shed)) => self.shed.lock().unwrap_or_else(PoisonError::into_inner).push((line.transport, shed)),
+            (Level::WARN, Some(shed)) => self.shed.lock().unwrap_or_else(PoisonError::into_inner).push((line.transport, line.server, shed)),
             (Level::DEBUG, _) => self.debug.lock().unwrap_or_else(PoisonError::into_inner).push(line.message),
             _ => {}
         }
@@ -157,6 +161,7 @@ async fn a_shed_request_and_a_shed_event_are_logged_at_warn_naming_the_transport
         .await
         .expect("the server binds");
     let addr = app.addresses().first().map(|bound| bound.addr).expect("the server's address");
+    let line = |shed| ("rpc".to_owned(), format!("tcp {addr}"), shed);
     let handle = app.handle();
     let serving = tokio::spawn(async move {
         let _ = app.serve(std::future::pending::<Signal>()).await;
@@ -180,7 +185,7 @@ async fn a_shed_request_and_a_shed_event_are_logged_at_warn_naming_the_transport
     })
     .await
     .expect("the event over the bound reached the dispatcher");
-    assert_eq!(lines.shed(), vec![("rpc".to_owned(), 1)], "the first refusal's line, the request and the event after it counted");
+    assert_eq!(lines.shed(), vec![line(1)], "the first refusal's line, the request and the event after it counted");
 
     RELEASE.notify_one();
     let answered = tokio::time::timeout(PATIENCE, held).await.expect("the held call answered in time").expect("the held call's task");
@@ -188,5 +193,5 @@ async fn a_shed_request_and_a_shed_event_are_logged_at_warn_naming_the_transport
     drop(client);
     let _ = tokio::time::timeout(PATIENCE, handle.close(Signal::new("test"))).await.expect("close finished in time");
     let _ = tokio::time::timeout(PATIENCE, serving).await.expect("serve ended in time");
-    assert_eq!(lines.shed(), vec![("rpc".to_owned(), 1), ("rpc".to_owned(), 2)], "the two counted refusals, written once the server drops");
+    assert_eq!(lines.shed(), vec![line(1), line(2)], "the two counted refusals, written once the server drops");
 }

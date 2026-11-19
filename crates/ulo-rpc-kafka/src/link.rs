@@ -303,6 +303,10 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for Kafka {
     const NAME: &'static str = "kafka";
 
+    fn endpoint(&self) -> Option<&str> {
+        Some(&self.brokers)
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities::new(DeliveryMode::Competing)
             .codec(self.codec)
@@ -1826,6 +1830,13 @@ mod tests {
     use futures_util::FutureExt;
 
     use super::*;
+
+    /// The server's shed log names the link by it, redacted there.
+    #[test]
+    fn the_endpoint_is_the_broker_list_as_given() {
+        let brokers = "broker1:9092,ssl://broker2:9093";
+        assert_eq!(Link::endpoint(&Kafka::brokers(brokers)), Some(brokers));
+    }
 
     /// A clock that `sleep` advances, starting at `start`, or, `refusing`, one whose runtime has
     /// shut down: each sleep is refused and the clock stands still.

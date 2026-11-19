@@ -82,6 +82,8 @@ pub(crate) struct Prepared {
     health: GrpcHealth,
     /// Every service a handler's path names, which health reports.
     services: Vec<String>,
+    /// The log the dispatcher's admission counts into, named by `bind` after its addresses.
+    shed: ShedLog,
 }
 
 /// What `bind` built for `serve`, `drain` and `close`.
@@ -430,6 +432,7 @@ impl ulo::Server for Server {
         let mut services: Vec<String> = routes.keys().filter_map(|path| service_name(path)).map(str::to_owned).collect();
         services.sort();
         services.dedup();
+        let shed = ShedLog::new(<Grpc as Transport>::KEY, Arc::clone(mounted.timer()));
         let dispatcher = Dispatcher {
             app: mounted.app().clone(),
             timer: Arc::clone(mounted.timer()),
@@ -439,7 +442,7 @@ impl ulo::Server for Server {
             stage,
             admission: Admission::new(self.max_inflight.max_inflight())
                 .retry_after(self.shed_retry_after)
-                .logged(ShedLog::new(<Grpc as Transport>::KEY, Arc::clone(mounted.timer()))),
+                .logged(shed.clone()),
             per_connection: limit(self.max_per_connection),
             grace: match self.timeout_grace {
                 Bound::Default => Some(DEFAULT_TIMEOUT_GRACE),
@@ -447,16 +450,17 @@ impl ulo::Server for Server {
                 Bound::Unbounded => None,
             },
         };
-        self.prepared = Some(Prepared { endpoints, tls, dispatcher: Arc::new(dispatcher), health, services });
+        self.prepared = Some(Prepared { endpoints, tls, dispatcher: Arc::new(dispatcher), health, services, shed });
         Ok(())
     }
 
     async fn bind(&mut self, mounted: Mounted<'_, Grpc>) -> Result<(), BoxError> {
-        let Some(Prepared { endpoints, tls, dispatcher, health, services }) = self.prepared.take() else {
+        let Some(Prepared { endpoints, tls, dispatcher, health, services, shed }) = self.prepared.take() else {
             return Err(BoxError::from("the gRPC server was bound before it was prepared"));
         };
         let listeners = ulo_net::bind_all(&endpoints)?;
         let addrs: Vec<SocketAddr> = listeners.iter().map(BoundListener::local_addr).collect();
+        shed.set_server(addrs.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "));
         let secure = tls.is_some();
         let handshake_timeout = match self.handshake_timeout {
             Bound::Default => Some(DEFAULT_HANDSHAKE_TIMEOUT),

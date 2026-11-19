@@ -10,6 +10,7 @@
 //! let table = GatewayTable::own_port("my_server::Server", &mounted, &defaults, &mut failures);
 //! // `bind`
 //! table.start().await?;
+//! table.bound_at(&addrs);
 //! // each upgrade request
 //! match table.handshake(head, peer).await {
 //!     Handshake::Switch(switch) => {
@@ -25,7 +26,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 #[cfg(feature = "conformance-probe")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -217,6 +218,8 @@ struct Inner {
     tracker: Arc<Tracker>,
     /// Counts the connections refused over a gateway's `max_connections`.
     shed: ShedLog,
+    /// On the HTTP server's port, the shed log of each listener a refusal arrived on.
+    by_local: Mutex<Vec<(SocketAddr, ShedLog)>>,
 }
 
 impl GatewayTable {
@@ -266,7 +269,7 @@ impl GatewayTable {
         hub.record_gateways(&gateways);
         let tracker = Tracker::new(defaults.server_max_inflight.max_inflight(), defaults.messages_read.clone(), defaults.answer_hold.clone());
         let shed = ShedLog::new(<WsConnect as Transport>::KEY, Arc::clone(&runtime) as Arc<dyn Timer>);
-        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker, shed }) }
+        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker, shed, by_local: Mutex::new(Vec::new()) }) }
     }
 
     /// Each gateway's path, its controller's prefix joined.
@@ -299,11 +302,53 @@ impl GatewayTable {
     /// port, and `Bearer` and one second, its defaults, on a standalone server's.
     ///
     /// `peer` is the client's address, which `ConnectionInfo::peer` reports.
+    ///
+    /// A connection refused over `max_connections` is counted into the table's shed log, whose
+    /// `server` field [`bound_at`](Self::bound_at) names.
     pub async fn handshake(&self, head: Parts, peer: Option<SocketAddr>) -> Handshake {
+        self.handshake_logged(head, peer, self.inner.shed.clone()).await
+    }
+
+    /// [`handshake`](Self::handshake) on the HTTP server's port, where the gateways are reached
+    /// through every listener of every HTTP server sharing the hand-off: a refusal is counted into
+    /// a shed log of the local address `local` names, created at the first upgrade request that
+    /// address carries, or into the table's own, named `http port`, when the host reported none.
+    pub(crate) async fn handshake_on(&self, head: Parts, peer: Option<SocketAddr>, local: Option<SocketAddr>) -> Handshake {
+        let shed = match local {
+            None => self.inner.shed.clone(),
+            Some(local) => {
+                let mut by_local = self.inner.by_local.lock().unwrap_or_else(PoisonError::into_inner);
+                match by_local.iter().find(|(addr, _)| *addr == local) {
+                    Some((_, log)) => log.clone(),
+                    None => {
+                        let log = ShedLog::new(<WsConnect as Transport>::KEY, Arc::clone(&self.inner.runtime) as Arc<dyn Timer>);
+                        log.set_server(local.to_string());
+                        by_local.push((local, log.clone()));
+                        log
+                    }
+                }
+            }
+        };
+        self.handshake_logged(head, peer, shed).await
+    }
+
+    async fn handshake_logged(&self, head: Parts, peer: Option<SocketAddr>, shed: ShedLog) -> Handshake {
         let Some(gateway) = self.gateway_for(head.uri.path()) else {
             return Handshake::Refuse(Refusal::new(StatusCode::NOT_FOUND, "no gateway at this path"));
         };
-        connection::handshake(self.accept(gateway), head, peer).await
+        connection::handshake(self.accept(gateway, shed), head, peer).await
+    }
+
+    /// Names the server in the `server` field of the lines the table's shed log writes, a
+    /// standalone server's call once bound: `addrs`, the addresses it bound, comma-separated.
+    /// Unnamed, the field is empty.
+    pub fn bound_at(&self, addrs: &[SocketAddr]) {
+        self.inner.shed.set_server(addrs.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "));
+    }
+
+    /// Names the server on the table's own shed log, where it binds no address.
+    pub(crate) fn shed_server(&self, server: &str) {
+        self.inner.shed.set_server(server);
     }
 
     /// Raises the drain on this table's connections: idle ones close with 1001 at once, busy ones
@@ -330,14 +375,14 @@ impl GatewayTable {
         self.inner.gateways.iter().find(|gateway| same_path(&gateway.path, path)).cloned()
     }
 
-    fn accept(&self, gateway: Arc<GatewayRuntime>) -> Accept {
+    fn accept(&self, gateway: Arc<GatewayRuntime>, shed: ShedLog) -> Accept {
         Accept {
             gateway,
             hub: Arc::clone(&self.inner.hub),
             app: self.inner.app.clone(),
             runtime: Arc::clone(&self.inner.runtime),
             tracker: Arc::clone(&self.inner.tracker),
-            shed: self.inner.shed.clone(),
+            shed,
         }
     }
 }

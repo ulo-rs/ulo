@@ -12,7 +12,7 @@ use ulo_net::BoundListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_transport::Count;
 
-use crate::client_ip::{Cidr, CidrError};
+use crate::client_ip::{BehindProxy, Cidr, CidrError, ProxyHeader};
 use crate::limits::MB;
 use crate::service::AppService;
 
@@ -190,10 +190,10 @@ pub struct HttpConfig {
     /// How long a TLS handshake may take: 30 seconds for `Bound::Default`; `Bound::Unbounded`
     /// turns the clock off. Read through [`handshake_timeout_after`](Self::handshake_timeout_after).
     pub handshake_timeout: Bound,
-    /// The peers trusted to report who connected to them, which `HttpCx::client_ip` reads `Forwarded`
-    /// and `X-Forwarded-For` from: none unset.
-    pub trusted_proxies: Vec<Cidr>,
-    /// The texts `trusted_proxies(..)` was given that are not ranges, each a `prepare` failure.
+    /// The forwarding header the server's proxies write and the peers trusted to write it, which
+    /// `HttpCx::client_ip` reads: `None` unset.
+    pub(crate) behind_proxy: Option<BehindProxy>,
+    /// The texts `behind_proxy(..)` was given that are not ranges, each a `prepare` failure.
     pub(crate) refused_proxies: Vec<CidrError>,
 }
 
@@ -216,21 +216,22 @@ impl HttpConfig {
         connection_timeout(self.handshake_timeout)
     }
 
-    /// Sets `trusted_proxies` from `ranges`, each a [`Cidr`] or text that parses as one, keeping
-    /// the texts that do not for `prepare` to refuse.
-    pub(crate) fn set_trusted_proxies<R>(&mut self, ranges: impl IntoIterator<Item = R>)
+    /// Sets `behind_proxy` to `header` and `ranges`, each a [`Cidr`] or text that parses as one,
+    /// keeping the texts that do not for `prepare` to refuse.
+    pub(crate) fn set_behind_proxy<R>(&mut self, header: ProxyHeader, ranges: impl IntoIterator<Item = R>)
     where
         R: TryInto<Cidr>,
         CidrError: From<R::Error>,
     {
-        self.trusted_proxies.clear();
+        let mut trusted = Vec::new();
         self.refused_proxies.clear();
         for range in ranges {
             match range.try_into() {
-                Ok(range) => self.trusted_proxies.push(range),
+                Ok(range) => trusted.push(range),
                 Err(error) => self.refused_proxies.push(error.into()),
             }
         }
+        self.behind_proxy = Some(BehindProxy { header, trusted });
     }
 
     /// `max_inflight` as `Admission` takes it; `None` admits every request.
@@ -268,7 +269,7 @@ impl Default for HttpConfig {
             timeout_grace: Bound::Default,
             header_timeout: Bound::Default,
             handshake_timeout: Bound::Default,
-            trusted_proxies: Vec::new(),
+            behind_proxy: None,
             refused_proxies: Vec::new(),
         }
     }

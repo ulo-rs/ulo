@@ -1,7 +1,8 @@
 //! A request shed over `max_inflight` is counted into the server's `ShedLog` (transports DESIGN
-//! §2.8): the first refusal writes a `warn` naming the transport at once, and the refusals after
-//! it within the interval are written when the server drops with the app, none lost. The interval
-//! itself is pinned on a scripted clock in `ulo-transport`'s unit tests.
+//! §2.8): the first refusal writes a `warn` naming the transport and the server's bound address
+//! at once, and the refusals after it within the interval are written when the server drops with
+//! the app, none lost, each line carrying `since_secs`. The interval and `since_secs`'s value are
+//! pinned on a scripted clock in `ulo-transport`'s unit tests.
 //!
 //! One test in this binary: a `tracing` callsite first reached on a thread with no subscriber,
 //! while another thread installs one, can keep the interest it computed without it.
@@ -59,12 +60,15 @@ impl Module for Root {
     }
 }
 
-/// Every `ShedLog` line written at `warn`, as its `ulo.transport` and `shed` fields.
+/// A line's `ulo.transport`, `server` and `shed` fields and whether it carries `since_secs`.
+type Written = (String, String, u64, bool);
+
+/// Every `ShedLog` line written at `warn`.
 #[derive(Clone, Default)]
-struct ShedLines(Arc<Mutex<Vec<(String, u64)>>>);
+struct ShedLines(Arc<Mutex<Vec<Written>>>);
 
 impl ShedLines {
-    fn written(&self) -> Vec<(String, u64)> {
+    fn written(&self) -> Vec<Written> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 }
@@ -72,19 +76,29 @@ impl ShedLines {
 #[derive(Default)]
 struct ShedLine {
     transport: String,
+    server: String,
     shed: Option<u64>,
+    since_secs: Option<f64>,
 }
 
 impl Visit for ShedLine {
     fn record_str(&mut self, field: &Field, value: &str) {
-        if field.name() == "ulo.transport" {
-            self.transport = value.to_owned();
+        match field.name() {
+            "ulo.transport" => self.transport = value.to_owned(),
+            "server" => self.server = value.to_owned(),
+            _ => {}
         }
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
         if field.name() == "shed" {
             self.shed = Some(value);
+        }
+    }
+
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        if field.name() == "since_secs" {
+            self.since_secs = Some(value);
         }
     }
 
@@ -104,7 +118,8 @@ impl tracing::Subscriber for ShedLines {
         let mut line = ShedLine::default();
         event.record(&mut line);
         if let Some(shed) = line.shed {
-            self.0.lock().unwrap_or_else(PoisonError::into_inner).push((line.transport, shed));
+            let timed = line.since_secs.is_some_and(|secs| secs >= 0.0);
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).push((line.transport, line.server, shed, timed));
         }
     }
     fn enter(&self, _: &Id) {}
@@ -133,6 +148,8 @@ async fn a_shed_request_is_logged_at_warn_naming_the_transport_and_none_is_lost(
         .listen()
         .await
         .expect("the app listens");
+    let server = app.addresses().first().map(|bound| bound.addr.to_string()).expect("the server's address");
+    let line = |shed| ("http".to_owned(), server.clone(), shed, true);
     let handle = app.handle();
     let serving = tokio::spawn(async move {
         let _ = app.serve(std::future::pending::<Signal>()).await;
@@ -152,12 +169,12 @@ async fn a_shed_request_is_logged_at_warn_naming_the_transport_and_none_is_lost(
         let (status, _) = written(tokio::time::timeout(PATIENCE, svc.call(get("/held"))).await.expect("the service answered")).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "a request over the bound was answered");
     }
-    assert_eq!(lines.written(), vec![("http".to_owned(), 1)], "the first refusal's line, the next two counted");
+    assert_eq!(lines.written(), vec![line(1)], "the first refusal's line, the next two counted");
 
     gate.open.notify_waiters();
     let _ = tokio::time::timeout(PATIENCE, held).await.expect("the held request was answered");
     let _ = tokio::time::timeout(PATIENCE, handle.close(Signal::new("test"))).await.expect("close finished in time");
     let _ = tokio::time::timeout(PATIENCE, serving).await.expect("serve ended in time");
     drop(svc);
-    assert_eq!(lines.written(), vec![("http".to_owned(), 1), ("http".to_owned(), 2)], "the two counted refusals, written once the server drops");
+    assert_eq!(lines.written(), vec![line(1), line(2)], "the two counted refusals, written once the server drops");
 }

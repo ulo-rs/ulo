@@ -59,7 +59,7 @@ use ulo_transport::prepare::{Failure, Failures};
 use crate::handler::HttpHandler;
 use crate::backend::{Absent, HttpConfig};
 use crate::body::HttpBody;
-use crate::client_ip::{Cidr, CidrError};
+use crate::client_ip::{Cidr, CidrError, ProxyHeader};
 use crate::pre_dispatch::{Entry, PreDispatch, Step, Supply};
 use crate::render;
 use crate::request::{ConnInfo, OnUpgrade, Request};
@@ -426,6 +426,9 @@ impl From<&http::Uri> for OriginalPath {
 /// Keep the `App`, or the future serving it, alive for as long as the app serves: a [`Handle`],
 /// and the [`Service`] it hands the host, are views, not owners. Once the `App` value drops, the
 /// app is closed, and a host still serving through a kept handle answers each request 503.
+///
+/// Binding no address, it names itself in its shed log's `server` field as `{A::NAME} embedding`,
+/// or `{A::NAME} embedding at {prefix}` when nested: `axum embedding at /api`.
 pub struct Embedded<A: Embed> {
     config: HttpConfig,
     nested_at: Option<Cow<'static, str>>,
@@ -553,17 +556,18 @@ impl<A: Embed> Embedded<A> {
         self
     }
 
-    /// The reverse proxies trusted to report the client; see
-    /// [`Server::trusted_proxies`](crate::Server::trusted_proxies). The peer they are matched
-    /// against is the address the adapter supplies, so on a host declared without `peer_addr`
-    /// and not given [`peer_addr(true)`](Self::peer_addr) there is none, and
+    /// The reverse proxies in front of the host, the forwarding header they write and the ranges
+    /// they connect from; see [`Server::behind_proxy`](crate::Server::behind_proxy), whose
+    /// requirement that each proxy write `header` on every request applies here too. The peer
+    /// the ranges are matched against is the address the adapter supplies, so on a host declared
+    /// without `peer_addr` and not given [`peer_addr(true)`](Self::peer_addr) there is none, and
     /// [`HttpCx::client_ip`](crate::HttpCx::client_ip) answers `None`.
-    pub fn trusted_proxies<R>(self, ranges: impl IntoIterator<Item = R>) -> Self
+    pub fn behind_proxy<R>(self, header: ProxyHeader, ranges: impl IntoIterator<Item = R>) -> Self
     where
         R: TryInto<Cidr>,
         CidrError: From<R::Error>,
     {
-        self.configure(|config| config.set_trusted_proxies(ranges))
+        self.configure(|config| config.set_behind_proxy(header, ranges))
     }
 
     /// What the app does with a request no route matches; `Miss::Final` unset.
@@ -783,8 +787,12 @@ impl<A: Embed> ulo::Server for Embedded<A> {
         // `self.upgrades` keeps every handler whose `prepare` ran, whatever the rest answers or a
         // panic: this embedding's drop owes each a `release`.
         let forward = self.on_miss == Miss::Forward;
-        let PreparedApp { service, upgrading } =
+        let PreparedApp { service, upgrading, shed } =
             prepare_app(&mounted, &self.config, &mount, forward, &mut self.upgrades, &mut failures);
+        shed.set_server(match mount.as_str() {
+            "" => format!("{} embedding", A::NAME),
+            prefix => format!("{} embedding at {prefix}", A::NAME),
+        });
         self.check_limits(&mounted, service.as_ref(), upgrading, &mut failures);
         let Some(service) = service.filter(|_| failures.is_empty()) else {
             return Err(Box::new(failures.into_error()));

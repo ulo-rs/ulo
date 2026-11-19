@@ -10,7 +10,7 @@ use ulo_transport::prepare::{Failure, Failures, zero_bound, zero_count};
 use ulo_transport::{Admission, Count, ShedLog};
 
 use crate::backend::{Backend, BackendLimits, HttpConfig};
-use crate::client_ip::{Cidr, CidrError};
+use crate::client_ip::{Cidr, CidrError, ProxyHeader};
 use crate::pre_dispatch::{PreDispatch, Stage};
 use crate::router::Router;
 use crate::router::pattern::{Pattern, unreachable};
@@ -50,6 +50,8 @@ pub(crate) struct Prepared {
     pub(crate) endpoints: Vec<ulo_net::Endpoint>,
     pub(crate) tls: Option<Arc<ulo_net::rustls::ServerConfig>>,
     pub(crate) service: AppService,
+    /// Named by `bind`, after the addresses its listeners bound.
+    pub(crate) shed: ShedLog,
 }
 
 impl<B: Backend + Default> Server<B> {
@@ -154,21 +156,40 @@ impl<B: Backend> Server<B> {
         self
     }
 
-    /// The reverse proxies trusted to report the client, as CIDR ranges: each a [`Cidr`] or text
-    /// that parses as one, `["10.0.0.0/8", "fd00::/8"]`; a text that does not is refused in
-    /// `prepare`, naming it. Unset, nothing is trusted, and
-    /// [`HttpCx::client_ip`](crate::HttpCx::client_ip) answers the peer whatever a request's
-    /// `Forwarded` or `X-Forwarded-For` says. List only the proxies in front of this server: a
-    /// client inside a trusted range can name any address it likes. Each proxy listed must also
-    /// remove or overwrite the forwarding header it does not write, `Forwarded` behind one that
-    /// writes `X-Forwarded-For`: a request carrying `Forwarded` is read by that header alone. A
-    /// second call replaces the list.
-    pub fn trusted_proxies<R>(mut self, ranges: impl IntoIterator<Item = R>) -> Self
+    /// The reverse proxies in front of this server: `header`, the forwarding header they write,
+    /// and `ranges`, the addresses they connect from, each a [`Cidr`] or text that parses as one,
+    /// `["10.0.0.0/8", "fd00::/8"]`; a text that does not is refused in `prepare`, naming it.
+    /// [`HttpCx::client_ip`](crate::HttpCx::client_ip) then reads `header` alone, walking it from
+    /// the right past the trusted hops. Unset, `client_ip()` answers the peer whatever a request's
+    /// headers say. A second call replaces the first. An empty `ranges`, which would trust no
+    /// peer, is refused in `prepare`.
+    ///
+    /// List only the proxies in front of this server: a client inside a trusted range can name
+    /// any address it likes. Each proxy listed must write `header` on every request it forwards,
+    /// appending the address it saw or replacing the header with it, since a copy the client sent
+    /// and the proxy passes through is read as the proxies' own. For nginx, with
+    /// [`ProxyHeader::XForwardedFor`], which appends:
+    ///
+    /// ```nginx
+    /// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    /// ```
+    ///
+    /// and with [`ProxyHeader::Forwarded`], which replaces, bracketing and quoting an IPv6
+    /// address as RFC 7239 §6 requires:
+    ///
+    /// ```nginx
+    /// map $remote_addr $forwarded_for {
+    ///     ~:      "for=\"[$remote_addr]\"";
+    ///     default "for=$remote_addr";
+    /// }
+    /// proxy_set_header Forwarded $forwarded_for;
+    /// ```
+    pub fn behind_proxy<R>(mut self, header: ProxyHeader, ranges: impl IntoIterator<Item = R>) -> Self
     where
         R: TryInto<Cidr>,
         CidrError: From<R::Error>,
     {
-        self.config.set_trusted_proxies(ranges);
+        self.config.set_behind_proxy(header, ranges);
         self
     }
 }
@@ -363,7 +384,17 @@ pub(crate) fn prepare_app(
     check_zero_timeouts(config, failures);
     check_zero_counts(config, failures);
     for refused in &config.refused_proxies {
-        failures.push(Failure::plain(format!("`trusted_proxies`: {refused}")).about("trusted_proxies"));
+        failures.push(Failure::plain(format!("`behind_proxy`: {refused}")).about("behind_proxy"));
+    }
+    if let Some(proxy) = &config.behind_proxy
+        && proxy.trusted.is_empty()
+        && config.refused_proxies.is_empty()
+    {
+        let header = match proxy.header {
+            ProxyHeader::Forwarded => "Forwarded",
+            ProxyHeader::XForwardedFor => "X-Forwarded-For",
+        };
+        failures.push(Failure::plain(format!("`behind_proxy`: no range is given, so no peer is trusted to write `{header}`")).about("behind_proxy"));
     }
     upgrades.clear();
     for handler in upgrade_handlers(mounted) {
@@ -374,6 +405,7 @@ pub(crate) fn prepare_app(
     }
     let upgrades = upgrade_paths(mounted, upgrades, failures);
     let upgrading = !upgrades.is_empty();
+    let shed = ShedLog::new(<Http as Transport>::KEY, Arc::clone(mounted.timer()));
     let service = router.map(|router| {
         let config = Arc::new(config.clone());
         AppService::new(ServiceInner {
@@ -383,7 +415,7 @@ pub(crate) fn prepare_app(
             upgrades,
             admission: Admission::new(config.inflight_limit())
                 .retry_after(config.shed_retry_after)
-                .logged(ShedLog::new(<Http as Transport>::KEY, Arc::clone(mounted.timer()))),
+                .logged(shed.clone()),
             config,
             timer: Arc::clone(mounted.timer()),
             runtime: Arc::clone(mounted.runtime()),
@@ -391,7 +423,7 @@ pub(crate) fn prepare_app(
             forward,
         })
     });
-    PreparedApp { service, upgrading }
+    PreparedApp { service, upgrading, shed }
 }
 
 /// What [`prepare_app`] built.
@@ -400,6 +432,8 @@ pub(crate) struct PreparedApp {
     pub(crate) service: Option<AppService>,
     /// Whether any upgrade path is registered, for the caller's own `upgrades` limit.
     pub(crate) upgrading: bool,
+    /// The log the service's admission counts into, for the caller to name once it knows how.
+    pub(crate) shed: ShedLog,
 }
 
 /// Each upgrade handler's `bound`, once the server has bound, in order; the first error ends it.
@@ -441,7 +475,7 @@ impl<B: Backend> ulo::Server for Server<B> {
         let limits = self.backend.limits();
         // `self.upgrades` keeps every handler whose `prepare` ran, whatever the rest answers or a
         // panic: this server's drop owes each a `release`.
-        let PreparedApp { service, upgrading } = prepare_app(&mounted, &self.config, "", false, &mut self.upgrades, &mut failures);
+        let PreparedApp { service, upgrading, shed } = prepare_app(&mounted, &self.config, "", false, &mut self.upgrades, &mut failures);
         if let Some(reason) = limits.why_not_upgrades()
             && upgrading
         {
@@ -476,16 +510,17 @@ impl<B: Backend> ulo::Server for Server<B> {
         let Some(service) = service.filter(|_| failures.is_empty()) else {
             return Err(Box::new(failures.into_error()));
         };
-        self.prepared = Some(Prepared { endpoints, tls, service });
+        self.prepared = Some(Prepared { endpoints, tls, service, shed });
         Ok(())
     }
 
     async fn bind(&mut self, mounted: Mounted<'_, Http>) -> Result<(), BoxError> {
-        let Some(Prepared { endpoints, tls, service }) = self.prepared.take() else {
+        let Some(Prepared { endpoints, tls, service, shed }) = self.prepared.take() else {
             return Err(BoxError::from("the HTTP server was bound before it was prepared"));
         };
         let listeners = ulo_net::bind_all(&endpoints)?;
         let addrs: Vec<SocketAddr> = listeners.iter().map(BoundListener::local_addr).collect();
+        shed.set_server(addrs.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "));
         let secure = tls.is_some();
         self.backend.bind(listeners, tls, service, &self.config).await?;
         self.bound = addrs.into_iter().map(|addr| BoundAddr::new(<Http as Transport>::KEY, addr).tls(secure)).collect();

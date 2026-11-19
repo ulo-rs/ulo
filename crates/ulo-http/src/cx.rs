@@ -191,30 +191,31 @@ impl HttpCx {
         self.inner.conn.peer
     }
 
-    /// The client's address behind the server's `trusted_proxies`, for an audit log, a per-client
+    /// The client's address behind the server's `behind_proxy`, for an audit log, a per-client
     /// limit or anything else that needs who sent the request rather than who connected. `None`
     /// when the request carries no peer address, an embedding whose host supplies none.
     ///
-    /// A peer outside every trusted range is the client, its headers unread, which is every peer
-    /// while `trusted_proxies` is unset. Behind a trusted peer the hops of `Forwarded` (RFC 7239)
-    /// are read when the request carries that header, and those of `X-Forwarded-For` otherwise,
-    /// never the two together; each field line is read in order, as one list. The hops are walked
+    /// Unset, the peer is the client and no header is read. Set, a peer outside every trusted
+    /// range is the client, its headers unread. Behind a trusted peer the hops of the header
+    /// `behind_proxy` names, [`ProxyHeader::Forwarded`](crate::ProxyHeader::Forwarded) (RFC
+    /// 7239) or [`ProxyHeader::XForwardedFor`](crate::ProxyHeader::XForwardedFor), are read, each
+    /// field line in order as one list, and the other header is never read. The hops are walked
     /// from the right, the nearest first: a trusted hop is passed and the first untrusted one is
     /// answered, so an address a client wrote at the left of the list is never reached through a
-    /// proxy that appends what it saw. When every hop is trusted the leftmost is answered.
+    /// proxy that appends what it saw. When every hop is trusted the leftmost is answered, and a
+    /// request carrying no hop answers the peer.
     ///
     /// A hop naming no address ends the walk, and the answer is the last trusted hop passed, or
     /// the peer when none was: `unknown`, an obfuscated `_node`, a `Forwarded` element without
     /// exactly one `for`, an IPv6 node outside brackets, a quoted string left open, or anything
-    /// else that does not parse. A `Forwarded` that names no address is not followed by a look at
-    /// `X-Forwarded-For`. Which header is read is decided by its presence alone, so each trusted
-    /// proxy must remove or overwrite the one it does not write: behind a proxy that appends to
-    /// `X-Forwarded-For` and passes `Forwarded` through, a `Forwarded` the client sent is read,
-    /// and names any address the client chose. Ports are dropped, and an IPv4-mapped IPv6 address, the peer's included,
-    /// is matched and answered as the IPv4 address it maps. The headers read are the request's as
-    /// the pre-dispatch stage left them.
+    /// else that does not parse. Each trusted proxy must write the named header on every request
+    /// it forwards, appending the address it saw or replacing the header with it: a proxy that
+    /// passes the header through as the client sent it lets the client name any address. Ports
+    /// are dropped, and an IPv4-mapped IPv6 address, the peer's included, is matched and answered
+    /// as the IPv4 address it maps. The headers read are the request's as the pre-dispatch stage
+    /// left them.
     pub fn client_ip(&self) -> Option<IpAddr> {
-        crate::client_ip::client_ip(self.inner.conn.peer, self.inner.head.headers(), &self.inner.config.trusted_proxies)
+        crate::client_ip::client_ip(self.inner.conn.peer, self.inner.head.headers(), self.inner.config.behind_proxy.as_ref())
     }
 
     pub fn conn(&self) -> &ConnInfo {
