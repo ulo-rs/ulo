@@ -40,8 +40,8 @@ impl fmt::Display for NoRoute {
 
 impl Error for NoRoute {}
 
-/// A path that matches with no handler for the request's method: the source of the `BadRequest`
-/// the global error handlers receive. Unclaimed, and while the error is still of kind
+/// A path that matches with no handler for the request's method, a method another route answers:
+/// the source of the `BadRequest` the global error handlers receive. Unclaimed, and while the error is still of kind
 /// `BadRequest`, it renders 405 with [`allow`](Self::allow) as `Allow`, which RFC 9110 requires;
 /// an error handler that reshapes it to another kind is rendered by that kind.
 ///
@@ -93,6 +93,46 @@ impl fmt::Display for MethodNotAllowed {
 }
 
 impl Error for MethodNotAllowed {}
+
+/// A path that matches, requested with a method no route of the app answers: the source of the
+/// `Unimplemented` the global error handlers receive, rendered 501 by its kind (RFC 9110 §15.6.2).
+/// `GET`, `HEAD` and `OPTIONS` never reach it: on a matching path those are answered, or 405 with
+/// `Allow`. A path no route matches is a 404 whatever its method.
+///
+/// ```
+/// # use ulo_http::MethodNotImplemented;
+/// # use ulo_transport::CallError;
+/// # fn f(err: &(dyn std::error::Error + 'static)) -> Option<()> {
+/// let error = err.downcast_ref::<CallError>()?;
+/// if let Some(unknown) = error.source_as::<MethodNotImplemented>() { /* unknown.method() */ }
+/// # None
+/// # }
+/// ```
+#[derive(Clone, Debug)]
+pub struct MethodNotImplemented {
+    method: Method,
+}
+
+impl MethodNotImplemented {
+    /// The method the request used.
+    pub fn method(&self) -> &Method {
+        &self.method
+    }
+
+    /// `Unimplemented`, its message this error's text, with this as its source.
+    pub(crate) fn error(method: Method) -> CallError {
+        let unknown = MethodNotImplemented { method };
+        CallError::new(ErrorKind::Unimplemented, unknown.to_string()).with_source(unknown)
+    }
+}
+
+impl fmt::Display for MethodNotImplemented {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "no route of this server answers `{}`", self.method)
+    }
+}
+
+impl Error for MethodNotImplemented {}
 
 /// A request whose `Accept` allows none of the media types a handler answers: the source of the
 /// `BadRequest` the error handlers receive. Unclaimed, and while the error is still of kind

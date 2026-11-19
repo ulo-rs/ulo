@@ -134,8 +134,9 @@ async fn a_probe_answers_get_and_head_alone() {
     assert_eq!(head.status, StatusCode::OK);
     assert_eq!(head.handler(), Some("ready"));
     assert!(head.body.is_empty(), "a HEAD answer carries no body");
+    // No route of this app answers `POST`, which is 501; an app with one answers 405.
     let post = app.send(Method::POST, "/health/ready").await;
-    assert_eq!(post.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(post.status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(post.handler(), None);
     app.stop().await;
 }

@@ -25,6 +25,19 @@ use crate::response::Response;
 /// `Vary: Origin`. It never sends `*` together with credentials: the specification forbids the
 /// combination, so `prepare` refuses a `Cors` allowing any origin with credentials.
 ///
+/// A preflight's `Access-Control-Allow-Methods` lists the methods the route matching its path
+/// declares, in declaration order, narrowed to those [`allow_methods`](Self::allow_methods) lists
+/// when it lists any: a path answering `GET` and `POST` advertises `GET, POST`, and under
+/// `allow_methods([Method::GET, Method::PUT])` it advertises `GET`. When none is left the header
+/// is omitted and a browser sends only a CORS-safelisted method. A preflight to a path no route
+/// matches advertises the `allow_methods` list, and nothing when it is empty; so does one on
+/// gRPC's stage, which has no route table.
+///
+/// An origin allowlist reaches no WebSocket handshake: a browser sends no preflight for one, and
+/// a response header does not stop a socket opening. A gateway's handshake checks `Origin` itself,
+/// against `ulo_ws::GatewayDefaults::origins` (`WsModule::origins` on the HTTP server's port),
+/// which admits a same-origin page by default.
+///
 /// A path the app refuses before the stage runs, one holding a `.` or `..` segment or a `\`,
 /// answers 400 with the headers each `Cors` declared with `apply_value` adds to a response it
 /// passes, and no other entry runs: a cross-origin page reads the 400. A preflight to such a path
@@ -80,6 +93,9 @@ impl Cors {
         self
     }
 
+    /// The methods a preflight may advertise: the matched route's methods are narrowed to these,
+    /// and a path no route matches advertises these alone. Unset, a preflight advertises the
+    /// route's methods.
     pub fn allow_methods(mut self, methods: impl IntoIterator<Item = Method>) -> Self {
         self.methods.extend(methods);
         self
@@ -135,7 +151,8 @@ impl Cors {
         }
     }
 
-    fn preflight(&self, req: &Request) -> Response {
+    /// `route` is the methods the route matching the path declares, `None` when none matches.
+    fn preflight(&self, req: &Request, route: Option<Vec<Method>>) -> Response {
         let mut response = Response::new(HttpBody::empty());
         *response.status_mut() = StatusCode::NO_CONTENT;
         let headers = response.headers_mut();
@@ -149,7 +166,12 @@ impl Cors {
         if self.credentials {
             headers.insert(ACCESS_CONTROL_ALLOW_CREDENTIALS, HeaderValue::from_static("true"));
         }
-        if let Some(methods) = list(self.methods.iter().map(Method::as_str)) {
+        let methods = match &route {
+            Some(route) if self.methods.is_empty() => list(route.iter().map(Method::as_str)),
+            Some(route) => list(route.iter().filter(|method| self.methods.contains(method)).map(Method::as_str)),
+            None => list(self.methods.iter().map(Method::as_str)),
+        };
+        if let Some(methods) = methods {
             headers.insert(ACCESS_CONTROL_ALLOW_METHODS, methods);
         }
         let allow_headers = match &self.headers {
@@ -173,7 +195,8 @@ impl Middleware for Cors {
         let is_preflight =
             req.method() == Method::OPTIONS && origin.is_some() && req.headers().contains_key(ACCESS_CONTROL_REQUEST_METHOD);
         if is_preflight {
-            return Ok(self.preflight(&req));
+            let route = next.route_methods(req.path());
+            return Ok(self.preflight(&req, route));
         }
         let mut response = next.run(req).await?;
         self.decorate(origin.as_ref(), response.headers_mut());

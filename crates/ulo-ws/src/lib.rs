@@ -38,6 +38,7 @@ mod gateway;
 mod handler;
 mod handoff;
 mod module;
+mod origin;
 mod rooms;
 mod session;
 mod table;
@@ -78,6 +79,7 @@ pub use gateway::{
 };
 pub use handler::{GatewayHooks, WsHandler};
 pub use module::WsModule;
+pub use origin::Origins;
 pub use rooms::{Broadcast, BroadcastError, Rooms, RoomsIn};
 pub use session::{Session, SessionFactory, SessionHandle};
 #[doc(hidden)]

@@ -44,6 +44,7 @@ use crate::connection::{self, Accept, Handshake, Refusal, Tracker};
 use crate::gateway::{GatewayRuntime, Port, build_table, check_defaults, same_path};
 use crate::handoff::after_init;
 use crate::module::HubMeta;
+use crate::origin::Origins;
 use crate::rooms::Hub;
 use crate::transport::{Ws, WsConnect};
 
@@ -62,6 +63,7 @@ pub struct GatewayDefaults {
     pub(crate) max_outbound: Count,
     pub(crate) ping_interval: Bound,
     pub(crate) pong_timeout: Bound,
+    pub(crate) origins: Origins,
     pub(crate) messages_read: MessagesRead,
     pub(crate) answer_hold: AnswerHold,
 }
@@ -201,6 +203,16 @@ impl GatewayDefaults {
         self.pong_timeout = timeout;
         self
     }
+
+    /// The pages whose handshakes the gateways admit, by the `Origin` a browser sends:
+    /// `.origins(["https://app.example"])` lists them, `.origins(Origins::Any)` admits every one.
+    /// Unset, a page on the server's own origin is admitted, and a handshake without `Origin`
+    /// under every setting; a refused one answers 403 before the upgrade. [`Origins`] states the
+    /// comparison. `prepare` refuses a listed entry that is not an origin.
+    pub fn origins(mut self, origins: impl Into<Origins>) -> Self {
+        self.origins = origins.into();
+        self
+    }
 }
 
 /// The gateways one server serves, with the application's rooms, its runtime, and the
@@ -290,7 +302,8 @@ impl GatewayTable {
     /// The decision on one upgrade request, made from its head alone: the gateway at its path
     /// (404 when none), RFC 6455's checks (405 for a method other than GET, 400 for HTTP/1.0, a
     /// missing `Connection: Upgrade`, `Upgrade: websocket` or `Sec-WebSocket-Key`, 426 for a
-    /// version other than 13), 503 with `Retry-After` once the drain has begun (on the HTTP
+    /// version other than 13), 403 for an `Origin` the defaults' [`origins`](GatewayDefaults::origins)
+    /// refuse, 503 with `Retry-After` once the drain has begun (on the HTTP
     /// server's port that server's own drain answers first), and the first of the gateway's
     /// subprotocols the client offered. Under `refuse = handshake` the connection phase runs
     /// here, its connect guards and `OnConnect`, and a refusal answers the status and headers HTTP

@@ -1,7 +1,7 @@
 //! The WebSocket upgrade hand-off point (transports DESIGN §3.5).
 //!
 //! When a request carrying `Upgrade` matches a path an [`UpgradeHandler`] takes, the router hands
-//! the request over before route matching's 404 or 405; the handler answers the handshake and
+//! the request over before route matching's 404, 405 or 501; the handler answers the handshake and
 //! completes it on the backend's upgrade future. `ulo-ws` registers its gateways here; a
 //! backend whose limits are declared without `upgrades` cannot take them, and `prepare` refuses the
 //! combination naming the limit.
