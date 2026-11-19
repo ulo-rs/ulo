@@ -34,9 +34,16 @@ ulo new my-app && cd my-app && cargo run
 ```
 
 To try it without building on your own machine, open the repository in a
-[Codespace](https://codespaces.new/ulo-rs/ulo), which has the CLI installed, or use a throwaway
-container. The application listens on `127.0.0.1` by default, which a published container port
-cannot reach, so the address is overridden:
+[Codespace](https://codespaces.new/ulo-rs/ulo), which has the CLI installed. Its terminal opens
+inside the repository, a Cargo workspace that cannot build a project created within it, so create
+the project outside:
+
+```bash
+cd ~ && ulo new my-app && cd my-app && cargo run
+```
+
+A throwaway container works too. The application listens on `127.0.0.1` by default, which a
+published container port cannot reach, so the address is overridden:
 
 ```bash
 docker run --rm -it -p 3000:3000 rust:1 bash
