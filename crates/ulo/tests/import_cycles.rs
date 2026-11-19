@@ -191,7 +191,10 @@ fn init(log: &Log, text: &'static str) -> impl Fn() -> std::future::Ready<Result
 
 fn destroy(log: &Log, text: &'static str) -> impl Fn() -> std::future::Ready<()> + Send + Sync + 'static {
     let log = log.clone();
-    move || std::future::ready(log.push(text))
+    move || {
+        log.push(text);
+        std::future::ready(())
+    }
 }
 
 /// Collection order puts `Mod<B>` first, since the walk reaches it inside `Mod<A>`; the binding
