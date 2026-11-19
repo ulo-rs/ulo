@@ -1738,7 +1738,7 @@ mod tests {
         let pattern = |bytes: usize| Pattern::from("p".repeat(bytes));
         let (exchange, key) = event_names(&pattern(241)).expect("an event on a 241-byte pattern is published");
         assert_eq!((exchange.as_str().len(), key.as_str().len()), (255, 241), "the exchange and routing key of an event on a 241-byte pattern");
-        let event = event_names(&pattern(242)).err().expect("an event on a 242-byte pattern was published");
+        let event = event_names(&pattern(242)).expect_err("an event on a 242-byte pattern was published");
         assert_eq!(too_long_of(event), ("event pattern", 242, 241), "the refusal of an event on a 242-byte pattern");
 
         assert_eq!(routing_key(&pattern(255)).expect("a request on a 255-byte pattern is published").as_str().len(), 255);

@@ -1382,7 +1382,7 @@ mod tests {
             .await;
         assert_eq!(*ended.lock().unwrap_or_else(PoisonError::into_inner), Some(false), "the unwinding feeder's dropped sender ended the stream");
         let mut stream = guarded.lock().unwrap_or_else(PoisonError::into_inner).take().expect("the guarded stream");
-        let raised = AssertUnwindSafe(stream.next()).catch_unwind().await.err().expect("the stream raised the feeder's panic");
+        let raised = AssertUnwindSafe(stream.next()).catch_unwind().await.expect_err("the stream raised the feeder's panic");
         assert_eq!(raised.downcast_ref::<String>().map(String::as_str), Some("the Test link's lane panicked: the lane failed"));
     }
 
