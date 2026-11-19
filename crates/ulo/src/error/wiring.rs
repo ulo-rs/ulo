@@ -742,9 +742,10 @@ impl WiringError {
             WiringError::Cycle { path } => {
                 let mut steps: &[(KeyName, ModuleName)] = path;
                 if let [first, .., last] = steps
-                    && first.0 == last.0 {
-                        steps = &steps[..steps.len() - 1];
-                    }
+                    && first.0 == last.0
+                {
+                    steps = &steps[..steps.len() - 1];
+                }
                 let head = format!("dependency cycle: {}", closed_loop(steps.iter().map(|(k, _)| show(k)).collect()));
                 let mut items: Vec<String> = steps.iter().map(|(k, m)| format!("`{}` in {}", show(k), show_module(m))).collect();
                 // A collection or a factory closure is an edge like any other read, so neither
@@ -1127,9 +1128,10 @@ fn tree(f: &mut fmt::Formatter<'_>, head: String, items: Vec<String>) -> fmt::Re
 fn closed_loop(mut steps: Vec<String>) -> String {
     let closed = steps.len() > 1 && steps.first() == steps.last();
     if !closed
-        && let Some(first) = steps.first().cloned() {
-            steps.push(first);
-        }
+        && let Some(first) = steps.first().cloned()
+    {
+        steps.push(first);
+    }
     steps.join(" → ")
 }
 

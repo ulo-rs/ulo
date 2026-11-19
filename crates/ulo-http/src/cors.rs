@@ -217,9 +217,10 @@ fn vary(headers: &mut HeaderMap, name: &str) {
         value.split(',').map(str::trim).any(|item| item == "*" || item.eq_ignore_ascii_case(name))
     });
     if !listed
-        && let Ok(value) = HeaderValue::from_str(name) {
-            headers.append(VARY, value);
-        }
+        && let Ok(value) = HeaderValue::from_str(name)
+    {
+        headers.append(VARY, value);
+    }
 }
 
 /// A `Cors` configuration the Fetch specification forbids, refused in `prepare`.

@@ -269,9 +269,10 @@ async fn race<F: Future>(mut expiry: Expiry<'_>, fut: F) -> Result<F::Output, Cu
         // ready on that poll waits for `fut`'s, which still outranks it.
         let polled = std::mem::take(&mut first);
         if polled
-            && let Poll::Ready(cut) = Pin::new(&mut expiry).poll(cx) {
-                early = Some(cut);
-            }
+            && let Poll::Ready(cut) = Pin::new(&mut expiry).poll(cx)
+        {
+            early = Some(cut);
+        }
         if let Poll::Ready(output) = fut.as_mut().poll(cx) {
             return Poll::Ready(Ok(output));
         }

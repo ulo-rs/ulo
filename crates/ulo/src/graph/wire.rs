@@ -456,21 +456,22 @@ fn freeze(
                 declare_transport_inputs(graph, decl, &mut transports_seen, &mut declared.transport_inputs);
             }
             if let Some((prefix, at)) = &controller.prefix
-                && !decls.iter().any(|decl| decl.reads_prefix) {
-                    let mut transports: Vec<TypeName> = Vec::new();
-                    for decl in &decls {
-                        if !transports.contains(&decl.transport) {
-                            transports.push(decl.transport);
-                        }
+                && !decls.iter().any(|decl| decl.reads_prefix)
+            {
+                let mut transports: Vec<TypeName> = Vec::new();
+                for decl in &decls {
+                    if !transports.contains(&decl.transport) {
+                        transports.push(decl.transport);
                     }
-                    steps.bindings.push(WiringError::UnreadPrefix {
-                        controller: controller_key,
-                        module: names[index].clone(),
-                        prefix: prefix.to_string(),
-                        transports,
-                        at,
-                    });
                 }
+                steps.bindings.push(WiringError::UnreadPrefix {
+                    controller: controller_key,
+                    module: names[index].clone(),
+                    prefix: prefix.to_string(),
+                    transports,
+                    at,
+                });
+            }
             let prefix = controller.prefix.as_ref().map(|(prefix, _)| prefix.clone());
             graph.handlers.extend(
                 decls.into_iter().map(|decl| HandlerRecord::new(binding, controller_key, id, prefix.clone(), decl)),
@@ -919,14 +920,15 @@ fn check_bindings(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringErr
             let new = binding.id.0 as usize >= declared.first_binding
                 || contributions.iter().any(|id| id.0 as usize >= declared.first_binding);
             if new && mixed.insert(key)
-                && let Some(&first) = contributions.first() {
-                    errors.push(WiringError::KindMix {
-                        key: key.name(BindingKind::Single),
-                        module: graph.module_name(binding.origin),
-                        single: binding.record.location,
-                        collection: graph.binding(first).record.location,
-                    });
-                }
+                && let Some(&first) = contributions.first()
+            {
+                errors.push(WiringError::KindMix {
+                    key: key.name(BindingKind::Single),
+                    module: graph.module_name(binding.origin),
+                    single: binding.record.location,
+                    collection: graph.binding(first).record.location,
+                });
+            }
         }
     }
 
@@ -1178,10 +1180,11 @@ fn refusal(base: &Graph, registry: &Registry) -> Option<LoadRefusal> {
             return Some(LoadRefusal::Input { module: module(), key: input.key.name(BindingKind::Single) });
         }
         if node.global
-            && let Some(export) = node.exports.first() {
-                let key = boundary_key(node.keyed, export.key).name(BindingKind::Single);
-                return Some(LoadRefusal::GlobalExport { module: module(), key });
-            }
+            && let Some(export) = node.exports.first()
+        {
+            let key = boundary_key(node.keyed, export.key).name(BindingKind::Single);
+            return Some(LoadRefusal::GlobalExport { module: module(), key });
+        }
         for record in node.bindings.iter().filter(|record| record.kind == BindingKind::Collection) {
             let key = record_key(record);
             if base.collections.contains_key(&key) || reads_collection(base, key) {

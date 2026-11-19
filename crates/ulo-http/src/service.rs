@@ -654,9 +654,10 @@ fn owes_nothing(body: &HttpBody, status: StatusCode, exec: &ExecutionRef) {
 fn without_body(response: Response) -> Response {
     let (mut parts, body) = response.into_parts();
     if !forbids_body(parts.status) && !parts.headers.contains_key(CONTENT_LENGTH)
-        && let Some(length) = body.size_hint().exact() {
-            parts.headers.insert(CONTENT_LENGTH, HeaderValue::from(length));
-        }
+        && let Some(length) = body.size_hint().exact()
+    {
+        parts.headers.insert(CONTENT_LENGTH, HeaderValue::from(length));
+    }
     Response::from_parts(parts, HttpBody::empty())
 }
 
@@ -925,10 +926,11 @@ impl http_body::Body for TimedBody {
     fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = self.get_mut();
         if let Some(deadline) = this.deadline.as_mut()
-            && deadline.as_mut().poll(cx).is_ready() {
-                this.deadline = None;
-                this.exec.cancel_with(CancelReason::Deadline);
-            }
+            && deadline.as_mut().poll(cx).is_ready()
+        {
+            this.deadline = None;
+            this.exec.cancel_with(CancelReason::Deadline);
+        }
         let frame = Pin::new(&mut this.inner).poll_frame(cx);
         if matches!(frame, Poll::Ready(None)) || this.inner.is_end_stream() {
             this.deadline = None;

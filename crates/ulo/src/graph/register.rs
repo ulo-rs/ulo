@@ -219,12 +219,13 @@ impl<'a> Walk<'a> {
     fn replace(&mut self, original: &dyn Module, identity: ModuleIdentity, replacement: &'a Replacement, site: Site) -> Import {
         let import = self.enter(replacement.replacement.identity(), &*replacement.replacement, site);
         if let Import::New(node) = import
-            && !self.registry.replaced.iter().any(|r| r.original == identity) {
-                let mut scratch = ModuleNode::new(identity.clone());
-                original.register(&mut ModuleDef::new(&mut scratch));
-                let exports = scratch.exports.iter().map(|export| boundary_key(scratch.keyed, export.key)).collect();
-                self.registry.replaced.push(Replaced { original: identity, exports, replacement: node });
-            }
+            && !self.registry.replaced.iter().any(|r| r.original == identity)
+        {
+            let mut scratch = ModuleNode::new(identity.clone());
+            original.register(&mut ModuleDef::new(&mut scratch));
+            let exports = scratch.exports.iter().map(|export| boundary_key(scratch.keyed, export.key)).collect();
+            self.registry.replaced.push(Replaced { original: identity, exports, replacement: node });
+        }
         import
     }
 

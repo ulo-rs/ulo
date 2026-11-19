@@ -322,9 +322,10 @@ impl<'a> Resolver<'a> {
             let binding = self.graph.binding(id);
             let record = &binding.record;
             if record.primary.type_id() == ty
-                && let Some(coerce) = &record.into_primary {
-                    return Some(coerce);
-                }
+                && let Some(coerce) = &record.into_primary
+            {
+                return Some(coerce);
+            }
             if let Some(also) = record.also.iter().find(|also| also.key.type_id() == ty) {
                 return Some(&also.coerce);
             }

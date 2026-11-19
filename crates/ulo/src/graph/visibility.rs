@@ -176,14 +176,15 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
         // exporting the same type would make ambiguous; nothing else reads that key.
         let controller = record_key(&graph.binding(handler.controller).record);
         if let Some(Visible::Ambiguous(list)) = graph.lookup(handler.module, controller)
-            && reported.insert((handler.module, controller)) {
-                errors.push(WiringError::Ambiguous {
-                    key: controller.name(BindingKind::Single),
-                    consumer: format!("{name} (its controller)"),
-                    module: graph.module_name(handler.module),
-                    sources: ambiguous_sources(graph, list),
-                });
-            }
+            && reported.insert((handler.module, controller))
+        {
+            errors.push(WiringError::Ambiguous {
+                key: controller.name(BindingKind::Single),
+                consumer: format!("{name} (its controller)"),
+                module: graph.module_name(handler.module),
+                sources: ambiguous_sources(graph, list),
+            });
+        }
         check_dependencies(graph, handler.module, &handler.decl.dependencies, &name, errors, &mut reported);
         for dep in &handler.decl.enhancer_deps {
             match dep {

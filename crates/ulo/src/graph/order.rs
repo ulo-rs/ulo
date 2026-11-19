@@ -27,10 +27,11 @@ pub(crate) fn collection_order(registry: &Registry) -> Vec<usize> {
             Some(import) => {
                 frame.1 += 1;
                 if let Import::New(child) = *import
-                    && child < count && !visited[child] {
-                        visited[child] = true;
-                        stack.push((child, 0));
-                    }
+                    && child < count && !visited[child]
+                {
+                    visited[child] = true;
+                    stack.push((child, 0));
+                }
             }
             None => {
                 order.push(node);

@@ -483,13 +483,14 @@ impl<T: HttpCarried> Stage<T> {
             }
             for (index, entry) in meta.entries.iter().enumerate() {
                 if let Some(check) = &entry.check
-                    && let Err(err) = (**check)() {
-                        failures.push(
-                            Failure::plain(format!("pre-dispatch entry at {}: {err}", entry.location))
-                                .at(entry.location)
-                                .about(PRE_DISPATCH_ENTRY),
-                        );
-                    }
+                    && let Err(err) = (**check)()
+                {
+                    failures.push(
+                        Failure::plain(format!("pre-dispatch entry at {}: {err}", entry.location))
+                            .at(entry.location)
+                            .about(PRE_DISPATCH_ENTRY),
+                    );
+                }
                 // gRPC refuses no path before its stage: a method path is the method's name.
                 let http = TypeId::of::<T>() == TypeId::of::<Http>();
                 let exclude = scopes(&entry.exclude, "exclusion", http, entry.location, &mut failures);

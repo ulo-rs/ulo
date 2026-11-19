@@ -254,9 +254,10 @@ pub(crate) fn status_headers(error: &CallError, status: StatusCode, default_chal
         headers.insert(WWW_AUTHENTICATE, challenge_value(challenge));
     }
     if (status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE)
-        && let Some(after) = error.details().retry_after() {
-            headers.insert(RETRY_AFTER, retry_after(after));
-        }
+        && let Some(after) = error.details().retry_after()
+    {
+        headers.insert(RETRY_AFTER, retry_after(after));
+    }
 }
 
 /// `challenge` as a `WWW-Authenticate` value, `Bearer` when it is not a valid header value.
