@@ -50,6 +50,7 @@
 
 mod backend;
 mod body;
+mod client_ip;
 mod cors;
 mod cx;
 mod extract;
@@ -108,6 +109,7 @@ pub use ulo_transport::__derive;
 
 pub use backend::{Backend, BackendLimits, HttpConfig};
 pub use body::{Body, HttpBody};
+pub use client_ip::{Cidr, CidrError};
 pub use cors::{Cors, CorsError};
 pub use cx::{HttpCx, PathParams};
 pub use extract::{BodyStream, Form, Header, Host, Json, LastEventId, Multipart, Path, Query};

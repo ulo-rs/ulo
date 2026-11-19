@@ -39,7 +39,7 @@ use ulo::{
     LateOutcome, ModuleRef, MountedHandler, Refused, Runtime, Spawn, TaskHandle, Timer, TraceContext, TraceMode, Transport,
 };
 use ulo_http::__private::HandshakeAnswers;
-use ulo_transport::{CallError, ErrorKind, TaskSet, Tracked, Turns, span};
+use ulo_transport::{CallError, ErrorKind, ShedLog, TaskSet, Tracked, Turns, span};
 use ulo_transport::sync::{Changed, Watch};
 
 use crate::handler::HandlerFn;
@@ -508,6 +508,8 @@ pub(crate) struct Accept {
     /// on it, and its `Timer` half keeps the connection's clocks.
     pub(crate) runtime: Arc<dyn Runtime>,
     pub(crate) tracker: Arc<Tracker>,
+    /// The table's count of connections refused over `max_connections`.
+    pub(crate) shed: ShedLog,
 }
 
 /// A server's answer to one upgrade request, from
@@ -956,6 +958,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
     if full.load(Ordering::Acquire) {
         accept.hub.unregister(id);
         trace::record_failure(&call_span, ErrorKind::Unavailable);
+        accept.shed.shed();
         return Connected::Full;
     }
     let reply = outcome.unwrap_or_else(|err| ConnectReply::Refused(ConnectRefused::of_error(err)));
@@ -966,6 +969,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
             None => {
                 accept.hub.unregister(id);
                 trace::record_failure(&call_span, ErrorKind::Unavailable);
+                accept.shed.shed();
                 return Connected::Full;
             }
             Some(slot) => match &gateway.handler.messages {
