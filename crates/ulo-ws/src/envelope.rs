@@ -356,6 +356,8 @@ enum Field<T> {
     Present(T),
 }
 
+// A derive would bound `T: Default`, which a payload type does not satisfy.
+#[allow(clippy::derivable_impls)]
 impl<T> Default for Field<T> {
     fn default() -> Self {
         Field::Absent
