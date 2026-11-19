@@ -31,7 +31,6 @@ use ulo_handler_codegen::restore::restore_item;
 use crate::shared::ulo;
 
 pub(crate) use args::{ExportEntry, ModuleArgs};
-pub(crate) use providers::ProviderEntry;
 
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args: ModuleArgs = syn::parse2(attr)?;
@@ -66,7 +65,8 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &Token
             #m.import(#import);
         }
     });
-    let providers = args.providers.iter().map(ProviderEntry::lower);
+    let provided = providers::provided_types(&args.providers);
+    let providers = args.providers.iter().map(|entry| entry.lower(&provided));
     let controllers = args.controllers.iter().map(|controller| {
         quote_spanned! {controller.span()=>
             #m.controller::<#controller>();

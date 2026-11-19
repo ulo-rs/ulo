@@ -190,7 +190,7 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
             match dep {
                 EnhancerDep::Type(key) => {
                     let consumer = || format!("{name} (enhancer `{}`)", key.type_name());
-                    check_key(graph, handler.module, *key, false, consumer, errors, &mut reported);
+                    check_key(graph, handler.module, *key, false, None, consumer, errors, &mut reported);
                 }
                 EnhancerDep::Closure(closure) => {
                     let owner = format!("{name} (enhancer closure)");
@@ -307,7 +307,7 @@ fn binding_edges(
             let target = match &read.kind {
                 ReadKind::Single(key) => {
                     let consumer = || graph.consumer(id, index);
-                    check_key(graph, binding.origin, *key, read.optional, consumer, errors, reported)
+                    check_key(graph, binding.origin, *key, read.optional, read.import, consumer, errors, reported)
                 }
                 ReadKind::Collection(key) => Some(EdgeTarget::Collection(*key)),
                 ReadKind::Extension(_) | ReadKind::Execution => Some(EdgeTarget::Execution),
@@ -335,7 +335,7 @@ fn check_dependencies(
         for read in &dependency.requirement.reads {
             if let ReadKind::Single(key) = &read.kind {
                 let consumer = || format!("{owner} ({})", dependency_label(dependency.label));
-                check_key(graph, module, *key, read.optional, consumer, errors, reported);
+                check_key(graph, module, *key, read.optional, read.import, consumer, errors, reported);
             }
         }
     }
@@ -343,11 +343,13 @@ fn check_dependencies(
 
 /// What `key` resolves to in `module`, or the error a read of it is reported with. A
 /// missing optional read is no error and no edge.
+#[allow(clippy::too_many_arguments)]
 fn check_key(
     graph: &Graph,
     module: ModuleId,
     key: Key,
     optional: bool,
+    import: Option<&'static str>,
     consumer: impl FnOnce() -> String,
     errors: &mut Vec<WiringError>,
     reported: &mut HashSet<(ModuleId, Key)>,
@@ -366,7 +368,14 @@ fn check_key(
             None
         }
         None => {
-            if !optional {
+            if let (false, Some(import)) = (optional, import) {
+                errors.push(WiringError::NotImported {
+                    key: key.name(BindingKind::Single),
+                    consumer: consumer(),
+                    module: graph.module_name(module),
+                    import,
+                });
+            } else if !optional {
                 errors.push(WiringError::Missing {
                     key: key.name(BindingKind::Single),
                     consumer: consumer(),

@@ -285,6 +285,14 @@ pub enum WiringError {
     /// every item left at `Default` before it starts. `knob` is the builder method's name and
     /// `at` the call that set it. Hint: `.unbounded()` on the items.
     ZeroDefault { knob: &'static str, at: &'static Location<'static> },
+    // Last: a variant added before others changes their discriminants, which cargo-semver-checks
+    // reports as a break.
+    /// Step 3: an injection point whose key the module cannot see, read as a key a module the
+    /// application imports binds ([`Requirement::dep_imported`](crate::Requirement::dep_imported)):
+    /// `import` is that module as the application writes the import, such as
+    /// `ulo_ws::WsModule::for_root()` for a WebSocket gateway on the HTTP server's port.
+    /// `consumer` names the reader as `Missing` does.
+    NotImported { key: KeyName, consumer: String, module: ModuleName, import: &'static str },
 }
 
 /// The item a bound is written on, as [`WiringError::ZeroBound`] names it.
@@ -331,6 +339,7 @@ impl WiringError {
             | WiringError::OverrideAmbiguous { key, .. }
             | WiringError::OverrideKind { key, .. }
             | WiringError::ControllerProvided { key, .. }
+            | WiringError::NotImported { key, .. }
             | WiringError::Ambiguous { key, .. } => vec![key],
             WiringError::ExportNotBound { key, near, .. } => std::iter::once(key).chain(near).collect(),
             WiringError::DanglingAlias { alias, target, .. } => vec![alias, target],
@@ -395,6 +404,7 @@ impl WiringError {
             | WiringError::ReplacementUnmatched { .. }
             | WiringError::DuplicateReplacement { .. }
             | WiringError::Missing { .. }
+            | WiringError::NotImported { .. }
             | WiringError::Ambiguous { .. }
             | WiringError::Cycle { .. }
             | WiringError::ScopeViolation { .. }
@@ -429,6 +439,7 @@ impl WiringError {
             | WiringError::UnreadPrefix { module, .. }
             | WiringError::NestedKeyed { module, .. }
             | WiringError::DuplicateSetting { module, .. }
+            | WiringError::NotImported { module, .. }
             | WiringError::ZeroBound { module, .. } => vec![module],
             WiringError::ControllerRead { module, controller_module, .. } => vec![module, controller_module],
             WiringError::ControllerProvided { module, controller_at, .. } => {
@@ -731,6 +742,17 @@ impl WiringError {
                     (None, None) => format!("help: import a module that exports `{key}`, or provide it in {module}"),
                 };
                 tree(f, format!("missing dependency `{key}`"), vec![format!("needed by {consumer} in {module}"), help])
+            }
+            WiringError::NotImported { key, consumer, module, import } => {
+                let module = show_module(module);
+                tree(
+                    f,
+                    format!("{consumer} needs `{import}` imported"),
+                    vec![
+                        format!("it reads `{}`, which `{import}` binds, and {module} sees no binding of it", show(key)),
+                        format!("help: add `{import}` to the `imports` of a module of the application"),
+                    ],
+                )
             }
             WiringError::Ambiguous { key, consumer, module, sources } => {
                 let shown: Vec<(String, &Location<'static>)> = sources.iter().map(|(m, at)| (show_module(m), *at)).collect();

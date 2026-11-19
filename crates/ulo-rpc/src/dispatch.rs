@@ -693,6 +693,10 @@ async fn send(reply: &ReplyPath, exec: &ExecutionRef, id: u64, frame: Frame) -> 
     if let Frame::Err { error, .. } = &frame {
         trace::record_failure(&call_span, error.kind);
     }
+    // `res`, `err` and `end` are the answer's last frame: it commits as the write begins.
+    if matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. }) {
+        exec.commit();
+    }
     match reply.send(frame).await {
         Ok(()) => true,
         Err(err) if err.is::<FrameTooLarge>() || err.is::<FrameUnencodable>() => {

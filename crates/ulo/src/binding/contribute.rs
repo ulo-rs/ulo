@@ -1,3 +1,4 @@
+use std::future::{Ready, ready};
 use std::marker::PhantomData;
 use std::panic::Location;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use crate::binding::factory::{Factory, erase_factory, erase_try_factory};
 use crate::binding::handle::{Contribution, Handle, Open, Set};
 use crate::binding::{BindingRecord, Coercion, ErasedCtor, Qualifier, Recipe, coercion, erase_construct, instance_of};
 use crate::construct::Construct;
-use crate::dependency::Dependencies;
+use crate::dependency::{Dep, Dependencies};
 use crate::hooks::erase_trait_hooks;
 use crate::key::{BindingKind, Key};
 use crate::module::def::{ModuleNode, ValueFailure};
@@ -139,6 +140,22 @@ impl<'m, U: ?Sized + Send + Sync + 'static, Q: 'static, M> Contribute<'m, U, Q, 
         record.constructs = true;
         record.controller_type = crate::construct::marked_controller::<T>().then(TypeName::of::<T>);
         self.push(record)
+    }
+
+    /// The binding `T` the same module provides, contributed as that binding's instance: a factory
+    /// reading `Dep<T>` in `T`'s declared scope, so the collection's item is the instance a direct
+    /// read in the same scope returns, and `T`'s hooks run on its own binding alone. The lowering
+    /// of an `into` item naming a type its `providers` list binds (§4).
+    #[doc(hidden)]
+    #[track_caller]
+    pub fn reuse<T: Construct>(
+        self,
+        coerce: impl Fn(Arc<T>) -> Arc<U> + Send + Sync + 'static,
+    ) -> Handle<'m, Dep<T>, Contribution<T::Scope, Open>> {
+        type Read<T> = fn(Dep<T>) -> Ready<Dep<T>>;
+        let ctor = erase_factory::<(Dep<T>,), Read<T>>(ready);
+        let coerce = move |dep: Arc<Dep<T>>| coerce(Arc::clone(dep.arc()));
+        self.push_factory::<Dep<T>, T::Scope, (Dep<T>,), Read<T>, _>(ctor, coerce, Location::caller())
     }
 
     /// A shared value, already built.

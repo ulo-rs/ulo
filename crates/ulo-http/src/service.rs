@@ -970,8 +970,13 @@ struct ExecBody {
 }
 
 impl ExecBody {
+    /// A body that has nothing to write commits the answer here: the backend's write of the head,
+    /// which follows, is the final one (§9.5 step 4).
     fn new(inner: HttpBody, holder: Arc<Execution>, exec: ExecutionRef, app: AppHandle, permit: Permit, unwritten: bool) -> Self {
         let ended = unwritten || inner.is_end_stream();
+        if ended {
+            exec.commit();
+        }
         ExecBody { inner, _holder: holder, exec, app, _permit: permit, ended, cancelled: None, settled: false, waiting: false }
     }
 
@@ -1041,9 +1046,20 @@ impl http_body::Body for ExecBody {
             Ok(frame) => frame,
             Err(payload) => return Poll::Ready(Some(Err(this.recover(payload, cx)))),
         };
+        // The answer commits as its last frame, or its clean end, is handed to the backend to write.
+        // An end polled after an error frame commits nothing: the body was cut off.
         match &frame {
-            Poll::Ready(None | Some(Err(_))) => this.ended = true,
-            Poll::Ready(Some(Ok(_))) if this.inner.is_end_stream() => this.ended = true,
+            Poll::Ready(None) => {
+                if !this.ended {
+                    this.exec.commit();
+                }
+                this.ended = true;
+            }
+            Poll::Ready(Some(Err(_))) => this.ended = true,
+            Poll::Ready(Some(Ok(_))) if this.inner.is_end_stream() => {
+                this.ended = true;
+                this.exec.commit();
+            }
             Poll::Ready(Some(Ok(_))) => {}
             Poll::Pending => {
                 if watching {

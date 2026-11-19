@@ -52,27 +52,35 @@ pub struct Requirement {
 impl Requirement {
     /// A single binding, or an execution input, under `key`.
     pub fn dep(&mut self, key: Key) {
-        self.reads.push(Read { kind: ReadKind::Single(key), optional: false });
+        self.reads.push(Read { kind: ReadKind::Single(key), optional: false, import: None });
+    }
+
+    /// A single binding under `key` that a module binds once the application imports it, `import`
+    /// naming that module as the application writes the import, `"ulo_ws::WsModule::for_root()"`
+    /// for one. Where the reading module sees no binding under `key`, `wire()` reports
+    /// `WiringError::NotImported` naming the import to add, in place of `WiringError::Missing`.
+    pub fn dep_imported(&mut self, key: Key, import: &'static str) {
+        self.reads.push(Read { kind: ReadKind::Single(key), optional: false, import: Some(import) });
     }
 
     /// Every contribution to the collection under `key`, from every module (§8.2).
     pub fn many(&mut self, key: Key) {
-        self.reads.push(Read { kind: ReadKind::Collection(key), optional: false });
+        self.reads.push(Read { kind: ReadKind::Collection(key), optional: false, import: None });
     }
 
     /// The extension `T` of the current execution. Needs an execution.
     pub fn ext<T: 'static>(&mut self) {
-        self.reads.push(Read { kind: ReadKind::Extension(std::any::TypeId::of::<T>()), optional: false });
+        self.reads.push(Read { kind: ReadKind::Extension(std::any::TypeId::of::<T>()), optional: false, import: None });
     }
 
     /// The current execution itself. Needs an execution.
     pub fn execution(&mut self) {
-        self.reads.push(Read { kind: ReadKind::Execution, optional: false });
+        self.reads.push(Read { kind: ReadKind::Execution, optional: false, import: None });
     }
 
     /// The enclosing module.
     pub fn module(&mut self) {
-        self.reads.push(Read { kind: ReadKind::Module, optional: false });
+        self.reads.push(Read { kind: ReadKind::Module, optional: false, import: None });
     }
 
     /// Everything `S` reads, marked optional: a key no module binds is not a wiring error, and
@@ -90,6 +98,8 @@ impl Requirement {
 pub(crate) struct Read {
     pub(crate) kind: ReadKind,
     pub(crate) optional: bool,
+    /// The module whose import binds the key, for the report of a key no module binds.
+    pub(crate) import: Option<&'static str>,
 }
 
 #[derive(Clone, Copy)]

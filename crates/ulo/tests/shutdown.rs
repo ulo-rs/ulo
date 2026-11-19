@@ -557,6 +557,30 @@ async fn an_execution_still_live_at_the_drain_timeout_is_cancelled_and_counted_a
     drop(app);
 }
 
+/// An execution whose answer the transport committed, still alive when the drain ends, is
+/// cancelled with the rest and not counted abandoned: its answer was written. The window is zero on
+/// `Frozen`, so the drain ends as it begins, with both executions held open by the test.
+#[tokio::test]
+async fn a_committed_execution_alive_at_the_drain_end_is_cancelled_and_not_counted_abandoned() {
+    watchdog();
+    let app = App::builder(Empty).timer(Frozen::new()).drain_timeout(Duration::ZERO).wire().unwrap().connect().await.expect("connect failed");
+    let handle = app.handle();
+    let root = handle.root();
+    let answered = Execution::open(&root, ExecOptions::new()).expect("an execution opens");
+    let unanswered = Execution::open(&root, ExecOptions::new()).expect("an execution opens");
+    answered.handle().commit();
+
+    let report = within("close", handle.close(Signal::new("done"))).await.expect("shutdown reported a failure");
+    assert_eq!(report.abandoned, 1, "only the execution with no committed answer is abandoned");
+    assert_eq!(
+        (answered.cancel_reason(), unanswered.cancel_reason()),
+        (Some(CancelReason::Drain), Some(CancelReason::Drain)),
+        "both were cancelled by the drain's end"
+    );
+    drop((answered, unanswered));
+    drop(app);
+}
+
 /// A server whose `drain` opens a terminal execution and keeps it in `slot`.
 fn terminal_server(log: &Log, slot: &Arc<Mutex<Option<Execution>>>) -> TestServer<TA> {
     let slot = Arc::clone(slot);

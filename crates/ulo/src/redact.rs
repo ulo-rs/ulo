@@ -22,6 +22,11 @@ use crate::timer::BoxError;
 /// the text too. The original is reached through [`downcast_ref`](Self::downcast_ref) and
 /// [`into_inner`](Self::into_inner) alone, which is what lets an error handler map a
 /// constructor's domain error to a status.
+///
+/// The failure of an execution-scoped build is cached for its execution, and every reader of it
+/// receives a `Redacted` sharing one original (§3.8): `downcast_ref` reaches the original from
+/// each of them, and `into_inner` answers it inside a box of the core's own type, since a shared
+/// original cannot be moved out to one reader.
 pub struct Redacted {
     inner: BoxError,
     text: String,
@@ -30,7 +35,7 @@ pub struct Redacted {
 impl Redacted {
     /// The original, by type.
     pub fn downcast_ref<E: Error + 'static>(&self) -> Option<&E> {
-        self.inner.downcast_ref::<E>()
+        self.original().downcast_ref::<E>()
     }
 
     pub fn into_inner(self) -> BoxError {
@@ -43,7 +48,48 @@ impl Redacted {
 
     /// The original, for the core's own walks of an error chain, which `source()` stops short of.
     pub(crate) fn original(&self) -> &(dyn Error + 'static) {
-        &*self.inner
+        match self.inner.downcast_ref::<SharedOriginal>() {
+            Some(shared) => &*shared.0,
+            None => &*self.inner,
+        }
+    }
+
+    /// The same error with its original behind a shared pointer, so [`share`](Self::share) can
+    /// hand a copy to each reader of one cached failure.
+    pub(crate) fn into_shared(self) -> Redacted {
+        if self.inner.is::<SharedOriginal>() {
+            return self;
+        }
+        Redacted { inner: Box::new(SharedOriginal(Arc::from(self.inner))), text: self.text }
+    }
+
+    /// Another handle on this error's original, when [`into_shared`](Self::into_shared) made it
+    /// shareable.
+    pub(crate) fn share(&self) -> Option<Redacted> {
+        let shared = self.inner.downcast_ref::<SharedOriginal>()?;
+        Some(Redacted { inner: Box::new(SharedOriginal(Arc::clone(&shared.0))), text: self.text.clone() })
+    }
+}
+
+/// One original held by every `Redacted` that [`Redacted::share`] handed out. It writes the
+/// original's own text, which only the core's walks reach: a `Redacted` formats its redacted text.
+struct SharedOriginal(Arc<dyn Error + Send + Sync>);
+
+impl fmt::Display for SharedOriginal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&*self.0, f)
+    }
+}
+
+impl fmt::Debug for SharedOriginal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&*self.0, f)
+    }
+}
+
+impl Error for SharedOriginal {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.0.source()
     }
 }
 

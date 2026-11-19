@@ -19,28 +19,40 @@ pub(crate) enum Slot {
     Closure(ClosureId),
 }
 
-/// One instance per slot, built on first read and shared after. Two readers of one slot
-/// concurrently get one instance: both await one cell. A failed build is not cached.
+/// One build per slot, run on first read and shared after. Readers of one slot concurrently await
+/// one cell, and the build runs once for all of them.
 ///
-/// An execution's cache holds its execution-scoped bindings and its per-execution enhancer
-/// closures; the app's holds the enhancer closures built once. A cell holds the instance as the
-/// recipe built it; `AppShared::obtain` widens a contribution to its collection's type on the way
-/// out, as it does for a stored singleton.
+/// An execution's cache keeps a failed build's error as it keeps an instance (§3.8): every reader
+/// of the slot in that execution, concurrent or later, receives that error, and the build does
+/// not run again until another execution reads the slot. The app's cache, which holds the
+/// enhancer closures built once, keeps no failure: a later call builds again, since a failure
+/// kept there would last as long as the app.
+///
+/// A cell holds the instance as the recipe built it; `AppShared::obtain` widens a contribution to
+/// its collection's type on the way out, as it does for a stored singleton.
 pub(crate) struct OnceCells {
     /// `None` once released: the execution has ended.
-    cells: Mutex<Option<HashMap<Slot, Arc<OnceCell<Instance>>>>>,
+    cells: Mutex<Option<HashMap<Slot, Arc<OnceCell<Built>>>>>,
+    keeps_failures: bool,
 }
 
-impl Default for OnceCells {
-    fn default() -> Self {
-        OnceCells { cells: Mutex::new(Some(HashMap::new())) }
-    }
-}
+/// What a cell holds: the instance, or the failure prepared for sharing.
+type Built = Result<Instance, LookupError>;
 
 impl OnceCells {
+    /// An execution's cache, which keeps a failed build for the execution.
+    pub(crate) fn per_execution() -> Self {
+        OnceCells { cells: Mutex::new(Some(HashMap::new())), keeps_failures: true }
+    }
+
+    /// The app's cache of enhancer closures built once, which keeps no failure.
+    pub(crate) fn per_app() -> Self {
+        OnceCells { cells: Mutex::new(Some(HashMap::new())), keeps_failures: false }
+    }
+
     /// The instance in `slot`, built by `build` on the first read. Once the cache is released it
     /// answers `ExecutionEnded` naming `key` and builds nothing. A build already running when the
-    /// cache is released completes for the readers awaiting it, and its instance is not kept.
+    /// cache is released completes for the readers awaiting it, and its outcome is not kept.
     pub(crate) async fn get_or_build<F, Fut>(&self, slot: Slot, key: KeyName, build: F) -> Result<Instance, LookupError>
     where
         F: FnOnce() -> Fut,
@@ -55,8 +67,12 @@ impl OnceCells {
             };
             Arc::clone(cells.entry(slot).or_default())
         };
-        let instance = cell.get_or_try_init(build).await?;
-        Ok(Arc::clone(instance))
+        if !self.keeps_failures {
+            let instance = cell.get_or_try_init(|| async { build().await.map(Ok) }).await?;
+            return instance.as_ref().map(Arc::clone).map_err(LookupError::share);
+        }
+        let built = cell.get_or_init(|| async { build().await.map_err(LookupError::into_shared) }).await;
+        built.as_ref().map(Arc::clone).map_err(LookupError::share)
     }
 
     /// Drops every instance the cache holds and refuses every later read. The instances drop

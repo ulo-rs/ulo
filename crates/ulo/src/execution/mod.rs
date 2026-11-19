@@ -38,7 +38,7 @@ use crate::execution::notify::{Cancelled, Draining, Notify};
 use crate::execution::trace::{TraceContext, TraceMode};
 use crate::graph::ModuleId;
 use crate::module::handle::ModuleRef;
-use crate::resolver::{Purpose, Resolver};
+use crate::resolver::{Building, Purpose, Resolver};
 use crate::transport::handler::HandlerInfo;
 use crate::transport::server::DrainToken;
 
@@ -66,6 +66,9 @@ pub struct Execution {
 #[derive(Clone)]
 pub struct ExecutionRef {
     pub(crate) shared: Arc<ExecShared>,
+    /// The construction that read this handle, for a handle read at construction: see
+    /// `Resolver::building`.
+    pub(crate) building: Option<Arc<Building>>,
 }
 
 /// Options for a new execution. Each setter keeps the others, so they compose in any order.
@@ -171,6 +174,9 @@ pub(crate) struct ExecShared {
     pub(crate) terminal: bool,
     /// Set as the `Execution` drops, before the cache is released.
     pub(crate) ended: AtomicBool,
+    /// Set by the transport immediately before the answer's final write: an execution still alive
+    /// at the drain's end with it set is cancelled and not counted abandoned.
+    pub(crate) committed: AtomicBool,
 }
 
 /// The reply stream's end: the outcome once reported, and the callbacks waiting for it.
@@ -231,7 +237,15 @@ impl Execution {
     /// A cheap clone, for a guard, a reply stream or a spawned subtask. It does not keep the
     /// execution open: a subtask that should finish within the execution is awaited by its holder.
     pub fn handle(&self) -> ExecutionRef {
-        ExecutionRef { shared: Arc::clone(&self.shared) }
+        ExecutionRef { shared: Arc::clone(&self.shared), building: None }
+    }
+
+    /// Marks the answer committed, for the transport to call immediately before its final write
+    /// (§9.5 step 4): an execution still alive when the drain ends is cancelled whether committed
+    /// or not, and counts in `Shutdown::abandoned` only when not. The execution stays usable while
+    /// the write proceeds; a write that then fails is a lost write, not an abandoned call.
+    pub fn commit(&self) {
+        self.shared.committed.store(true, Ordering::Release);
     }
 
     pub fn extensions(&self) -> &Extensions {
@@ -326,6 +340,11 @@ impl ExecutionRef {
         self.clone()
     }
 
+    /// [`Execution::commit`], for a transport writing the answer through a handle.
+    pub fn commit(&self) {
+        self.shared.committed.store(true, Ordering::Release);
+    }
+
     pub fn extensions(&self) -> &Extensions {
         &self.shared.extensions
     }
@@ -405,7 +424,7 @@ impl ExecutionRef {
     /// The resolver a transport reads through. Once the execution has ended, every read through
     /// it answers `LookupError::ExecutionEnded`, as [`get`](Self::get) does.
     pub fn resolver(&self) -> Resolver<'_> {
-        self.shared.resolver()
+        self.shared.resolver().within(self.building.clone())
     }
 }
 

@@ -666,3 +666,37 @@ async fn a_type_token_is_resolved_from_the_container_in_the_scope_its_type_decla
     drop((handler, exec));
     close(app).await;
 }
+
+/// Bound per read and failing on the first: the parameter of [`FlakyGuarded`]'s guard closure.
+struct Flaky;
+
+typed_controller!(FlakyGuarded, Singleton, |m| {
+    let mut method = EnhancerSpec::<TP>::new();
+    method.guard_with(|_flaky: Dep<Flaky>| ready(G::new("flaky")));
+    m.handler::<TP, _>(HandlerSpec::new("h", ()).method(method));
+});
+
+/// The app's cache of the enhancer closures built once keeps no failure: a closure whose parameter
+/// read fails on the first call is built again on the next, where the read succeeds, rather than
+/// failing every call for as long as the app runs.
+#[tokio::test]
+async fn a_once_built_enhancer_closure_that_failed_is_built_again_on_the_next_call() {
+    let log = Log::new();
+    let reads = Count::new();
+    let (l, r) = (log.clone(), reads.clone());
+    let app = connected_on_tokio(Mod::<A>::new(move |m| {
+        bind_log(m, &l);
+        let r = r.clone();
+        m.try_transient(move || {
+            let n = r.bump();
+            async move { if n == 1 { Err(Boom::new("the first read fails")) } else { Ok(Flaky) } }
+        });
+        m.controller::<FlakyGuarded>();
+    }))
+    .await;
+    let handler = only::<TP>(&app);
+    assert!(within("the first call", call(&handler, &log, Body::Ok)).await.is_err(), "the closure's read failed");
+    let second = within("the second call", call(&handler, &log, Body::Ok)).await;
+    assert_eq!(second.ok().as_deref(), Some("handled"), "the closure was built again and admits");
+    assert_eq!(reads.get(), 2, "one read per build attempt");
+}

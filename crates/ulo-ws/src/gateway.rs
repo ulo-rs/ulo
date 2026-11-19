@@ -28,6 +28,7 @@ use crate::close::{CloseCode, CloseCodeError, by_kind, check_reason, truncated};
 use crate::codec::Codec;
 use crate::connection::Connection;
 use crate::envelope::Frame;
+use crate::module::ReadsHandoff;
 use crate::table::GatewayDefaults;
 use crate::session::SessionFactory;
 use crate::transport::{ConnectCx, ConnectReply, Ws, WsConnect};
@@ -584,16 +585,21 @@ async fn resolve<G: Send + Sync + 'static>(module: &ModuleRef) -> Result<Arc<G>,
 /// Mounts `G`'s connect handler, carrying `handler`, with `G`'s connect guards and the session
 /// factory's reads as the handler's dependencies, and declares the gateway a `Ws` controller served
 /// by the server its `port` names: the HTTP server for `Port::Http`, a standalone server of `Ws`
-/// for `Port::Own`, which `listen()` reads to refuse a gateway no bound server serves.
+/// for `Port::Own`, which `listen()` reads to refuse a gateway no bound server serves. A gateway on
+/// the HTTP server's port also declares a read of the binding `WsModule` makes beside its
+/// hand-off, which `wire()` reports naming the import when no module binds it.
 pub(crate) fn mount<G: GatewayConfig>(m: &mut Mount<'_>, handler: ConnectHandler) {
+    let mut dependencies = handler.session.dependencies();
     match handler.settings.port {
-        Port::Http => m.served_by::<Ws, ulo_http::Http>(),
+        Port::Http => {
+            m.served_by::<Ws, ulo_http::Http>();
+            dependencies.param::<ReadsHandoff>("upgrade");
+        }
         Port::Own => m.served_by::<Ws, Ws>(),
     }
     let mut guards = EnhancerSpec::<WsConnect>::new();
     G::connect_guards(&mut guards);
     let route = handler.settings.path.clone();
-    let dependencies = handler.session.dependencies();
     m.handler(
         ulo::HandlerSpec::<WsConnect, Arc<ConnectHandler>>::new("connect", Arc::new(handler))
             .controller(guards)
