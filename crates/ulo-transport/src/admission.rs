@@ -3,6 +3,7 @@
 //! once, never queued; each transport refuses in its protocol's own way, and the refusals are
 //! counted into a [`ShedLog`], a `warn` written at most once per [`SHED_LOG_INTERVAL`].
 
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -136,7 +137,9 @@ pub struct ShedLog {
 
 struct LogInner {
     transport: &'static str,
-    clock: Arc<dyn Timer>,
+    /// `dyn Timer` is not `RefUnwindSafe`, which would remove both auto traits from `Admission` and
+    /// `ConnectionAdmission`; reading a clock leaves nothing half-updated for an unwind to expose.
+    clock: AssertUnwindSafe<Arc<dyn Timer>>,
     window: Mutex<Window>,
 }
 
@@ -151,7 +154,7 @@ struct Window {
 impl ShedLog {
     /// A log naming `transport`, a transport's `Transport::KEY`, timed on `clock`.
     pub fn new(transport: &'static str, clock: Arc<dyn Timer>) -> ShedLog {
-        ShedLog { inner: Arc::new(LogInner { transport, clock, window: Mutex::new(Window::default()) }) }
+        ShedLog { inner: Arc::new(LogInner { transport, clock: AssertUnwindSafe(clock), window: Mutex::new(Window::default()) }) }
     }
 
     /// Counts one refused call, writing the line when the interval since the last one has passed.
@@ -193,6 +196,7 @@ fn write(transport: &'static str, shed: u64) {
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{RefUnwindSafe, UnwindSafe};
     use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
@@ -259,6 +263,15 @@ mod tests {
         let lines = Lines::default();
         tracing::subscriber::with_default(lines.clone(), run);
         lines.taken()
+    }
+
+    /// A published auto trait is part of the API: a shed log inside an admission must not remove it.
+    #[test]
+    fn admission_and_the_log_stay_unwind_safe() {
+        fn needs<T: UnwindSafe + RefUnwindSafe>() {}
+        needs::<Admission>();
+        needs::<super::ConnectionAdmission>();
+        needs::<ShedLog>();
     }
 
     fn log(clock: &ScriptedTimer) -> ShedLog {
