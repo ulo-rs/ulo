@@ -86,7 +86,7 @@ pub fn take(attrs: &mut Vec<Attribute>, mut take: impl FnMut(&Attribute) -> bool
         });
         match walked {
             Walked::Unchanged => attrs.push(attr),
-            Walked::Rewritten(rest) => attrs.push(rest),
+            Walked::Rewritten(rest) => attrs.push(*rest),
             Walked::Removed => {}
         }
     }
@@ -96,7 +96,7 @@ pub fn take(attrs: &mut Vec<Attribute>, mut take: impl FnMut(&Attribute) -> bool
 /// What [`walk`] leaves of an attribute.
 enum Walked {
     Unchanged,
-    Rewritten(Attribute),
+    Rewritten(Box<Attribute>),
     Removed,
 }
 
@@ -141,7 +141,7 @@ fn walk(attr: &Attribute, predicates: &[TokenStream], visit: &mut dyn FnMut(&Gat
         return Walked::Removed;
     }
     let tokens = quote!(#predicate, #(#kept),*);
-    Walked::Rewritten(Attribute { meta: Meta::List(MetaList { tokens, ..cfg_attr.clone() }), ..attr.clone() })
+    Walked::Rewritten(Box::new(Attribute { meta: Meta::List(MetaList { tokens, ..cfg_attr.clone() }), ..attr.clone() }))
 }
 
 /// The tokens inside an invisible group, as a `macro_rules!` `$attr:meta` leaves them; any other

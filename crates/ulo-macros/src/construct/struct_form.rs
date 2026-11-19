@@ -46,7 +46,7 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
         };
         match classify(kind, field, index) {
             Ok(FieldRole::Dependency(spec)) => {
-                dependency_specs.push(spec);
+                dependency_specs.push(*spec);
                 dependency_members.push(member);
             }
             Ok(FieldRole::Default) => default_members.push(member),
@@ -94,7 +94,7 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
 
 /// What one field contributes: a dependency, or a default.
 pub(crate) enum FieldRole {
-    Dependency(DependencySpec),
+    Dependency(Box<DependencySpec>),
     Default,
 }
 
@@ -134,7 +134,7 @@ pub(crate) fn classify(kind: Kind, field: &mut Field, index: usize) -> syn::Resu
         Some(ident) => DependencyLabel::Field(ident.clone()),
         None => DependencyLabel::Index(index),
     };
-    Ok(FieldRole::Dependency(DependencySpec { label, ty: field.ty.clone(), span: field.ty.span() }))
+    Ok(FieldRole::Dependency(Box::new(DependencySpec { label, ty: field.ty.clone(), span: field.ty.span() })))
 }
 
 fn marker_error(kind: Kind, marker: &syn::Attribute) -> syn::Error {
