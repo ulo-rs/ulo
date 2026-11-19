@@ -453,11 +453,13 @@ impl LiveSet {
             inner.executions.values().filter_map(Weak::upgrade).collect()
         };
         let live: Vec<Arc<ExecShared>> = upgraded.into_iter().filter(|exec| !exec.ended.load(Ordering::Acquire)).collect();
+        // Counted before the cancellation fires: the cancelled execution's own answer, written on
+        // another worker as soon as it wakes, commits it, and that answer is the drain's doing.
+        let abandoned: Vec<&Arc<ExecShared>> = live.iter().filter(|exec| !exec.committed.load(Ordering::Acquire)).collect();
+        let terminal = abandoned.iter().filter(|exec| exec.terminal).count();
         for exec in &live {
             exec.cancel_with(CancelReason::Drain);
         }
-        let abandoned: Vec<&Arc<ExecShared>> = live.iter().filter(|exec| !exec.committed.load(Ordering::Acquire)).collect();
-        let terminal = abandoned.iter().filter(|exec| exec.terminal).count();
         (abandoned.len(), terminal)
     }
 
