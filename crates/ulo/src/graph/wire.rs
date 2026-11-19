@@ -556,12 +556,12 @@ fn apply_overrides(registry: &mut Registry, names: &[ModuleName], overrides: Vec
         }
         let modules: Vec<usize> = match &ov.target {
             OverrideTarget::Unscoped | OverrideTarget::Everywhere => registry.post_order.clone(),
-            OverrideTarget::ModuleType { ty, name } => match one_instance(registry, names, *ty, None, *name, &ov, errors) {
+            OverrideTarget::ModuleType { ty, name } => match one_instance(registry, names, *ty, None, name, &ov, errors) {
                 Some(module) => vec![module],
                 None => continue,
             },
             OverrideTarget::ModuleKeyed { ty, name, qualifier } => {
-                match one_instance(registry, names, *ty, Some(*qualifier), *name, &ov, errors) {
+                match one_instance(registry, names, *ty, Some(*qualifier), name, &ov, errors) {
                     Some(module) => vec![module],
                     None => continue,
                 }

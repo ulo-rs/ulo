@@ -643,7 +643,7 @@ impl WiringError {
                 tree(f, format!("override of `{}` matches several bindings", show(key)), items)
             }
             WiringError::OverrideModuleAmbiguous { module, candidates, at } => {
-                let module = short_type_name(*module);
+                let module = short_type_name(module);
                 let mut items: Vec<String> = candidates.iter().map(|c| format!("instance {}", show_module(c))).collect();
                 items.push(format!("declared at {}", place(at)));
                 items.push(format!("help: name one with `.in_module_keyed::<{module}, Q>()` or `.in_module_of(&config)`"));

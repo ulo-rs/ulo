@@ -311,7 +311,7 @@ pub(crate) fn check_closures(graph: &Graph, declared: &Declared, errors: &mut Ve
         }
     }
     for (module, name, dependencies) in &declared.meta {
-        let closure = format!("metadata `{}` of {}", short_type_name(*name), graph.module_name(*module));
+        let closure = format!("metadata `{}` of {}", short_type_name(name), graph.module_name(*module));
         let site = Closure { module: *module, owner: None, name: &closure, at: None };
         site.check(graph, dependencies, errors);
     }

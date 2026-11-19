@@ -167,7 +167,7 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
         }
     }
     for (module, name, dependencies) in &declared.meta {
-        let owner = format!("metadata `{}` of {}", short_type_name(*name), graph.module_name(*module));
+        let owner = format!("metadata `{}` of {}", short_type_name(name), graph.module_name(*module));
         check_dependencies(graph, *module, dependencies, &owner, errors, &mut reported);
     }
     for handler in graph.handlers.iter().skip(declared.first_handler) {
@@ -394,7 +394,7 @@ pub(crate) fn near_spelling(graph: &Graph, module: ModuleId, missing: Key) -> Op
     let mut visible: Vec<(Key, ModuleId)> = graph.visibility[module.0 as usize]
         .entries
         .iter()
-        .filter(|(key, _)| near(*key))
+        .filter(|(key, _)| near(key))
         .filter_map(|(key, visible)| match visible {
             Visible::Binding(id) => Some((*key, graph.binding(*id).origin)),
             Visible::Ambiguous(list) => list.first().map(|&(source, _)| (*key, source)),
