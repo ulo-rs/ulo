@@ -341,6 +341,11 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for Nats {
     const NAME: &'static str = "nats";
 
+    /// Each comma-separated server, as `servers` reads the setting.
+    fn endpoint(&self) -> Option<String> {
+        Some(self.url.split(',').map(|server| ulo::secrets::setting_url(server.trim())).collect::<Vec<_>>().join(","))
+    }
+
     fn capabilities(&self) -> Capabilities {
         let max_payload = self.max_payload.load(Ordering::Relaxed);
         Capabilities::new(DeliveryMode::Competing)
@@ -1904,6 +1909,15 @@ mod tests {
     use ulo_rpc::{RpcClient, Server};
 
     use super::*;
+
+    /// The server's shed log names the link by it as answered.
+    #[test]
+    fn the_endpoint_is_each_server_without_its_credentials() {
+        let url = "nats://user:pw-one@a:4222?token=pw-two, tls://u:pw-three@b:4222#pw-four,nats://pw-five@c:4222";
+        let endpoint = Link::endpoint(&Nats::url(url)).expect("an endpoint");
+        assert_eq!(endpoint, "nats://a:4222,tls://b:4222,nats://c:4222");
+        assert!(!endpoint.contains("pw"), "a credential reached the endpoint: {endpoint}");
+    }
 
     /// A request lane stopped where it is about to hold a call, for a test to run `close` there.
     pub(super) mod gate {

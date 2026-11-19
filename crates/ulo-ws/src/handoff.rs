@@ -6,8 +6,16 @@
 //! the HTTP server's guest: an upgrade request arriving once the drain has begun, or over the
 //! server's `max_inflight`, is answered with the HTTP server's own 503 before the hand-off sees
 //! it, so the table's plain-text 503 for a handshake during the drain is a standalone server's.
+//!
+//! A connection refused over a gateway's `max_connections` here is counted into the shed log of
+//! the HTTP listener the upgrade arrived on, one per address an HTTP server sharing the hand-off
+//! bound, its `server` field that bound address: `UpgradeHandler::listening` hands them over,
+//! and a request's local address is matched to the listener on its port bound to it or to the
+//! unspecified address. A request whose host reports no local address, or matching no listener,
+//! an embedding's among them, is counted into one log named `http port`.
 
 use std::borrow::Cow;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use http::StatusCode;
@@ -20,6 +28,10 @@ use crate::gateway::{GatewayRuntime, Port, build_table, check_defaults};
 use crate::rooms::Hub;
 use crate::table::{GatewayDefaults, GatewayTable};
 use crate::transport::{Ws, WsConnect};
+
+/// The `server` a shed line names for a refusal on the HTTP server's port whose host reported no
+/// local address, or whose local address matches no listener an HTTP server bound.
+const HTTP_PORT: &str = "http port";
 
 /// The hand-off itself, carrying `WsModule`'s defaults for the gateways it serves: those whose
 /// settings name `Port::Http`, the default.
@@ -73,7 +85,7 @@ impl UpgradeHandler for Handoff {
             let Some(upgrade) = upgrade else {
                 return plain(StatusCode::BAD_REQUEST, "this request cannot be upgraded to a WebSocket");
             };
-            match table.handshake(head, conn.peer).await {
+            match table.handshake_on(head, conn.peer, conn.local).await {
                 Handshake::Switch(switch) => {
                     let response = switch.response().map(|()| HttpBody::empty());
                     switch.serve(upgrade);
@@ -101,6 +113,7 @@ impl UpgradeHandler for Handoff {
         }
         let gateways = build_table(&connects, &messages, Port::Http, &self.defaults, &mut failures);
         let table = GatewayTable::new(gateways, Arc::clone(&self.hub), app.clone(), runtime, &self.defaults);
+        table.shed_server(HTTP_PORT);
         self.slot().table = Some(table);
         failures.into_result()
     }
@@ -124,6 +137,13 @@ impl UpgradeHandler for Handoff {
             }
             started
         })
+    }
+
+    /// Each listener of an HTTP server sharing the hand-off, with the shed log its refusals go to.
+    fn listening(&self, addrs: &[SocketAddr]) {
+        if let Some(table) = self.table() {
+            table.listening(addrs);
+        }
     }
 
     fn drain(&self, token: DrainToken) -> BoxFuture<'_, ()> {

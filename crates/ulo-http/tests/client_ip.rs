@@ -1,8 +1,9 @@
-//! `HttpCx::client_ip` behind the server's `trusted_proxies`, on a backend and on an embedding
-//! (transports DESIGN §3.6, §3.8): nothing is trusted unset, the walk answers the first untrusted
-//! hop from the right behind a trusted peer, and a text that is not a CIDR range is refused at
-//! `listen()` naming it. The walk's cases are the unit table in `src/client_ip.rs`; these pin the
-//! setting reaching the handler's context on both servers.
+//! `HttpCx::client_ip` behind the server's `behind_proxy`, on a backend and on an embedding
+//! (transports DESIGN §3.6, §3.8): unset the peer is the client, set the walk over the named
+//! header alone answers its first untrusted hop from the right behind a trusted peer, and a text
+//! that is not a CIDR range is refused at `listen()` naming it. The walk's cases are the unit
+//! table in `src/client_ip.rs`; these pin the setting reaching the handler's context on both
+//! servers.
 
 mod common;
 
@@ -10,7 +11,7 @@ use std::net::SocketAddr;
 
 use ulo::{App, Module, ModuleDef, ModuleIdentity, StartupError, controller, handlers};
 use ulo_http::embed::{Embed, EmbedLimits, Embedded, Service};
-use ulo_http::{AppService, Cidr, ConnInfo, HttpBody, HttpCx, Request, Response};
+use ulo_http::{AppService, Cidr, ConnInfo, HttpBody, HttpCx, ProxyHeader, Request, Response};
 use ulo_runtime_tokio::Tokio;
 
 use common::{Keeper, written};
@@ -18,6 +19,7 @@ use common::{Keeper, written};
 const PROXY: &str = "10.0.0.1:443";
 const STRANGER: &str = "203.0.113.9:443";
 const SPOOFED: &str = "6.6.6.6, 198.51.100.7";
+const SPOOFED_FORWARDED: &str = "for=6.6.6.6, for=192.0.2.43";
 
 #[controller]
 struct Who;
@@ -56,11 +58,11 @@ impl Embed for Host {
     }
 }
 
-fn request(peer: Option<&str>, forwarded_for: Option<&str>) -> Request {
-    let mut builder = http::Request::get("/who");
-    if let Some(chain) = forwarded_for {
-        builder = builder.header("x-forwarded-for", chain);
-    }
+/// A request from `peer` carrying both forwarding headers, each a spoofed hop and then the hop a
+/// proxy writing that header would add: `X-Forwarded-For` ends in `198.51.100.7`, `Forwarded` in
+/// `192.0.2.43`.
+fn request(peer: Option<&str>) -> Request {
+    let builder = http::Request::get("/who").header("x-forwarded-for", SPOOFED).header("forwarded", SPOOFED_FORWARDED);
     let (head, ()) = builder.body(()).expect("the request builds").into_parts();
     let mut conn = ConnInfo::new(http::Version::HTTP_11);
     if let Some(peer) = peer {
@@ -112,40 +114,48 @@ async fn via_embedding(service: &Service<Host>, req: Request) -> String {
 }
 
 #[tokio::test]
-async fn unset_nothing_is_trusted_and_the_peer_is_the_client() {
+async fn unset_the_peer_is_the_client() {
     let keeper = Keeper::default();
     let (_app, svc) = served(ulo_http::Server::with_backend("127.0.0.1:0", keeper.clone()), &keeper).await;
-    assert_eq!(text(svc.call(request(Some(PROXY), Some(SPOOFED))).await).await, "10.0.0.1 via 10.0.0.1");
+    assert_eq!(text(svc.call(request(Some(PROXY))).await).await, "10.0.0.1 via 10.0.0.1");
 }
 
 #[tokio::test]
-async fn a_backend_server_walks_the_chain_behind_a_trusted_peer() {
+async fn a_backend_server_walks_the_named_header_behind_a_trusted_peer() {
     let keeper = Keeper::default();
-    let server = ulo_http::Server::with_backend("127.0.0.1:0", keeper.clone()).trusted_proxies(["10.0.0.0/8"]);
+    let server = ulo_http::Server::with_backend("127.0.0.1:0", keeper.clone()).behind_proxy(ProxyHeader::XForwardedFor, ["10.0.0.0/8"]);
     let (_app, svc) = served(server, &keeper).await;
-    assert_eq!(text(svc.call(request(Some(PROXY), Some(SPOOFED))).await).await, "198.51.100.7 via 10.0.0.1", "behind the trusted proxy");
-    assert_eq!(text(svc.call(request(Some(STRANGER), Some(SPOOFED))).await).await, "203.0.113.9 via 203.0.113.9", "an untrusted peer");
-    assert_eq!(text(svc.call(request(None, Some(SPOOFED))).await).await, "none via none", "no peer address");
+    assert_eq!(text(svc.call(request(Some(PROXY))).await).await, "198.51.100.7 via 10.0.0.1", "behind the trusted proxy");
+    assert_eq!(text(svc.call(request(Some(STRANGER))).await).await, "203.0.113.9 via 203.0.113.9", "an untrusted peer");
+    assert_eq!(text(svc.call(request(None)).await).await, "none via none", "no peer address");
+
+    let keeper = Keeper::default();
+    let server = ulo_http::Server::with_backend("127.0.0.1:0", keeper.clone()).behind_proxy(ProxyHeader::Forwarded, ["10.0.0.0/8"]);
+    let (_app, svc) = served(server, &keeper).await;
+    assert_eq!(text(svc.call(request(Some(PROXY))).await).await, "192.0.2.43 via 10.0.0.1", "behind a proxy writing `Forwarded`");
 }
 
 #[tokio::test]
 async fn a_range_given_as_a_cidr_value_is_trusted_as_its_text_is() {
     let keeper = Keeper::default();
     let range: Cidr = "10.0.0.0/8".parse().expect("a range");
-    let server = ulo_http::Server::with_backend("127.0.0.1:0", keeper.clone()).trusted_proxies([range]);
+    let server = ulo_http::Server::with_backend("127.0.0.1:0", keeper.clone()).behind_proxy(ProxyHeader::XForwardedFor, [range]);
     let (_app, svc) = served(server, &keeper).await;
-    assert_eq!(text(svc.call(request(Some(PROXY), Some(SPOOFED))).await).await, "198.51.100.7 via 10.0.0.1");
+    assert_eq!(text(svc.call(request(Some(PROXY))).await).await, "198.51.100.7 via 10.0.0.1");
 }
 
 #[tokio::test]
 async fn an_embedding_takes_the_same_setting() {
-    let (_app, service) = embedded(Embedded::<Host>::new().trusted_proxies(["10.0.0.0/8"])).await;
-    assert_eq!(via_embedding(&service, request(Some(PROXY), Some(SPOOFED))).await, "198.51.100.7 via 10.0.0.1");
-    assert_eq!(via_embedding(&service, request(Some(STRANGER), Some(SPOOFED))).await, "203.0.113.9 via 203.0.113.9");
-    assert_eq!(via_embedding(&service, request(None, Some(SPOOFED))).await, "none via none", "a host that supplies no peer");
+    let (_app, service) = embedded(Embedded::<Host>::new().behind_proxy(ProxyHeader::XForwardedFor, ["10.0.0.0/8"])).await;
+    assert_eq!(via_embedding(&service, request(Some(PROXY))).await, "198.51.100.7 via 10.0.0.1");
+    assert_eq!(via_embedding(&service, request(Some(STRANGER))).await, "203.0.113.9 via 203.0.113.9");
+    assert_eq!(via_embedding(&service, request(None)).await, "none via none", "a host that supplies no peer");
+
+    let (_forwarded, service) = embedded(Embedded::<Host>::new().behind_proxy(ProxyHeader::Forwarded, ["10.0.0.0/8"])).await;
+    assert_eq!(via_embedding(&service, request(Some(PROXY))).await, "192.0.2.43 via 10.0.0.1", "behind a proxy writing `Forwarded`");
 
     let (_unset, service) = embedded(Embedded::<Host>::new()).await;
-    assert_eq!(via_embedding(&service, request(Some(PROXY), Some(SPOOFED))).await, "10.0.0.1 via 10.0.0.1", "unset");
+    assert_eq!(via_embedding(&service, request(Some(PROXY))).await, "10.0.0.1 via 10.0.0.1", "unset");
 }
 
 /// The `Configure` entries of a `listen()` that failed, as text.
@@ -159,13 +169,28 @@ async fn refused(server: impl ulo::Server<Transport = ulo_http::Http>) -> Vec<St
 #[tokio::test]
 async fn a_text_that_is_no_range_is_refused_at_listen_naming_it() {
     let keeper = Keeper::default();
-    let backend = refused(ulo_http::Server::with_backend("127.0.0.1:0", keeper).trusted_proxies(["10.0.0.0/33", "fd00::/8", "proxy.local"])).await;
-    let embedding = refused(Embedded::<Host>::new().trusted_proxies(["10.0.0.0/33", "fd00::/8", "proxy.local"])).await;
+    let ranges = ["10.0.0.0/33", "fd00::/8", "proxy.local"];
+    let backend = refused(ulo_http::Server::with_backend("127.0.0.1:0", keeper).behind_proxy(ProxyHeader::Forwarded, ranges)).await;
+    let embedding = refused(Embedded::<Host>::new().behind_proxy(ProxyHeader::XForwardedFor, ranges)).await;
     for entries in [backend, embedding] {
         let text = entries.join("\n");
         assert_eq!(entries.len(), 1, "one entry for the HTTP server: {text}");
+        assert!(text.contains("`behind_proxy`"), "the entry names the setting: {text}");
         assert!(text.contains("`10.0.0.0/33` is not a CIDR range: the prefix length 33 is over 32"), "{text}");
         assert!(text.contains("`proxy.local` is not a CIDR range"), "{text}");
         assert!(!text.contains("fd00::/8"), "a valid range was refused: {text}");
+    }
+}
+
+#[tokio::test]
+async fn an_empty_range_list_is_refused_at_listen() {
+    let keeper = Keeper::default();
+    let none: [&str; 0] = [];
+    let backend = refused(ulo_http::Server::with_backend("127.0.0.1:0", keeper).behind_proxy(ProxyHeader::XForwardedFor, none)).await;
+    let embedding = refused(Embedded::<Host>::new().behind_proxy(ProxyHeader::Forwarded, none)).await;
+    for (entries, header) in [(backend, "X-Forwarded-For"), (embedding, "Forwarded")] {
+        let text = entries.join("\n");
+        assert_eq!(entries.len(), 1, "one entry for the HTTP server: {text}");
+        assert!(text.contains(&format!("`behind_proxy`: no range is given, so no peer is trusted to write `{header}`")), "{text}");
     }
 }

@@ -116,20 +116,25 @@ impl ConnectionAdmission {
 pub const SHED_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// The `warn` a server writes when it sheds load: refused calls are counted, and a line is
-/// written at most once per [`SHED_LOG_INTERVAL`], carrying in its `shed` field every refusal
-/// since the line before. An operator reads it in place of a shed counter, which waits for
-/// metrics.
+/// written at most once per [`SHED_LOG_INTERVAL`]. An operator reads it in place of a shed
+/// counter, which waits for metrics.
 ///
-/// The first refusal writes a line at once. A refusal within the interval of the last line is
-/// counted and writes nothing; the next refusal after the interval writes the line carrying it.
-/// Refusals still counted when the last clone of the log drops, with its server, are written
-/// then, so each refusal is reported on exactly one line. The line names the transport the log
-/// was built with, in `ulo.transport`.
+/// A line carries four fields: `ulo.transport`, the key the log was built with; `server`, what
+/// [`set_server`](Self::set_server) last named, empty before it; `shed`, every refusal since the
+/// previous line; and `since_secs`, how many seconds before the line the first of those refusals
+/// came. `shed` is a count over that span, never a rate: a line written after a quiet hour can
+/// carry a burst from the start of it, and `since_secs` says when that burst began.
+///
+/// The first refusal writes a line at once, its `since_secs` zero. A refusal within the interval
+/// of the last line is counted and writes nothing; the next refusal after the interval writes the
+/// line carrying it. Refusals still counted when the last clone of the log drops, with its server,
+/// are written then, so each refusal is reported on exactly one line.
 ///
 /// `Admission::logged` counts an admission's refusals into one; a transport that sheds without
 /// an `Admission`, a WebSocket server over `max_connections`, calls [`shed`](Self::shed) itself.
 /// Its clock is the `Timer` it is built with, the app's, so a test reading the interval advances
-/// a scripted clock rather than waiting.
+/// a scripted clock rather than waiting. A `Timer` has no wall clock, so the first refusal's time
+/// is given relative to the line, whose own timestamp the subscriber writes.
 #[derive(Clone)]
 pub struct ShedLog {
     inner: Arc<LogInner>,
@@ -137,6 +142,7 @@ pub struct ShedLog {
 
 struct LogInner {
     transport: &'static str,
+    server: Mutex<Arc<str>>,
     /// `dyn Timer` is not `RefUnwindSafe`, which would remove both auto traits from `Admission` and
     /// `ConnectionAdmission`; reading a clock leaves nothing half-updated for an unwind to expose.
     clock: AssertUnwindSafe<Arc<dyn Timer>>,
@@ -149,12 +155,29 @@ struct Window {
     written: Option<Instant>,
     /// Refusals counted since that line and not yet written.
     unwritten: u64,
+    /// When the first of `unwritten` was counted; `None` while there is none.
+    first: Option<Instant>,
 }
 
 impl ShedLog {
     /// A log naming `transport`, a transport's `Transport::KEY`, timed on `clock`.
     pub fn new(transport: &'static str, clock: Arc<dyn Timer>) -> ShedLog {
-        ShedLog { inner: Arc::new(LogInner { transport, clock: AssertUnwindSafe(clock), window: Mutex::new(Window::default()) }) }
+        ShedLog {
+            inner: Arc::new(LogInner {
+                transport,
+                server: Mutex::new(Arc::from("")),
+                clock: AssertUnwindSafe(clock),
+                window: Mutex::new(Window::default()),
+            }),
+        }
+    }
+
+    /// Names the server on every line written from here on, a later call replacing the name: the
+    /// addresses it bound, or what identifies it where it binds none. Every clone is the same
+    /// log, so a server keeps a clone of the one its admission counts into and names it once its
+    /// addresses are known, after `bind`.
+    pub fn set_server(&self, server: impl Into<String>) {
+        *self.inner.server.lock().unwrap_or_else(PoisonError::into_inner) = Arc::from(server.into());
     }
 
     /// Counts one refused call, writing the line when the interval since the last one has passed.
@@ -163,35 +186,45 @@ impl ShedLog {
         let due = {
             let mut window = self.inner.window.lock().unwrap_or_else(PoisonError::into_inner);
             window.unwritten += 1;
+            let first = *window.first.get_or_insert(now);
             let due = window.written.is_none_or(|written| now.saturating_duration_since(written) >= SHED_LOG_INTERVAL);
             if due {
                 window.written = Some(now);
-                Some(std::mem::take(&mut window.unwritten))
+                window.first = None;
+                Some((std::mem::take(&mut window.unwritten), now.saturating_duration_since(first)))
             } else {
                 None
             }
         };
-        if let Some(shed) = due {
-            write(self.inner.transport, shed);
+        if let Some((shed, since)) = due {
+            self.inner.write(shed, since);
         }
+    }
+}
+
+impl LogInner {
+    fn write(&self, shed: u64, since: Duration) {
+        let server = Arc::clone(&self.server.lock().unwrap_or_else(PoisonError::into_inner));
+        tracing::warn!(
+            ulo.transport = self.transport,
+            server = &*server,
+            shed,
+            since_secs = since.as_secs_f64(),
+            "calls refused over the in-flight limit: `shed` counts those since the previous such line, the first of them \
+             `since_secs` before this one; a count, not a rate, written at most once per 10 s"
+        );
     }
 }
 
 impl Drop for LogInner {
     fn drop(&mut self) {
+        let now = self.clock.now();
         let window = self.window.get_mut().unwrap_or_else(PoisonError::into_inner);
         if window.unwritten > 0 {
-            write(self.transport, window.unwritten);
+            let (shed, since) = (window.unwritten, window.first.map_or(Duration::ZERO, |first| now.saturating_duration_since(first)));
+            self.write(shed, since);
         }
     }
-}
-
-fn write(transport: &'static str, shed: u64) {
-    tracing::warn!(
-        ulo.transport = transport,
-        shed,
-        "calls refused over the in-flight limit; `shed` counts those since the previous such line, written at most once per 10 s"
-    );
 }
 
 #[cfg(test)]
@@ -207,32 +240,47 @@ mod tests {
 
     use super::{Admission, SHED_LOG_INTERVAL, ShedLog};
 
-    /// Every `warn` written, as its `ulo.transport` and `shed` fields.
+    /// Every `warn` written, its fields read.
     #[derive(Clone, Default)]
-    struct Lines(Arc<Mutex<Vec<(String, u64)>>>);
+    struct Lines(Arc<Mutex<Vec<Line>>>);
 
     impl Lines {
-        fn taken(&self) -> Vec<(String, u64)> {
+        fn taken_lines(&self) -> Vec<Line> {
             std::mem::take(&mut *self.0.lock().unwrap_or_else(PoisonError::into_inner))
+        }
+
+        /// Each line as its `ulo.transport` and `shed`.
+        fn taken(&self) -> Vec<(String, u64)> {
+            self.taken_lines().into_iter().map(|line| (line.transport, line.shed.unwrap_or_default())).collect()
         }
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Debug, Default, PartialEq)]
     struct Line {
         transport: String,
+        server: Option<String>,
         shed: Option<u64>,
+        since_secs: Option<f64>,
     }
 
     impl Visit for Line {
         fn record_str(&mut self, field: &Field, value: &str) {
-            if field.name() == "ulo.transport" {
-                self.transport = value.to_owned();
+            match field.name() {
+                "ulo.transport" => self.transport = value.to_owned(),
+                "server" => self.server = Some(value.to_owned()),
+                _ => {}
             }
         }
 
         fn record_u64(&mut self, field: &Field, value: u64) {
             if field.name() == "shed" {
                 self.shed = Some(value);
+            }
+        }
+
+        fn record_f64(&mut self, field: &Field, value: f64) {
+            if field.name() == "since_secs" {
+                self.since_secs = Some(value);
             }
         }
 
@@ -251,8 +299,8 @@ mod tests {
         fn event(&self, event: &Event<'_>) {
             let mut line = Line::default();
             event.record(&mut line);
-            if let Some(shed) = line.shed {
-                self.0.lock().unwrap_or_else(PoisonError::into_inner).push((line.transport, shed));
+            if line.shed.is_some() {
+                self.0.lock().unwrap_or_else(PoisonError::into_inner).push(line);
             }
         }
         fn enter(&self, _: &Id) {}
@@ -260,9 +308,18 @@ mod tests {
     }
 
     fn recorded(run: impl FnOnce()) -> Vec<(String, u64)> {
+        recorded_lines(run).into_iter().map(|line| (line.transport, line.shed.unwrap_or_default())).collect()
+    }
+
+    fn recorded_lines(run: impl FnOnce()) -> Vec<Line> {
         let lines = Lines::default();
         tracing::subscriber::with_default(lines.clone(), run);
-        lines.taken()
+        lines.taken_lines()
+    }
+
+    /// Each line as its `shed` and `since_secs`.
+    fn spans(lines: &[Line]) -> Vec<(u64, Option<f64>)> {
+        lines.iter().map(|line| (line.shed.unwrap_or_default(), line.since_secs)).collect()
     }
 
     /// A published auto trait is part of the API: a shed log inside an admission must not remove it.
@@ -345,6 +402,61 @@ mod tests {
             drop(ShedLog::new("rpc", Arc::new(clock.clone())));
         });
         assert_eq!(lines, vec![("http".to_owned(), 1)]);
+    }
+
+    #[test]
+    fn since_secs_runs_from_the_first_refusal_a_line_counts_to_the_line() {
+        let clock = ScriptedTimer::new();
+        let log = log(&clock);
+        let lines = recorded_lines(|| {
+            log.shed();
+            clock.advance(Duration::from_secs(3));
+            log.shed();
+            clock.advance(Duration::from_secs(4));
+            log.shed();
+            clock.advance(Duration::from_secs(3));
+            log.shed();
+            clock.advance(Duration::from_secs(25));
+            log.shed();
+        });
+        assert_eq!(
+            spans(&lines),
+            vec![(1, Some(0.0)), (3, Some(7.0)), (1, Some(0.0))],
+            "the line at 10 s counts the refusals at 3, 7 and 10 s, the first 7 s before it"
+        );
+    }
+
+    #[test]
+    fn the_residue_written_at_the_drop_carries_since_secs_up_to_the_drop() {
+        let clock = ScriptedTimer::new();
+        let log = log(&clock);
+        let lines = recorded_lines(|| {
+            log.shed();
+            clock.advance(Duration::from_secs(2));
+            log.shed();
+            clock.advance(Duration::from_secs(3));
+            log.shed();
+            clock.advance(Duration::from_secs(3_600));
+            drop(log);
+        });
+        assert_eq!(spans(&lines), vec![(1, Some(0.0)), (2, Some(3_603.0))], "the residue's first refusal came at 2 s, the drop an hour after 5 s");
+    }
+
+    #[test]
+    fn a_line_names_the_server_set_before_it_and_none_before_that() {
+        let clock = ScriptedTimer::new();
+        let log = log(&clock);
+        let lines = recorded_lines(|| {
+            log.shed();
+            log.clone().set_server("127.0.0.1:8080");
+            clock.advance(SHED_LOG_INTERVAL);
+            log.shed();
+            log.shed();
+            log.set_server("[::1]:8080");
+            drop(log);
+        });
+        let servers: Vec<Option<&str>> = lines.iter().map(|line| line.server.as_deref()).collect();
+        assert_eq!(servers, vec![Some(""), Some("127.0.0.1:8080"), Some("[::1]:8080")], "{lines:?}");
     }
 
     /// The law the counting keeps under any interleaving: the lines together carry every refusal

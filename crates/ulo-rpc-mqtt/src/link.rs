@@ -347,6 +347,10 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for Mqtt {
     const NAME: &'static str = "mqtt";
 
+    fn endpoint(&self) -> Option<String> {
+        Some(ulo::secrets::setting_url(&self.url))
+    }
+
     fn capabilities(&self) -> Capabilities {
         let max_packet = self.max_packet.load(Ordering::Relaxed);
         let capabilities = Capabilities::new(DeliveryMode::Competing)
@@ -1983,6 +1987,14 @@ mod tests {
     use ulo_transport::ErrorKind;
 
     use super::*;
+
+    /// The server's shed log names the link by it as answered.
+    #[test]
+    fn the_endpoint_is_the_url_without_its_credentials() {
+        for (url, expected) in [("mqtt://user:pw@broker:1883?client_id=x", "mqtt://broker:1883"), ("mqtts://u:p,w@[::1]:8883", "mqtts://[::1]:8883")] {
+            assert_eq!(Link::endpoint(&Mqtt::url(url)).as_deref(), Some(expected), "{url}");
+        }
+    }
 
     #[test]
     fn a_miss_is_signalled_at_every_qos_but_0() {

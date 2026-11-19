@@ -962,6 +962,10 @@ impl<L: Link> Link for SlowConnect<L> {
     fn bound(&self) -> Vec<BoundAddr> {
         self.link.bound()
     }
+
+    fn endpoint(&self) -> Option<String> {
+        self.link.endpoint()
+    }
 }
 
 /// The value of [`MARK`] on each opening frame a [`Tapped`] link delivered, in arrival order, with
@@ -1042,6 +1046,10 @@ impl<L: Link> Link for Tapped<L> {
     fn bound(&self) -> Vec<BoundAddr> {
         self.link.bound()
     }
+
+    fn endpoint(&self) -> Option<String> {
+        self.link.endpoint()
+    }
 }
 
 /// How many times a [`Counted`] link connected and sent a frame.
@@ -1108,6 +1116,10 @@ impl<L: Link> Link for Counted<L> {
     fn bound(&self) -> Vec<BoundAddr> {
         self.link.bound()
     }
+
+    fn endpoint(&self) -> Option<String> {
+        self.link.endpoint()
+    }
 }
 
 /// A client link that sends every frame but a `cancel`.
@@ -1161,6 +1173,10 @@ impl<L: Link> Link for MutedCancel<L> {
 
     fn bound(&self) -> Vec<BoundAddr> {
         self.0.bound()
+    }
+
+    fn endpoint(&self) -> Option<String> {
+        self.0.endpoint()
     }
 }
 
@@ -1227,6 +1243,10 @@ impl<L: Link> Link for Stamped<L> {
 
     fn bound(&self) -> Vec<BoundAddr> {
         self.link.bound()
+    }
+
+    fn endpoint(&self) -> Option<String> {
+        self.link.endpoint()
     }
 }
 

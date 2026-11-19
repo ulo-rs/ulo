@@ -1,6 +1,6 @@
-//! The client's address behind reverse proxies (transports DESIGN §3.6): `trusted_proxies`, the
-//! CIDR ranges a server trusts to report who connected to them, and the walk over RFC 7239
-//! `Forwarded` or `X-Forwarded-For` that [`HttpCx::client_ip`](crate::HttpCx::client_ip) runs.
+//! The client's address behind reverse proxies (transports DESIGN §3.6): `behind_proxy`, the
+//! forwarding header a server's proxies write and the CIDR ranges it trusts to write it, and the
+//! walk over that header that [`HttpCx::client_ip`](crate::HttpCx::client_ip) runs.
 
 use std::convert::Infallible;
 use std::fmt;
@@ -12,8 +12,68 @@ use http::header::{FORWARDED, HeaderMap, HeaderValue};
 /// The `X-Forwarded-For` header, which `http` names no constant for.
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
 
+/// The `X-Forwarded-Host` header, read with `X-Forwarded-For`.
+const X_FORWARDED_HOST: &str = "x-forwarded-host";
+
+/// The forwarding header a server's reverse proxies write, named with the ranges they connect
+/// from in [`Server::behind_proxy`](crate::Server::behind_proxy). `client_ip()` reads that
+/// header alone; a request carrying the other is read as carrying neither.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ProxyHeader {
+    /// RFC 7239 `Forwarded`, each hop the `for` parameter of one element, and the host a
+    /// WebSocket handshake addressed the `host` parameter of the rightmost one. nginx has no
+    /// variable that writes it; this configuration replaces whatever the client sent with the
+    /// address nginx saw and the `Host` the client sent, the two `map`s in the `http` block, the
+    /// first bracketing and quoting an IPv6 address as RFC 7239 §6 requires and writing a
+    /// unix-socket client as `unknown`:
+    ///
+    /// ```nginx
+    /// map $remote_addr $forwarded_for {
+    ///     ~^unix:  "for=unknown";
+    ///     ~:       "for=\"[$remote_addr]\"";
+    ///     default  "for=$remote_addr";
+    /// }
+    /// map $http_host $forwarded_host {
+    ///     "~^[A-Za-z0-9.:\[\]-]+$"  $http_host;
+    ///     default                  "";
+    /// }
+    /// proxy_set_header Forwarded "$forwarded_for;host=\"$forwarded_host\"";
+    /// ```
+    ///
+    /// The second `map` admits only the characters of a host and port. nginx accepts `"`, `,`
+    /// and `;` in a `Host`, so a `Host` written into the quoted string unchecked lets a client
+    /// close it and append an element whose `for` names any address, which `client_ip()` then
+    /// answers. Any other `Host` is written as `host=""`, which compares equal to no origin.
+    /// `$http_host` keeps the port the browser addressed; `$host` drops it, and an `Origin` on a
+    /// port other than its scheme's default then matches nothing.
+    Forwarded,
+    /// `X-Forwarded-For`, a comma-separated list of addresses, with `X-Forwarded-Host` the host a
+    /// WebSocket handshake addressed. nginx appends the address it saw to what the client sent
+    /// with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and the walk from the
+    /// right never reaches the client's part of the list; `proxy_set_header X-Forwarded-Host
+    /// $http_host;` replaces the host with the `Host` the client sent, its port kept.
+    XForwardedFor,
+}
+
+impl ProxyHeader {
+    fn name(self) -> &'static str {
+        match self {
+            ProxyHeader::Forwarded => FORWARDED.as_str(),
+            ProxyHeader::XForwardedFor => X_FORWARDED_FOR,
+        }
+    }
+}
+
+/// `behind_proxy` as a server holds it: the header and the ranges trusted to write it.
+#[derive(Clone, Debug)]
+pub(crate) struct BehindProxy {
+    pub(crate) header: ProxyHeader,
+    pub(crate) trusted: Vec<Cidr>,
+}
+
 /// A range of IP addresses in CIDR notation, `10.0.0.0/8` or `2001:db8::/32`, as a server's
-/// [`trusted_proxies`](crate::Server::trusted_proxies) lists them.
+/// [`behind_proxy`](crate::Server::behind_proxy) lists them.
 ///
 /// Parsed from text by `FromStr` or `TryFrom<&str>`: an address, `/`, and a prefix length of at
 /// most 32 for IPv4 and 128 for IPv6; an address alone is the range of that one address, `/32` or
@@ -159,37 +219,36 @@ impl fmt::Display for CidrError {
 
 impl std::error::Error for CidrError {}
 
-/// A `Cidr` passed where text could be: `trusted_proxies([cidr])` beside `trusted_proxies(["10.0.0.0/8"])`.
+/// A `Cidr` passed where text could be: `behind_proxy(header, [cidr])` beside
+/// `behind_proxy(header, ["10.0.0.0/8"])`.
 impl From<Infallible> for CidrError {
     fn from(never: Infallible) -> CidrError {
         match never {}
     }
 }
 
-/// The client's address for a request from `peer` carrying `headers`, `trusted` the server's
-/// `trusted_proxies`. `None` without a peer address, from which nothing can be trusted.
+/// The client's address for a request from `peer` carrying `headers`, `proxy` the server's
+/// `behind_proxy`. `None` without a peer address, from which nothing can be trusted.
 ///
-/// An untrusted peer is the client, and no header is read. Behind a trusted peer, the hops of
-/// `Forwarded` when the request carries one and of `X-Forwarded-For` otherwise, never both, every
-/// field line in order, are walked from the right: a trusted hop is passed, and the first
-/// untrusted one is the client. When every hop is trusted the leftmost is. A hop that names no
-/// address, `unknown`, an obfuscated `_node`, a `Forwarded` element without `for`, or text that
+/// Without `proxy`, or from a peer outside its ranges, the peer is the client and no header is
+/// read. Behind a trusted peer, the hops of the header `proxy` names, every field line in order,
+/// are walked from the right: a trusted hop is passed, and the first untrusted one is the client.
+/// When every hop is trusted the leftmost is, and with no hop at all the peer is. A hop that names
+/// no address, `unknown`, an obfuscated `_node`, a `Forwarded` element without `for`, or text that
 /// does not parse, ends the walk, and the client is the last hop passed, or the peer when none
 /// was: what such a hop hides cannot be trusted, and what lies left of it was written by whoever
-/// it hides. A `Forwarded` field that yields no address is not followed by a look at
-/// `X-Forwarded-For`. The header read is chosen by presence alone, so a client supplies whichever
-/// one the trusted proxies pass through untouched; `HttpCx::client_ip` documents that each of
-/// them removes or overwrites the one it does not write.
-pub(crate) fn client_ip(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: &[Cidr]) -> Option<IpAddr> {
+/// it hides. The other forwarding header is never read.
+pub(crate) fn client_ip(peer: Option<SocketAddr>, headers: &HeaderMap, proxy: Option<&BehindProxy>) -> Option<IpAddr> {
     let peer = peer?.ip().to_canonical();
+    let Some(BehindProxy { header, trusted }) = proxy else { return Some(peer) };
     let trusts = |ip: IpAddr| trusted.iter().any(|range| range.contains(ip));
     if !trusts(peer) {
         return Some(peer);
     }
-    let hops: Vec<Option<IpAddr>> = if headers.contains_key(FORWARDED) {
-        headers.get_all(FORWARDED).iter().flat_map(forwarded_line).collect()
-    } else {
-        headers.get_all(X_FORWARDED_FOR).iter().flat_map(xff_line).collect()
+    let lines = headers.get_all(header.name()).iter();
+    let hops: Vec<Option<IpAddr>> = match header {
+        ProxyHeader::Forwarded => lines.flat_map(forwarded_line).collect(),
+        ProxyHeader::XForwardedFor => lines.flat_map(xff_line).collect(),
     };
     let mut client = peer;
     for hop in hops.into_iter().rev() {
@@ -202,11 +261,66 @@ pub(crate) fn client_ip(peer: Option<SocketAddr>, headers: &HeaderMap, trusted: 
     Some(client)
 }
 
+/// The host the client addressed as the nearest proxy reports it, for a request from `peer`
+/// carrying `headers`, `proxy` the server's `behind_proxy`. `None` without `proxy`, from a peer
+/// outside its ranges, or when the nearest proxy reports no host: the request's own `Host`, which
+/// that proxy sent, is then the one to read.
+///
+/// The nearest proxy is the trusted peer, and what it reports is the rightmost value: under
+/// `XForwardedFor`, the last comma-separated element of `X-Forwarded-Host`'s last field line;
+/// under `Forwarded`, the `host` parameter of the header's rightmost element, a `host` in any
+/// element to its left never read, since the client or a proxy further out wrote it. A rightmost
+/// element whose quote is left open, holding two `host` parameters, or a `host` whose quoted
+/// string does not close, is answered `""`, a host that compares equal to no origin, rather than
+/// falling back to `Host`.
+pub(crate) fn forwarded_host(peer: Option<SocketAddr>, headers: &HeaderMap, proxy: Option<&BehindProxy>) -> Option<String> {
+    let BehindProxy { header, trusted } = proxy?;
+    let peer = peer?.ip().to_canonical();
+    if !trusted.iter().any(|range| range.contains(peer)) {
+        return None;
+    }
+    match header {
+        ProxyHeader::XForwardedFor => {
+            let line = headers.get_all(X_FORWARDED_HOST).iter().next_back()?;
+            let text = String::from_utf8_lossy(line.as_bytes());
+            text.split(',').map(trim_ows).rfind(|element| !element.is_empty()).map(str::to_owned)
+        }
+        ProxyHeader::Forwarded => {
+            let line = headers.get_all(FORWARDED).iter().next_back()?;
+            let text = String::from_utf8_lossy(line.as_bytes());
+            let element = forwarded_elements(&text).into_iter().map(trim_ows).rfind(|element| !element.is_empty())?;
+            forwarded_host_param(element)
+        }
+    }
+}
+
+/// The `host` parameter of one `Forwarded` element: `None` without one, `""` for one that cannot
+/// be read as a single value.
+fn forwarded_host_param(element: &str) -> Option<String> {
+    let (pairs, open) = split_quoted(element, ';');
+    if open {
+        return Some(String::new());
+    }
+    let mut host = None;
+    for pair in pairs.into_iter().map(trim_ows).filter(|pair| !pair.is_empty()) {
+        let Some((name, value)) = pair.split_once('=') else { continue };
+        if name.trim_matches([' ', '\t']).eq_ignore_ascii_case("host") {
+            if host.is_some() {
+                return Some(String::new());
+            }
+            host = Some(unquoted(value.trim_matches([' ', '\t'])).unwrap_or_default());
+        }
+    }
+    host
+}
+
 /// One `X-Forwarded-For` field line's hops, left to right: comma-separated addresses, each an
 /// IPv4 or IPv6 address, bracketed or not, with or without a port. Empty elements are skipped, as
-/// RFC 9110 §5.6.1 has a recipient do; a line that is not visible ASCII is one hop naming nothing.
+/// RFC 9110 §5.6.1 has a recipient do. An element carrying a byte outside visible ASCII names
+/// nothing, and the rest of its line is still read: a proxy appends to the line a client sent,
+/// so a byte the client wrote must not hide the address the proxy wrote after it.
 fn xff_line(line: &HeaderValue) -> Vec<Option<IpAddr>> {
-    let Ok(text) = line.to_str() else { return vec![None] };
+    let text = String::from_utf8_lossy(line.as_bytes());
     text.split(',').map(trim_ows).filter(|element| !element.is_empty()).map(xff_hop).collect()
 }
 
@@ -222,13 +336,22 @@ fn xff_hop(element: &str) -> Option<IpAddr> {
 
 /// One `Forwarded` field line's hops, left to right, one per element: its `for` node's address,
 /// or `None` for an element without exactly one `for`, a node naming no address, or text off the
-/// grammar of RFC 7239 §4. A quoted string's commas and semicolons do not split it, and one left
-/// open swallows the rest of the line as one element, which names nothing: a proxy that appends
-/// its element to the line a client sent would otherwise have it read as part of the client's
-/// quoted value, and the `for` the client wrote before the quote answered.
+/// grammar of RFC 7239 §4. A quoted string's commas and semicolons do not split it. A line whose
+/// quoted string is left open at its end is split at every comma, quotes or not, and the element
+/// holding the open quote names nothing: a proxy writes its own element whole and appends it at
+/// the right of the line a client sent, so only the client's part can leave a quote open, and
+/// reading the quote as open would make the proxy's element part of the client's value. An
+/// element carrying a byte outside visible ASCII names nothing, as in `X-Forwarded-For`, and the
+/// rest of its line is still read.
 fn forwarded_line(line: &HeaderValue) -> Vec<Option<IpAddr>> {
-    let Ok(text) = line.to_str() else { return vec![None] };
-    split_quoted(text, ',').0.into_iter().map(trim_ows).filter(|element| !element.is_empty()).map(forwarded_element).collect()
+    let text = String::from_utf8_lossy(line.as_bytes());
+    forwarded_elements(&text).into_iter().map(trim_ows).filter(|element| !element.is_empty()).map(forwarded_element).collect()
+}
+
+/// One `Forwarded` field line's elements, as [`forwarded_line`] splits them.
+fn forwarded_elements(text: &str) -> Vec<&str> {
+    let (elements, open) = split_quoted(text, ',');
+    if open { text.split(',').collect() } else { elements }
 }
 
 fn forwarded_element(element: &str) -> Option<IpAddr> {
@@ -330,7 +453,7 @@ mod tests {
     use http::HeaderMap;
     use http::header::HeaderValue;
 
-    use super::{Cidr, client_ip};
+    use super::{BehindProxy, Cidr, ProxyHeader, client_ip};
 
     const PROXY: &str = "10.0.0.1";
 
@@ -358,13 +481,24 @@ mod tests {
     /// What a row pins, the peer, the header lines, the answer.
     type Row = (&'static str, &'static str, &'static [(&'static str, &'static [u8])], &'static str);
 
+    fn behind(header: ProxyHeader) -> BehindProxy {
+        BehindProxy { header, trusted: trusted() }
+    }
+
+    /// Each row's answer behind proxies writing `header`.
+    fn walks(header: ProxyHeader, rows: &[Row]) {
+        for (what, from, lines, expected) in rows {
+            let answer = client_ip(peer(from), &headers(lines), Some(&behind(header)));
+            assert_eq!(answer, Some(ip(expected)), "{what}: {header:?}, peer {from}, headers {lines:?}");
+        }
+    }
+
     #[test]
-    fn the_walk_answers_the_first_untrusted_hop_from_the_right() {
-        let rows: &[Row] = &[
+    fn the_x_forwarded_for_walk_answers_the_first_untrusted_hop_from_the_right() {
+        walks(ProxyHeader::XForwardedFor, &[
             ("an untrusted peer is answered", "203.0.113.9", &[], "203.0.113.9"),
             ("a spoofed header from an untrusted peer is not read", "203.0.113.9", &[("x-forwarded-for", b"198.51.100.1")], "203.0.113.9"),
-            ("a spoofed Forwarded from an untrusted peer is not read", "203.0.113.9", &[("forwarded", b"for=198.51.100.1")], "203.0.113.9"),
-            ("a trusted peer with neither header is answered", PROXY, &[], PROXY),
+            ("a trusted peer with no header is answered", PROXY, &[], PROXY),
             ("one hop behind a trusted proxy", PROXY, &[("x-forwarded-for", b"198.51.100.7")], "198.51.100.7"),
             (
                 "a spoofed leftmost entry behind a trusted proxy is passed over",
@@ -395,11 +529,29 @@ mod tests {
                 "198.51.100.7",
             ),
             (
-                "a line that is not visible ASCII is a hop naming nothing",
+                "an element that is not visible ASCII is a hop naming nothing",
                 PROXY,
                 &[("x-forwarded-for", b"198.51.100.7, \xff"), ("x-forwarded-for", b"10.1.1.1")],
                 "10.1.1.1",
             ),
+            (
+                "a client's byte outside visible ASCII does not hide the address a proxy appended to its line",
+                PROXY,
+                &[("x-forwarded-for", b"\xff, 203.0.113.5")],
+                "203.0.113.5",
+            ),
+            ("an IPv4-mapped peer is matched and answered as IPv4", "::ffff:10.0.0.1", &[("x-forwarded-for", b"198.51.100.7")], "198.51.100.7"),
+            ("an untrusted IPv4-mapped peer is answered as IPv4", "::ffff:203.0.113.9", &[], "203.0.113.9"),
+            ("an IPv4-mapped hop is matched and answered as IPv4", PROXY, &[("x-forwarded-for", b"198.51.100.7, ::ffff:10.1.1.1")], "198.51.100.7"),
+        ]);
+    }
+
+    #[test]
+    fn the_forwarded_walk_answers_the_first_untrusted_hop_from_the_right() {
+        walks(ProxyHeader::Forwarded, &[
+            ("an untrusted peer is answered", "203.0.113.9", &[], "203.0.113.9"),
+            ("a spoofed Forwarded from an untrusted peer is not read", "203.0.113.9", &[("forwarded", b"for=198.51.100.1")], "203.0.113.9"),
+            ("a trusted peer with no header is answered", PROXY, &[], PROXY),
             ("the Forwarded example of RFC 7239 4", PROXY, &[("forwarded", b"for=192.0.2.43, for=198.51.100.17;by=203.0.113.60;proto=http;host=example.com")], "198.51.100.17"),
             ("a quoted IPv6 node with a port", PROXY, &[("forwarded", b"for=\"[2001:db8:cafe::17]:4711\"")], "2001:db8:cafe::17"),
             ("a quoted IPv4 node with a port", PROXY, &[("forwarded", b"for=\"192.0.2.43:47011\"")], "192.0.2.43"),
@@ -414,57 +566,130 @@ mod tests {
             ("a quoted comma does not split an element", PROXY, &[("forwarded", b"for=192.0.2.43;host=\"a,b\", for=10.1.1.1")], "192.0.2.43"),
             ("a quoted string left open names nothing", PROXY, &[("forwarded", b"for=\"198.51.100.1")], PROXY),
             (
-                "an unclosed quote swallows what follows on its line",
+                "a line with an unclosed quote is split at every comma",
                 PROXY,
                 &[("forwarded", b"for=\"198.51.100.1, for=192.0.2.43")],
-                PROXY,
-            ),
-            (
-                "a quote a client leaves open does not swallow what a proxy appends to its line",
-                PROXY,
-                &[("forwarded", b"for=6.6.6.6;host=\"x, for=203.0.113.5")],
-                PROXY,
-            ),
-            (
-                "a quote opened inside a token does not swallow what a proxy appends to its line",
-                PROXY,
-                &[("forwarded", b"for=6.6.6.6;x=a\"b, for=\"[2001:db8::5]\"")],
-                PROXY,
-            ),
-            ("Forwarded field lines are one list in order", PROXY, &[("forwarded", b"for=6.6.6.6"), ("forwarded", b"for=192.0.2.43")], "192.0.2.43"),
-            (
-                "with both headers Forwarded is read and X-Forwarded-For is not",
-                PROXY,
-                &[("x-forwarded-for", b"198.51.100.7"), ("forwarded", b"for=192.0.2.43")],
                 "192.0.2.43",
             ),
             (
-                "a Forwarded naming no address is not followed by X-Forwarded-For",
+                "a quote a client leaves open neither swallows what a proxy appends nor answers the client's for",
                 PROXY,
-                &[("forwarded", b"for=unknown"), ("x-forwarded-for", b"198.51.100.7")],
-                PROXY,
+                &[("forwarded", b"for=6.6.6.6;host=\"x, for=203.0.113.5")],
+                "203.0.113.5",
             ),
-            ("an empty Forwarded answers the peer", PROXY, &[("forwarded", b""), ("x-forwarded-for", b"198.51.100.7")], PROXY),
-            ("an IPv4-mapped peer is matched and answered as IPv4", "::ffff:10.0.0.1", &[("x-forwarded-for", b"198.51.100.7")], "198.51.100.7"),
-            ("an untrusted IPv4-mapped peer is answered as IPv4", "::ffff:203.0.113.9", &[], "203.0.113.9"),
-            ("an IPv4-mapped hop is matched and answered as IPv4", PROXY, &[("x-forwarded-for", b"198.51.100.7, ::ffff:10.1.1.1")], "198.51.100.7"),
+            (
+                "a quote opened inside a token neither swallows what a proxy appends nor answers the client's for",
+                PROXY,
+                &[("forwarded", b"for=6.6.6.6;x=a\"b, for=\"[2001:db8::5]\"")],
+                "2001:db8::5",
+            ),
+            (
+                "an escaped quote left open is split at every comma too",
+                PROXY,
+                &[("forwarded", b"for=\"6.6.6.6\\\", for=203.0.113.5")],
+                "203.0.113.5",
+            ),
+            (
+                "behind two appending proxies the walk passes the trusted one to the client",
+                PROXY,
+                &[("forwarded", b"for=\"6.6.6.6, for=203.0.113.5, for=10.1.1.1")],
+                "203.0.113.5",
+            ),
+            ("Forwarded field lines are one list in order", PROXY, &[("forwarded", b"for=6.6.6.6"), ("forwarded", b"for=192.0.2.43")], "192.0.2.43"),
+            ("an empty Forwarded answers the peer", PROXY, &[("forwarded", b"")], PROXY),
+            (
+                "a client's byte outside visible ASCII does not hide the element a proxy appended to its line",
+                PROXY,
+                &[("forwarded", b"for=\"\xff\", for=203.0.113.5")],
+                "203.0.113.5",
+            ),
+            ("an IPv4-mapped peer is matched and answered as IPv4", "::ffff:10.0.0.1", &[("forwarded", b"for=198.51.100.7")], "198.51.100.7"),
+            ("an IPv4-mapped hop is matched and answered as IPv4", PROXY, &[("forwarded", b"for=198.51.100.7, for=\"[::ffff:10.1.1.1]\"")], "198.51.100.7"),
             ("an IPv6 trusted range", "2001:db8:ffff::5", &[("forwarded", b"for=\"[2001:db8::9]\"")], "2001:db8::9"),
-        ];
-        for (what, from, lines, expected) in rows {
-            let answer = client_ip(peer(from), &headers(lines), &trusted());
-            assert_eq!(answer, Some(ip(expected)), "{what}: peer {from}, headers {lines:?}");
+        ]);
+    }
+
+    /// The header not named is never read, whether the named one is absent, names nothing, or
+    /// names an address, and whichever of the two the request carries first.
+    #[test]
+    fn only_the_named_header_is_read() {
+        walks(ProxyHeader::XForwardedFor, &[
+            ("a client's Forwarded behind a proxy appending X-Forwarded-For", PROXY, &[("forwarded", b"for=6.6.6.6"), ("x-forwarded-for", b"198.51.100.7")], "198.51.100.7"),
+            ("an empty Forwarded does not hide X-Forwarded-For", PROXY, &[("forwarded", b""), ("x-forwarded-for", b"198.51.100.7")], "198.51.100.7"),
+            ("a Forwarded alone answers the peer", PROXY, &[("forwarded", b"for=192.0.2.43")], PROXY),
+            ("a Forwarded beside trusted hops answers the last of them", PROXY, &[("x-forwarded-for", b"10.1.1.1"), ("forwarded", b"for=192.0.2.43")], "10.1.1.1"),
+        ]);
+        walks(ProxyHeader::Forwarded, &[
+            ("a client's X-Forwarded-For behind a proxy writing Forwarded", PROXY, &[("x-forwarded-for", b"6.6.6.6"), ("forwarded", b"for=192.0.2.43")], "192.0.2.43"),
+            ("a Forwarded naming no address is not followed by X-Forwarded-For", PROXY, &[("forwarded", b"for=unknown"), ("x-forwarded-for", b"198.51.100.7")], PROXY),
+            ("an X-Forwarded-For alone answers the peer", PROXY, &[("x-forwarded-for", b"198.51.100.7")], PROXY),
+            ("an X-Forwarded-For beside trusted hops answers the last of them", PROXY, &[("forwarded", b"for=10.1.1.1"), ("x-forwarded-for", b"198.51.100.7")], "10.1.1.1"),
+        ]);
+    }
+
+    #[test]
+    fn unset_the_peer_is_answered_whatever_the_headers_say() {
+        let lines = headers(&[("x-forwarded-for", b"198.51.100.7"), ("forwarded", b"for=192.0.2.43")]);
+        assert_eq!(client_ip(peer(PROXY), &lines, None), Some(ip(PROXY)), "unset");
+        for header in [ProxyHeader::Forwarded, ProxyHeader::XForwardedFor] {
+            let nothing_trusted = BehindProxy { header, trusted: Vec::new() };
+            assert_eq!(client_ip(peer(PROXY), &lines, Some(&nothing_trusted)), Some(ip(PROXY)), "{header:?} with no range");
         }
     }
 
     #[test]
-    fn with_nothing_trusted_the_peer_is_answered_whatever_the_headers_say() {
-        let lines = headers(&[("x-forwarded-for", b"198.51.100.7"), ("forwarded", b"for=192.0.2.43")]);
-        assert_eq!(client_ip(peer(PROXY), &lines, &[]), Some(ip(PROXY)));
+    fn without_a_peer_address_there_is_no_answer() {
+        let lines = headers(&[("x-forwarded-for", b"198.51.100.7")]);
+        assert_eq!(client_ip(None, &lines, Some(&behind(ProxyHeader::XForwardedFor))), None);
+        assert_eq!(client_ip(None, &lines, None), None);
     }
 
+    /// What a row pins for the forwarded host: the header named, the peer, the header lines, the
+    /// answer.
+    type HostRow = (&'static str, ProxyHeader, &'static str, &'static [(&'static str, &'static [u8])], Option<&'static str>);
+
     #[test]
-    fn without_a_peer_address_there_is_no_answer() {
-        assert_eq!(client_ip(None, &headers(&[("x-forwarded-for", b"198.51.100.7")]), &trusted()), None);
+    fn the_forwarded_host_is_the_nearest_proxy_s_report_from_a_trusted_peer_alone() {
+        use ProxyHeader::{Forwarded, XForwardedFor};
+        let rows: &[HostRow] = &[
+            ("one X-Forwarded-Host", XForwardedFor, PROXY, &[("x-forwarded-host", b"app.example")], Some("app.example")),
+            ("the nearest proxy's value is the last", XForwardedFor, PROXY, &[("x-forwarded-host", b"evil.example, app.example")], Some("app.example")),
+            ("the last field line", XForwardedFor, PROXY, &[("x-forwarded-host", b"evil.example"), ("x-forwarded-host", b"app.example:8443")], Some("app.example:8443")),
+            ("empty elements skipped", XForwardedFor, PROXY, &[("x-forwarded-host", b"app.example, ")], Some("app.example")),
+            ("none reported", XForwardedFor, PROXY, &[], None),
+            ("an untrusted peer is not believed", XForwardedFor, "203.0.113.9", &[("x-forwarded-host", b"evil.example")], None),
+            ("the other header's host is not read", XForwardedFor, PROXY, &[("forwarded", b"host=evil.example")], None),
+            ("the rightmost element's host", Forwarded, PROXY, &[("forwarded", b"for=6.6.6.6;host=evil.example, for=198.51.100.7;host=app.example")], Some("app.example")),
+            ("a quoted host with a port", Forwarded, PROXY, &[("forwarded", b"for=198.51.100.7;host=\"app.example:8443\";proto=https")], Some("app.example:8443")),
+            ("a host left of the rightmost element is not read", Forwarded, PROXY, &[("forwarded", b"for=6.6.6.6;host=evil.example, for=198.51.100.7")], None),
+            ("the last field line's rightmost element", Forwarded, PROXY, &[("forwarded", b"host=app.example"), ("forwarded", b"for=6.6.6.6")], None),
+            ("two hosts name none", Forwarded, PROXY, &[("forwarded", b"host=a.example;host=b.example")], Some("")),
+            ("an open quote in the rightmost element names none", Forwarded, PROXY, &[("forwarded", b"for=1.2.3.4;host=\"app.example")], Some("")),
+            ("a client's open quote does not take the proxy's element", Forwarded, PROXY, &[("forwarded", b"host=\"evil.example, for=198.51.100.7;host=app.example")], Some("app.example")),
+            ("an untrusted peer's Forwarded is not believed", Forwarded, "203.0.113.9", &[("forwarded", b"host=evil.example")], None),
+            ("X-Forwarded-Host is not read under Forwarded", Forwarded, PROXY, &[("x-forwarded-host", b"evil.example")], None),
+            (
+                "a client's byte outside visible ASCII does not hide the host a proxy appended to its X-Forwarded-Host",
+                XForwardedFor,
+                PROXY,
+                &[("x-forwarded-host", b"\xff, app.example")],
+                Some("app.example"),
+            ),
+            (
+                "a client's byte outside visible ASCII does not hide the element a proxy appended to its Forwarded",
+                Forwarded,
+                PROXY,
+                &[("forwarded", b"for=\"\xff\";host=evil.example, for=198.51.100.7;host=app.example")],
+                Some("app.example"),
+            ),
+        ];
+        for (what, header, from, lines, expected) in rows {
+            let answer = super::forwarded_host(peer(from), &headers(lines), Some(&behind(*header)));
+            assert_eq!(answer.as_deref(), *expected, "{what}: {header:?}, peer {from}, headers {lines:?}");
+        }
+        let lines = headers(&[("x-forwarded-host", b"evil.example"), ("forwarded", b"host=evil.example")]);
+        assert_eq!(super::forwarded_host(peer(PROXY), &lines, None), None, "unset");
+        assert_eq!(super::forwarded_host(None, &lines, Some(&behind(XForwardedFor))), None, "no peer");
     }
 
     #[test]
@@ -474,7 +699,7 @@ mod tests {
         spoofed.extend((0..50).map(|i| format!("10.0.1.{i}")));
         let line = spoofed.join(", ");
         assert!(line.len() > 200_000, "the header is {} bytes", line.len());
-        let answer = client_ip(peer(PROXY), &headers(&[("x-forwarded-for", line.as_bytes())]), &trusted());
+        let answer = client_ip(peer(PROXY), &headers(&[("x-forwarded-for", line.as_bytes())]), Some(&behind(ProxyHeader::XForwardedFor)));
         assert_eq!(answer, Some(ip("198.51.100.7")));
     }
 

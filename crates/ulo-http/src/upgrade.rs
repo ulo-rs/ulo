@@ -7,6 +7,7 @@
 //! combination naming the limit.
 
 use std::borrow::Cow;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use ulo::{AppHandle, BoxError, BoxFuture, DrainToken, Meta};
@@ -20,7 +21,8 @@ use crate::response::Response;
 /// An upgraded connection has left the backend, so the backend's drain and close never reach it;
 /// the handler holds those connections and carries the server's lifecycle for them (X21).
 /// `Server<B>` and `Embedded<A>` call [`prepare`](Self::prepare) inside their own `prepare`,
-/// [`bound`](Self::bound) once bound, and [`drain`](Self::drain) and [`close`](Self::close)
+/// [`bound`](Self::bound) once bound, `Server<B>` calling [`listening`](Self::listening)
+/// immediately before it, and [`drain`](Self::drain) and [`close`](Self::close)
 /// concurrently with the backend's or the host's, so a gateway on the HTTP server's port and one
 /// on its own port run the same steps at the same moments.
 pub trait UpgradeHandler: Send + Sync + 'static {
@@ -47,6 +49,16 @@ pub trait UpgradeHandler: Send + Sync + 'static {
     fn bound<'a>(&'a self, app: &'a AppHandle) -> BoxFuture<'a, Result<(), BoxError>> {
         let _ = app;
         Box::pin(async { Ok(()) })
+    }
+
+    /// The addresses the HTTP server's listeners bound, each as `App<Bound>::addresses()` reports
+    /// it, passed once that server has bound and before [`bound`](Self::bound): a request's
+    /// `conn.local` is the address it arrived on, which under a wildcard bind is not the
+    /// listener's, so a handler naming what it serves by listener matches the one with the same
+    /// port whose address is equal or unspecified. Every `Server<B>` sharing the handler calls it
+    /// with its own addresses; an embedding binds none and does not call it.
+    fn listening(&self, addrs: &[SocketAddr]) {
+        let _ = addrs;
     }
 
     /// The drain: idle connections closed with 1001 at once, busy ones stop reading, finish their
