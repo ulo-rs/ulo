@@ -135,6 +135,12 @@ impl Pages {
     fn current(&self) -> &'static str {
         "current"
     }
+
+    /// The table's one `POST`, which makes `POST` on another path a 405 rather than a 501.
+    #[ulo_http::post("/current")]
+    fn replace_current(&self) -> &'static str {
+        "replaced"
+    }
 }
 
 fn ordered(m: &mut ModuleDef<'_>) {
@@ -206,12 +212,15 @@ async fn an_exclude_removes_its_paths_from_the_entry_written_just_before_it_only
 }
 
 #[tokio::test]
-async fn an_unscoped_entry_sees_a_miss_and_a_405_and_skips_a_path_it_excludes() {
+async fn an_unscoped_entry_sees_a_miss_and_a_method_refusal_and_skips_a_path_it_excludes() {
     let app = start(unscoped_by_type).await;
 
     assert_eq!(stamped(&app, "/admin/users").await, (StatusCode::OK, true));
     assert_eq!(stamped(&app, "/nowhere").await, (StatusCode::NOT_FOUND, true), "a miss still passes the entry");
+    // No route answers `DELETE`: 501; `POST` is `/current`'s: 405.
     let refused = app.send(Call::new(http::Method::DELETE, "/admin/users")).await;
+    assert_eq!((refused.status, refused.header("x-stamp")), (StatusCode::NOT_IMPLEMENTED, Some("stamped")));
+    let refused = app.send(Call::new(http::Method::POST, "/admin/users")).await;
     assert_eq!((refused.status, refused.header("x-stamp")), (StatusCode::METHOD_NOT_ALLOWED, Some("stamped")));
     assert_eq!(stamped(&app, "/public").await, (StatusCode::OK, false), "the excluded path skips the entry");
     app.stop().await;
@@ -273,6 +282,7 @@ fn admin_behind_a_key(m: &mut ModuleDef<'_>) {
 
 const GET: &str = "GET";
 const DELETE: &str = "DELETE";
+const POST: &str = "POST";
 const OPTIONS: &str = "OPTIONS";
 /// A `GET` carrying `Upgrade: websocket`.
 const UPGRADE: &str = "UPGRADE";
@@ -301,6 +311,7 @@ async fn a_scoped_entry_answers_an_unrouted_path_under_its_scope_as_it_answers_a
         (GET, "/admin/users/7/deeper"),
         (GET, "/admin/healthz"),
         (DELETE, "/admin/users"),
+        (POST, "/admin/users"),
         (OPTIONS, "/admin/users"),
         (UPGRADE, "/admin/socket"),
     ] {
@@ -317,7 +328,8 @@ async fn a_scoped_entry_answers_an_unrouted_path_under_its_scope_as_it_answers_a
     for (method, path, status) in [
         (GET, "/admin/users", StatusCode::OK),
         (GET, "/admin/nowhere", StatusCode::NOT_FOUND),
-        (DELETE, "/admin/users", StatusCode::METHOD_NOT_ALLOWED),
+        (DELETE, "/admin/users", StatusCode::NOT_IMPLEMENTED),
+        (POST, "/admin/users", StatusCode::METHOD_NOT_ALLOWED),
         (OPTIONS, "/admin/users", StatusCode::NO_CONTENT),
         (UPGRADE, "/admin/socket", StatusCode::OK),
     ] {

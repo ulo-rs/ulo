@@ -1,7 +1,7 @@
 //! The upgrade handshake: the 101 and its `Sec-WebSocket-Accept`, the refusals RFC 6455 §4.2.1
-//! names and the drain's 503, the subprotocol the 101 echoes, and the connection phase refusing
-//! before the upgrade under `refuse = handshake`, with the status and headers HTTP answers the
-//! refusal's error with.
+//! names and the drain's 503, the default `Origin` check, the subprotocol the 101 echoes, and the
+//! connection phase refusing before the upgrade under `refuse = handshake`, with the status and
+//! headers HTTP answers the refusal's error with.
 //!
 //! A request that carries no `Upgrade` header at all is no upgrade request: on the HTTP server's
 //! port the HTTP application answers it, so no refusal scenario sends one. Each refusal here keeps
@@ -83,6 +83,24 @@ pub async fn switches<H: Host>() {
     let mut conn = app.conn(answer, "/echo");
     assert_eq!(conn.exchange(json!({ "event": "echo", "id": 1, "data": "switched" })).await, json!({ "id": 1, "data": "switched" }));
     conn.hang_up().await;
+    app.stop().await;
+}
+
+/// The `Origin` check under the default `origins`: an upgrade from a page on the origin the
+/// `Host` header names switches, and one from another site is refused 403 before the upgrade,
+/// so a host hands the gateway the `Host` and `Origin` the client sent.
+pub async fn origin<H: Host>() {
+    if H::why_not_upgrades().is_some() {
+        return;
+    }
+    let app = Served::<H>::start().await;
+    let own = format!("http://{}", app.host());
+    let answer = app.upgrade(&Request::upgrade("/echo").header("Origin", &own)).await;
+    assert_eq!(answer.status, 101, "a page on the server's own origin, {own}: {}", answer.body);
+    app.conn(answer, "/echo").hang_up().await;
+    let answer = app.upgrade(&Request::upgrade("/echo").header("Origin", "https://evil.example")).await;
+    refused("a page on another site", &answer, 403);
+    assert!(answer.body.contains("`origins([..])`"), "the refusal names the setting: {}", answer.body);
     app.stop().await;
 }
 

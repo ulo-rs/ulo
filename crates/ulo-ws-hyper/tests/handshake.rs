@@ -1,8 +1,8 @@
 //! What a gateway decides before its first message, past the WebSocket conformance suite's
 //! handshake scenarios (`tests/conformance.rs`): a gateway refusing a connection that agreed no
 //! subprotocol, a gateway listing none echoing none, a refusal before the upgrade taking no
-//! `max_connections` slot and one over the limit refused 503 with `Retry-After`, connect guards written by value and by closure, and the session
-//! `session = T` creates before those guards run.
+//! `max_connections` slot and one over the limit refused 503 with `Retry-After`, connect guards written by value and by closure, the session
+//! `session = T` creates before those guards run, and the `Origin` check on the server's own port.
 
 mod support;
 
@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::json;
 use ulo::{BoxError, Dep, Guard, Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_transport::ErrorKind;
-use ulo_ws::{CloseCode, ConnectCx, ConnectRefused, OnConnect, Session, UpgradeHead, WsConnect};
+use ulo_ws::{CloseCode, ConnectCx, ConnectRefused, OnConnect, Origins, Session, UpgradeHead, WsConnect};
 
 use support::{Running, close_frame, hang_up, next_json, send_json, upgrade};
 
@@ -195,6 +195,45 @@ async fn start() -> Running {
 async fn which(socket: &mut support::Socket) -> serde_json::Value {
     send_json(socket, &json!({ "event": "which", "id": 1 })).await;
     next_json(socket).await
+}
+
+/// Unset, a same-origin page and a client sending no `Origin` are admitted and a cross-origin page
+/// is refused 403 before the upgrade; `.origins([..])` admits the listed origin in its place.
+#[tokio::test]
+async fn the_standalone_server_admits_a_same_origin_page_by_default_and_the_listed_origins_when_set() {
+    let app = start().await;
+    let own = format!("http://{}", app.addr);
+    for (origin, status) in [(Some(own.as_str()), 101), (None, 101), (Some("https://evil.example"), 403), (Some("null"), 403)] {
+        let headers: Vec<(&str, &str)> = origin.map(|origin| ("Origin", origin)).into_iter().collect();
+        let answer = upgrade(app.addr, "/unversioned", &headers).await;
+        assert_eq!(answer.status, status, "Origin {origin:?}: {}", answer.body);
+        if status == 403 {
+            assert!(answer.body.starts_with("forbidden: ") && answer.body.contains("`origins([..])`"), "{}", answer.body);
+        }
+        if let Some(socket) = answer.socket {
+            hang_up(socket).await;
+        }
+    }
+    app.stop().await;
+
+    let listed = Running::start(Root, ulo_ws_hyper::Server::new("127.0.0.1:0").origins(["https://app.example"])).await;
+    let own = format!("http://{}", listed.addr);
+    for (origin, status) in [("https://app.example", 101), (own.as_str(), 403)] {
+        let answer = upgrade(listed.addr, "/unversioned", &[("Origin", origin)]).await;
+        assert_eq!(answer.status, status, "Origin {origin}: {}", answer.body);
+        if let Some(socket) = answer.socket {
+            hang_up(socket).await;
+        }
+    }
+    listed.stop().await;
+
+    let any = Running::start(Root, ulo_ws_hyper::Server::new("127.0.0.1:0").origins(Origins::Any)).await;
+    let answer = upgrade(any.addr, "/unversioned", &[("Origin", "https://evil.example")]).await;
+    assert_eq!(answer.status, 101, "{}", answer.body);
+    if let Some(socket) = answer.socket {
+        hang_up(socket).await;
+    }
+    any.stop().await;
 }
 
 #[tokio::test]

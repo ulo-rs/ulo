@@ -23,6 +23,12 @@ struct Search {
 }
 
 #[derive(Deserialize)]
+struct Tagged {
+    tag: Vec<String>,
+    page: Option<u32>,
+}
+
+#[derive(Deserialize)]
 struct Ids {
     id: u32,
 }
@@ -71,6 +77,16 @@ impl Inputs {
     #[ulo_http::get("/query")]
     fn query(&self, Query(search): Query<Search>) -> String {
         format!("{}|{}", search.page, search.q.as_deref().unwrap_or("-"))
+    }
+
+    #[ulo_http::get("/tags")]
+    fn tags(&self, Query(tagged): Query<Tagged>) -> String {
+        format!("{}|{}", tagged.tag.join(","), tagged.page.map_or("-".to_owned(), |page| page.to_string()))
+    }
+
+    #[ulo_http::post("/form-tags")]
+    fn form_tags(&self, Form(tagged): Form<Tagged>) -> String {
+        tagged.tag.join(",")
     }
 
     #[ulo_http::post("/json")]
@@ -289,6 +305,22 @@ async fn query_decodes_values_and_a_failure_names_the_field() {
     apps.succeeds(|| Call::get("/query?page=2&q=a%20b+c"), "2|a b c").await;
     apps.fails(|| Call::get("/query?q=x"), BAD, "Missing|page").await;
     apps.fails(|| Call::get("/query?page=many"), BAD, "Malformed|page").await;
+    apps.stop().await;
+}
+
+/// A query and a form read through one parser: a repeated key fills a `Vec` field in the order
+/// written, and a repeated key into a scalar field is the field's failure, 400 in a query and 422
+/// in a form, naming the field.
+#[tokio::test]
+async fn a_repeated_key_fills_a_vec_and_into_a_scalar_fails_naming_the_field() {
+    let apps = Apps::start().await;
+    let form = |body: &'static str| move || Call::new(Method::POST, "/form-tags").header("content-type", "application/x-www-form-urlencoded").body(body);
+
+    apps.succeeds(|| Call::get("/tags?tag=b&page=3&tag=a"), "b,a|3").await;
+    apps.succeeds(|| Call::get("/tags?tag=one"), "one|-").await;
+    apps.fails(|| Call::get("/tags?tag=a&page=1&page=2"), BAD, "Malformed|page").await;
+    apps.succeeds(form("tag=x&tag=y+z"), "x,y z").await;
+    apps.fails(form("tag=x&page=1&page=2"), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|page").await;
     apps.stop().await;
 }
 

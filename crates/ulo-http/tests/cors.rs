@@ -1,6 +1,7 @@
 //! `Cors` beyond the single conformance preflight: the allow-list echoes the matching origin,
-//! credentials ride with it, a preflight carries the configured lists and `Max-Age`, and every
-//! response, a miss included, is decorated and varies on `Origin`.
+//! credentials ride with it, a preflight carries the configured lists and `Max-Age` and advertises
+//! the matched route's methods, and every response, a miss included, is decorated and varies on
+//! `Origin`.
 
 mod o1_support;
 
@@ -32,6 +33,21 @@ impl Pages {
     fn varied(&self) -> WithHeaders<&'static str> {
         WithHeaders::new("varied").header("vary", "accept-encoding")
     }
+
+    #[ulo_http::get("/both")]
+    fn both_get(&self) -> &'static str {
+        "get"
+    }
+
+    #[ulo_http::post("/both")]
+    fn both_post(&self) -> &'static str {
+        "post"
+    }
+
+    #[ulo_http::post("/submit")]
+    fn submit(&self) -> &'static str {
+        "submitted"
+    }
 }
 
 fn list_config(m: &mut ModuleDef<'_>) {
@@ -60,6 +76,18 @@ fn any_origin_config(m: &mut ModuleDef<'_>) {
 fn any_origin_with_credentials(m: &mut ModuleDef<'_>) {
     m.controller::<Pages>();
     m.meta::<PreDispatch>().apply_value(Cors::new().allow_any_origin().allow_credentials(true));
+}
+
+/// An origin and no methods: a preflight advertises the matched route's.
+fn origin_only(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.meta::<PreDispatch>().apply_value(Cors::new().allow_origin(FIRST));
+}
+
+/// A method no route declares: a preflight to a route advertises nothing.
+fn put_only(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.meta::<PreDispatch>().apply_value(Cors::new().allow_origin(FIRST).allow_methods([Method::PUT]));
 }
 
 fn unconfigured(m: &mut ModuleDef<'_>) {
@@ -145,13 +173,14 @@ async fn any_origin_answers_a_star_and_with_credentials_listen_refuses_the_app()
 async fn a_preflight_carries_the_configured_lists_and_max_age_and_is_answered_before_routing() {
     let app = start(list_config).await;
 
-    // `/nowhere` has no route: the preflight is answered ahead of routing.
-    for path in ["/hit", "/nowhere"] {
+    // `/nowhere` has no route: the preflight is answered ahead of routing, with the configured
+    // methods, where `/hit`'s narrows them to the `GET` it declares.
+    for (path, methods) in [("/hit", "GET"), ("/nowhere", "GET, POST")] {
         let reply = app.send(preflight(path, SECOND).header("access-control-request-headers", "x-token")).await;
         assert_eq!(reply.status, StatusCode::NO_CONTENT, "{path}");
         assert!(reply.body.is_empty(), "{path}");
         assert_eq!(reply.header("access-control-allow-origin"), Some(SECOND), "{path}");
-        assert_eq!(reply.tokens("access-control-allow-methods"), ["GET", "POST"], "{path}");
+        assert_eq!(reply.header("access-control-allow-methods"), Some(methods), "{path}");
         assert_eq!(reply.tokens("access-control-allow-headers"), ["content-type", "x-token"], "{path}");
         assert_eq!(reply.header("access-control-max-age"), Some("600"), "{path}");
         assert_eq!(reply.header("access-control-expose-headers"), None, "{path}: expose lists belong to the actual response");
@@ -162,6 +191,41 @@ async fn a_preflight_carries_the_configured_lists_and_max_age_and_is_answered_be
         }
     }
     app.stop().await;
+}
+
+/// A path declaring `GET` and `POST` advertises exactly those, in declaration order, whatever
+/// method the preflight asks for; the configured list narrows the route's; and a path no route
+/// matches advertises the configured list, nothing when it is empty.
+#[tokio::test]
+async fn a_preflight_advertises_the_methods_the_matched_route_declares_narrowed_by_the_configured_list() {
+    let open = start(origin_only).await;
+    for (path, asked, methods) in [
+        ("/both", "POST", Some("GET, POST")),
+        ("/both", "DELETE", Some("GET, POST")),
+        ("/both/", "PUT", Some("GET, POST")),
+        ("/hit", "GET", Some("GET")),
+        ("/submit", "POST", Some("POST")),
+        ("/nowhere", "POST", None),
+    ] {
+        let reply = open.send(Call::new(Method::OPTIONS, path).header("origin", FIRST).header("access-control-request-method", asked)).await;
+        assert_eq!((reply.status, reply.header("access-control-allow-origin")), (StatusCode::NO_CONTENT, Some(FIRST)), "{path}");
+        assert_eq!(reply.header("access-control-allow-methods"), methods, "{path} asking {asked}");
+    }
+    open.stop().await;
+
+    let listed = start(list_config).await;
+    for (path, methods) in [("/both", "GET, POST"), ("/submit", "POST"), ("/hit", "GET")] {
+        let reply = listed.send(preflight(path, FIRST)).await;
+        assert_eq!(reply.header("access-control-allow-methods"), Some(methods), "{path} under `allow_methods([GET, POST])`");
+    }
+    listed.stop().await;
+
+    let put = start(put_only).await;
+    let route = put.send(preflight("/both", FIRST)).await;
+    assert_eq!(route.header("access-control-allow-methods"), None, "the route declares no `PUT`");
+    let nowhere = put.send(preflight("/nowhere", FIRST)).await;
+    assert_eq!(nowhere.header("access-control-allow-methods"), Some("PUT"), "no route: the configured list");
+    put.stop().await;
 }
 
 #[tokio::test]
@@ -204,7 +268,7 @@ async fn an_options_with_an_origin_and_no_requested_method_is_not_a_preflight() 
 }
 
 #[tokio::test]
-async fn an_actual_response_is_decorated_with_exposed_headers_and_so_are_a_miss_and_a_405() {
+async fn an_actual_response_is_decorated_with_exposed_headers_and_so_are_a_miss_a_405_and_a_501() {
     let app = start(list_config).await;
 
     let hit = app.send(Call::get("/hit").header("origin", FIRST)).await;
@@ -217,8 +281,12 @@ async fn an_actual_response_is_decorated_with_exposed_headers_and_so_are_a_miss_
     assert_eq!(miss.status, StatusCode::NOT_FOUND);
     assert_eq!(miss.header("access-control-allow-origin"), Some(FIRST));
 
-    let refused = app.send(Call::new(Method::DELETE, "/hit").header("origin", FIRST)).await;
+    let refused = app.send(Call::new(Method::POST, "/hit").header("origin", FIRST)).await;
     assert_eq!(refused.status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(refused.header("access-control-allow-origin"), Some(FIRST));
+
+    let unknown = app.send(Call::new(Method::DELETE, "/hit").header("origin", FIRST)).await;
+    assert_eq!(unknown.status, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(unknown.header("access-control-allow-origin"), Some(FIRST));
     app.stop().await;
 }

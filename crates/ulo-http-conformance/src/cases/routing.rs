@@ -26,14 +26,28 @@ pub async fn not_found<H: Host>(mode: Mode) {
     host.stop().await;
 }
 
-/// A matching path with the wrong method: 405 with `Allow`.
+/// A matching path with a method another route answers: `POST /hit`, `POST` being `/json`'s, is
+/// 405 with the path's own `Allow`.
 pub async fn method_not_allowed<H: Host>(mode: Mode) {
     let host = start::<H>(mode).await;
-    let reply = same_as_reference(&host, Exchange::new(Method::DELETE, "/hit")).await;
+    let reply = same_as_reference(&host, Exchange::new(Method::POST, "/hit")).await;
     assert_eq!(reply.status, 405);
-    assert!(reply.header("allow").is_some_and(|allow| allow.contains("GET")), "405 without `Allow: GET`");
+    assert_eq!(reply.header("allow"), Some("GET, HEAD, OPTIONS"), "405 with `/hit`'s `Allow`");
     if !is_reference::<H>() {
         assert_eq!(reply.routing(), Some("method-not-allowed"));
+    }
+    host.stop().await;
+}
+
+/// A matching path with a method no route answers: `DELETE /hit` is 501 as a problem document,
+/// `Routing::MethodNotImplemented`.
+pub async fn method_not_implemented<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    let reply = same_as_reference(&host, Exchange::new(Method::DELETE, "/hit")).await;
+    assert_eq!(reply.status, 501);
+    assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")));
+    if !is_reference::<H>() {
+        assert_eq!(reply.routing(), Some("method-not-implemented"));
     }
     host.stop().await;
 }

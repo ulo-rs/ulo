@@ -4,10 +4,12 @@
 //! raw or as `%5C`, one naming its handler, since a request path holding one never reaches
 //! routing.
 //!
-//! A path that matches nothing answers 404. A matching path with the wrong method answers 405
-//! with `Allow`, which RFC 9110 requires. `HEAD` is answered from the `GET` handler with the body
-//! omitted unless a `HEAD` handler exists. `OPTIONS` without a handler answers 204 with `Allow`;
-//! a CORS preflight never reaches routing.
+//! A path that matches nothing answers 404, whatever the method. On a matching path, a method no
+//! route of the table answers is 501 (RFC 9110 §9.1, §15.6.2), and a method some other route
+//! answers is 405 with `Allow`, which RFC 9110 requires; `GET` and `HEAD`, which every
+//! general-purpose server supports (§9.1), are 405 there too. `HEAD` is answered from the `GET`
+//! handler with the body omitted unless a `HEAD` handler exists. `OPTIONS` without a handler
+//! answers 204 with `Allow`; a CORS preflight never reaches routing.
 
 pub(crate) mod pattern;
 
@@ -29,6 +31,9 @@ use crate::transport::Http;
 /// Every route, by pattern, each with its methods.
 pub(crate) struct Router {
     pub(crate) routes: Vec<RouteEntry>,
+    /// Every method some route answers, `GET`, `HEAD` and `OPTIONS` always among them: a method
+    /// outside it is 501 on a matching path.
+    served: Vec<Method>,
 }
 
 /// One pattern and the handlers answering it, by method.
@@ -67,8 +72,11 @@ pub(crate) enum Routed<'r> {
         head_from_get: bool,
     },
     NotFound,
-    /// A path that matches with no handler for the method: 405 with this `Allow`.
+    /// A path that matches with no handler for the method, which another route answers: 405 with
+    /// this `Allow`.
     MethodNotAllowed { allow: HeaderValue },
+    /// A path that matches, with a method no route answers: 501.
+    NotImplemented,
     /// `OPTIONS` on a matching path with no `OPTIONS` handler: 204 with this `Allow`, `route` the
     /// pattern as the host sees it.
     Options { allow: HeaderValue, route: Arc<str> },
@@ -196,13 +204,21 @@ impl Router {
             })
             .collect();
         routes.sort_by_cached_key(|entry| entry.pattern.precedence());
-        Ok(Router { routes })
+        let mut served = vec![Method::GET, Method::HEAD, Method::OPTIONS];
+        for (method, _) in routes.iter().flat_map(|entry| &entry.methods) {
+            if !served.contains(method) {
+                served.push(method.clone());
+            }
+        }
+        Ok(Router { routes, served })
     }
 
     /// The most specific pattern matching `path` decides: its handler for `method`, then a `GET`
-    /// handler for a `HEAD`, then 204 with `Allow` for an `OPTIONS`, then 405 with `Allow`. A
-    /// less specific pattern holding a handler for the method is not consulted, since the path
-    /// names the resource and the method is checked against that resource.
+    /// handler for a `HEAD`, then 204 with `Allow` for an `OPTIONS`, then 501 for a method no
+    /// route answers, then 405 with `Allow`. A less specific pattern holding a handler for the
+    /// method is not consulted, since the path names the resource and the method is checked
+    /// against that resource. A path no pattern matches is `NotFound` before the method is read,
+    /// so an embedding forwarding its misses hands the host every request off the app's paths.
     pub(crate) fn route(&self, method: &Method, path: &str) -> Routed<'_> {
         let path = pattern::normalize(path);
         let pieces = pattern::split(path);
@@ -221,9 +237,21 @@ impl Router {
             if *method == Method::OPTIONS {
                 return Routed::Options { allow: entry.allow.clone(), route: Arc::clone(&entry.route) };
             }
+            if !self.served.contains(method) {
+                return Routed::NotImplemented;
+            }
             return Routed::MethodNotAllowed { allow: entry.allow.clone() };
         }
         Routed::NotFound
+    }
+
+    /// The methods the route matching `path` declares, in declaration order, as `route` would
+    /// choose it; `None` when no route matches. `HEAD` and `OPTIONS` appear only when declared.
+    pub(crate) fn declared_methods(&self, path: &str) -> Option<impl Iterator<Item = &Method>> {
+        let path = pattern::normalize(path);
+        let pieces = pattern::split(path);
+        let entry = self.routes.iter().find(|entry| entry.pattern.match_split(path, &pieces).is_some())?;
+        Some(entry.methods.iter().map(|(method, _)| method))
     }
 }
 
