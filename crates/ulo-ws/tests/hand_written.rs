@@ -26,7 +26,7 @@ use support::{Running, close_frame, hang_up, next_json, send_json, upgrade};
 /// The upgrade header a connection is refused for.
 const REFUSE: &str = "x-refuse";
 
-#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn refusal(cx: &ConnectCx) -> Result<(), ConnectRefused> {
     match cx.head().headers().get(REFUSE) {
         Some(_) => Err(ConnectRefused::kind(ErrorKind::Forbidden, "not today")),

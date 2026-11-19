@@ -58,7 +58,7 @@ impl FromCall<Rpc> for Bytes {
 
 /// A call's one `d`. A streamed request never reaches a handler reading it: the server answers
 /// `open` on such a pattern `bad_request` before dispatch.
-#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn take_data(cx: &RpcCx) -> Result<Data, ExtractError> {
     match cx.take_body() {
         Some(Body::Data(data)) => Ok(data),
@@ -66,7 +66,7 @@ fn take_data(cx: &RpcCx) -> Result<Data, ExtractError> {
     }
 }
 
-#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn decode<T: DeserializeOwned>(cx: &RpcCx, data: &Data) -> Result<T, ExtractError> {
     cx.codec().decode(data).map_err(|err| ExtractError::Malformed { param: PAYLOAD, source: cx.app().redact(err) })
 }

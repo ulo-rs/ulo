@@ -311,7 +311,7 @@ impl AppBuilder {
 
     /// Builds the graph and validates everything, collecting every error in one pass. No
     /// instances, no I/O.
-    #[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub fn wire(self) -> Result<App<Wired>, StartupError> {
         let env = wire::WireEnv {
             timer: self.config.timer.clone(),
@@ -338,7 +338,7 @@ impl App<Wired> {
     /// bound, for `AppHandle::trace_source()` to answer (I15). A source that cannot be read, one
     /// two exports answer or one bound per execution, fails the connect as
     /// `ConnectError::Construct` naming it.
-    #[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub async fn connect(self) -> Result<App<Connected>, StartupError> {
         let shared = self.shared;
         shared.phase.advance(Stage::Connecting);
@@ -400,7 +400,7 @@ impl App<Connected> {
     ///
     /// Refuses an app that binds a transport with no `Runtime` before either step, one given
     /// `.timer(..)` alone included: `StartupError::Bind` carrying `RuntimeMissing` in its `source`.
-    #[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub async fn listen(mut self) -> Result<App<Bound>, StartupError> {
         let mut queued = std::mem::take(&mut self.servers);
         if self.shared.config.runtime.is_none()

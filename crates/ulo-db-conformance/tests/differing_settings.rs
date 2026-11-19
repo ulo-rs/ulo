@@ -125,7 +125,7 @@ fn store() -> StoreModule<Fake> {
 
 /// `wire()` on an app with the harness's runtime, which a store's readiness bounds need. The
 /// runtime value is taken inside the harness's executor.
-#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn wire(root: impl Module + 'static) -> Result<App<ulo::Wired>, ulo::StartupError> {
     <OnTokio as Harness>::block_on(async move { App::builder(root).runtime(<OnTokio as Harness>::runtime()).wire() })
 }

@@ -142,7 +142,7 @@ impl Module for Empty {
     }
 }
 
-#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn listens_with_h2c(backend: Built) -> Result<(), StartupError> {
     let app = App::builder(Empty).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
     app.bind(ulo_http::Server::with_backend("127.0.0.1:0", backend).h2c(true)).listen().await.map(drop)
