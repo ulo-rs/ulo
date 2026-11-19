@@ -224,7 +224,7 @@ jobs:
       - uses: actions/checkout@v4
       # Pinned on purpose, one of the pins in this file that are not read from a
       # manifest; `generated code lints`, `workspace lints`, `editor resolution`, `template matrix`,
-      # `public reach`, `release check` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
+      # `public reach`, `release check`, `compiler probes` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
       # attributes' own text, and rustc rewords its half roughly once every three
       # minor versions: on `stable` that arrives as a red build on a pull request
       # that changed nothing related. ulo-codegen-tests' build script sets
@@ -238,6 +238,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.1
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p ulo-codegen-tests --test compile_fail --locked
+
+  probes:
+    name: compiler probes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The workspace's floor, pinned rather than read from a manifest: the probes watch what the
+      # oldest supported compiler does, and a floor that moved should be a change made here, in
+      # step with `rust-version` in the workspace manifest. `macro diagnostics` holds the 1.98.1
+      # snapshots; rustc's wording differs between releases, so the floor is held to what each probe
+      # promises instead (it compiles, or it fails printing no error code its header does not name).
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      # The script's own verdicts first, against planted probes: one that must compile and does not,
+      # one that must fail and compiles, one that prints a code its header does not name.
+      - run: python3 scripts/probes.py --self-test
+      - run: python3 scripts/probes.py
 
   generated-lints:
     name: generated code lints
@@ -573,8 +590,10 @@ jobs:
         with:
           # A pull request's diff against its base needs the base's history.
           fetch-depth: 0
-      # Every push runs the matrix. A pull request runs it when it touches the CLI, whose templates
-      # are the thing under test, or the scripts that run them.
+      # Every push runs the matrix. A pull request runs it when it touches a crate, the workspace
+      # manifest or lockfile, the scripts that run the matrix, or this file: the templates name the
+      # framework's own types, and a rename in any crate fails a generated project. A change to
+      # documentation or examples alone skips it.
       - id: gate
         env:
           BASE: ${{ github.base_ref }}
@@ -582,7 +601,7 @@ jobs:
           run=true
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             run=false
-            if git diff --name-only "origin/$BASE...HEAD" | grep -Eq '^(crates/ulo-cli/|scripts/)'; then
+            if git diff --name-only "origin/$BASE...HEAD" | grep -Eq '^(crates/|scripts/|Cargo\.(toml|lock)$|\.github/workflows/ci\.yml$)'; then
               run=true
             fi
           fi

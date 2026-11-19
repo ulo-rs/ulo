@@ -1,16 +1,10 @@
-use ulo::{Module, ModuleDef, ModuleIdentity};
+use ulo::module;
 
-/// Groups what belongs together: bind its providers and controllers in `register`, and export what
-/// other modules may use. Another module imports it with `m.import(@@pascal@@Module)`.
+/// Groups what belongs together. List its parts in the attribute,
+/// `#[module(imports = [..], providers = [..], controllers = [..], exports = [..])]`; another
+/// module imports it by naming `@@pascal@@Module` in its own `imports`, or `m.import(@@pascal@@Module)`.
+#[module]
 pub struct @@pascal@@Module;
-
-impl Module for @@pascal@@Module {
-    fn identity(&self) -> ModuleIdentity {
-        ModuleIdentity::of_type::<Self>()
-    }
-
-    fn register(&self, _m: &mut ModuleDef<'_>) {}
-}
 
 #[cfg(test)]
 mod tests {

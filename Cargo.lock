@@ -9518,6 +9518,7 @@ dependencies = [
 name = "ulo-net"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "command-fds",
  "libc",
  "rustls",
  "rustls-pki-types",

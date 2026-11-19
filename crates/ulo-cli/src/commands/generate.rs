@@ -85,26 +85,64 @@ pub async fn execute(args: GenerateArgs) -> Result<()> {
         ],
     )?;
 
-    let source = PathBuf::from("src");
-    if !fs::try_exists(&source).await.unwrap_or(false) {
-        bail!("There is no `src` directory here; run `ulo generate` from the project's root");
-    }
-    let path = source.join(format!("{}.rs", generated.file_stem));
+    let here = std::env::current_dir().context("Failed to read the current directory")?;
+    let Some(root) = project_root(&here) else {
+        bail!("No project found: neither this directory nor any above it holds a `Cargo.toml` beside a `src` directory");
+    };
+    let path = root.join("src").join(format!("{}.rs", generated.file_stem));
     write_new(&path, &content).await?;
+    // A manifest that cannot be read leaves every line printed, as if the project had none.
+    let manifest = fs::read_to_string(root.join("Cargo.toml")).await.unwrap_or_default();
+    let requires: Vec<&String> = generated.requires.iter().filter(|line| !declares(&manifest, line)).collect();
 
-    println!("{}", format!("Created {}", path.display()).green());
+    let shown = path.strip_prefix(&here).unwrap_or(&path);
+    println!("{}", format!("Created {}", shown.display()).green());
     println!("\nDeclare it where the project's modules are, usually src/main.rs:\n    mod {};", generated.file_stem);
     println!("\nRegister it in the module that serves it:");
     for line in &generated.registration {
         println!("    {line}");
     }
-    if !generated.requires.is_empty() {
+    if !requires.is_empty() {
         println!("\nIt needs these in Cargo.toml:");
-        for line in &generated.requires {
+        for line in requires {
             println!("    {line}");
         }
     }
     Ok(())
+}
+
+/// The nearest directory from `start` upward holding a `Cargo.toml` beside a `src` directory, which
+/// is where `generate` writes however deep in the project it is run. A workspace's own root has no
+/// `src`, so the search passes it and finds nothing rather than writing beside the members.
+fn project_root(start: &Path) -> Option<PathBuf> {
+    start.ancestors().find(|dir| dir.join("Cargo.toml").is_file() && dir.join("src").is_dir()).map(Path::to_path_buf)
+}
+
+/// Whether `manifest` already declares the crate a `Cargo.toml` line names, in any of the spellings
+/// that declare one: `name = ..` or `name.workspace = true` under a dependencies table, or a
+/// `[dependencies.name]` table of its own. A `[patch]` entry and a workspace's shared
+/// `[workspace.dependencies]` do not make the member depend on it.
+fn declares(manifest: &str, line: &str) -> bool {
+    let Some(name) = line.split(|c: char| c.is_whitespace() || c == '=').next().filter(|name| !name.is_empty()) else {
+        return false;
+    };
+    let mut in_dependencies = false;
+    for text in manifest.lines().map(str::trim) {
+        if let Some(header) = text.strip_prefix('[') {
+            let table = header.trim_start_matches('[').trim_end_matches(']').trim();
+            let own = !table.starts_with("workspace.");
+            if own && table.ends_with(&format!("dependencies.{name}")) {
+                return true;
+            }
+            in_dependencies = own && table.ends_with("dependencies");
+        } else if in_dependencies {
+            let key = text.strip_prefix(name).and_then(|rest| rest.chars().next());
+            if matches!(key, Some(c) if c.is_whitespace() || c == '=' || c == '.') {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// The file's stem, template, requirements and registration for `kind`.
@@ -247,4 +285,139 @@ fn pascal_case(name: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::{ControllerTransport, Kind, declares, generated, names, project_root, snake_case, write_new};
+    use crate::commands::render;
+
+    /// A fresh directory under the system's, removed by the test that made it.
+    fn scratch(test: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ulo-generate-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a directory");
+        dir.canonicalize().expect("its real path")
+    }
+
+    fn project(dir: &Path) {
+        std::fs::create_dir_all(dir.join("src/nested")).expect("src");
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"app\"\n").expect("a manifest");
+    }
+
+    #[test]
+    fn the_root_is_found_from_a_directory_below_it() {
+        let dir = scratch("root-below");
+        project(&dir);
+        assert_eq!(project_root(&dir.join("src/nested")), Some(dir.clone()));
+        assert_eq!(project_root(&dir), Some(dir.clone()));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_workspace_root_without_src_is_passed_over() {
+        let dir = scratch("root-workspace");
+        std::fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = [\"app\"]\n").expect("a manifest");
+        project(&dir.join("app"));
+        assert_eq!(project_root(&dir.join("app/src")), Some(dir.join("app")));
+        assert_eq!(project_root(&dir), None, "the workspace's own root is no project");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn no_manifest_means_no_project() {
+        let dir = scratch("root-none");
+        std::fs::create_dir_all(dir.join("src")).expect("src");
+        assert_eq!(project_root(&dir.join("src")), None);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_declared_crate_is_recognised_in_each_spelling() {
+        let line = "ulo-http = \"=0.1.0\"";
+        for manifest in [
+            "[dependencies]\nulo-http = \"=0.1.0\"\n",
+            "[dependencies]\nulo-http = { version = \"=0.1.0\" }\n",
+            "[dependencies]\nulo-http.workspace = true\n",
+            "[dependencies.ulo-http]\nversion = \"=0.1.0\"\n",
+            "[dependencies]\n    ulo-http   = \"=0.1.0\"\n",
+            "[dev-dependencies]\nulo-http = \"=0.1.0\"\n",
+            "[target.'cfg(unix)'.dependencies]\nulo-http = \"=0.1.0\"\n",
+        ] {
+            assert!(declares(manifest, line), "not recognised in {manifest:?}");
+        }
+    }
+
+    #[test]
+    fn a_crate_sharing_a_prefix_a_name_value_or_a_patch_is_not_the_declared_one() {
+        let line = "ulo-http = \"=0.1.0\"";
+        for manifest in [
+            "[dependencies]\nulo-http-hyper = \"=0.1.0\"\n",
+            "[package]\nname = \"ulo-http\"\n",
+            "[dependencies]\nulo = \"=0.1.0\"\n",
+            "[patch.crates-io]\nulo-http = { path = \"../ulo-http\" }\n",
+            "[workspace.dependencies]\nulo-http = \"=0.1.0\"\n",
+            "[dependencies]\nulo = \"=0.1.0\"\n\n[features]\nulo-http = []\n",
+            "",
+        ] {
+            assert!(!declares(manifest, line), "recognised in {manifest:?}");
+        }
+    }
+
+    #[test]
+    fn names_are_cased_for_each_place_they_appear() {
+        let spelled = names("UserProfile").expect("a name");
+        assert_eq!((spelled.pascal.as_str(), spelled.snake.as_str()), ("UserProfile", "user_profile"));
+        assert_eq!((spelled.route.as_str(), spelled.field.as_str()), ("user-profile", "userProfile"));
+        assert_eq!(snake_case("HTTPServer"), "http_server");
+        assert_eq!(names("user_profile").expect("a name").pascal, "UserProfile");
+    }
+
+    #[test]
+    fn a_name_that_is_not_an_identifier_is_refused() {
+        for name in ["", "1abc", "a-b", "fn", "_", "9"] {
+            assert!(names(name).is_err(), "{name:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn every_kind_renders_with_no_slot_left() {
+        let spelled = names("orders").expect("a name");
+        let kinds = [
+            (Kind::Module, None),
+            (Kind::Provider, None),
+            (Kind::Controller, Some(ControllerTransport::Http)),
+            (Kind::Controller, Some(ControllerTransport::Rpc)),
+            (Kind::Gateway, None),
+            (Kind::Resolver, None),
+        ];
+        for (kind, transport) in kinds {
+            let made = generated(kind, transport, &spelled);
+            let content = render(
+                made.template,
+                &[
+                    ("pascal", spelled.pascal.as_str()),
+                    ("snake", spelled.snake.as_str()),
+                    ("route", spelled.route.as_str()),
+                    ("pattern", spelled.snake.as_str()),
+                    ("field", spelled.field.as_str()),
+                ],
+            )
+            .unwrap_or_else(|error| panic!("{kind:?}: {error}"));
+            assert!(content.contains("Orders"), "{kind:?} wrote no name");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_existing_file_is_not_overwritten() {
+        let dir = scratch("overwrite");
+        let path = dir.join("x.rs");
+        write_new(&path, "first").await.expect("a new file");
+        let error = write_new(&path, "second").await.expect_err("an existing file");
+        assert!(error.to_string().contains("does not overwrite"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).expect("the file"), "first");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
 }
