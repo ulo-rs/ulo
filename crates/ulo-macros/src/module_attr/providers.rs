@@ -34,6 +34,7 @@
 //! | Item | Lowers to |
 //! |---|---|
 //! | `A` | `m.contribute::<K>().provide::<A>(\|a\| a);` |
+//! | `A`, where the same list binds `A` or `A as dyn T` unqualified | `m.contribute::<K>().reuse::<A>(\|a\| a);`, a factory reading `Dep<A>` in `A`'s scope |
 //! | `value = expr` | `m.contribute::<K>().value(Arc::new(expr));` |
 //! | `value = expr?` | `m.contribute::<K>().try_value(Result::map(expr, \|v\| -> Arc<K> { Arc::new(v) }));` |
 //! | `with = closure` | `m.contribute::<K>()` then `.with(closure, \|a\| a)` or `.try_with(..)`, by the same autoref ranking |
@@ -308,8 +309,9 @@ fn parse_with_closure(input: ParseStream<'_>) -> syn::Result<ExprClosure> {
 }
 
 impl ProviderEntry {
-    /// The statement this entry writes inside `register`, with `m` the `ModuleDef`.
-    pub(crate) fn lower(&self) -> TokenStream {
+    /// The statement this entry writes inside `register`, with `m` the `ModuleDef`. `provided`
+    /// holds the types the module's own entries bind unqualified, which an `into` item reuses.
+    pub(crate) fn lower(&self, provided: &[String]) -> TokenStream {
         let ulo = ulo();
         let m = module_def_param();
         match self {
@@ -355,7 +357,7 @@ impl ProviderEntry {
                 }
             }
             ProviderEntry::Contribute { into, items } => {
-                let contributions = items.iter().map(|item| item.lower(into));
+                let contributions = items.iter().map(|item| item.lower(into, provided));
                 quote_spanned! {into.span()=>
                     {
                         #[allow(unused_imports)]
@@ -423,11 +425,21 @@ pub(crate) fn qualified(qualifier: &Qualifier) -> TokenStream {
 }
 
 impl Contribution {
-    /// The statement contributing this item to the collection `into`.
-    fn lower(&self, into: &Type) -> TokenStream {
+    /// The statement contributing this item to the collection `into`. A type the module's own
+    /// entries bind unqualified, `provided`, is contributed as that binding's instance, read through
+    /// `Dep` in the type's declared scope, so the module builds it as its own binding does and runs
+    /// its hooks once; any other type is contributed as a binding of its own.
+    fn lower(&self, into: &Type, provided: &[String]) -> TokenStream {
         let ulo = ulo();
         let m = module_def_param();
         match self {
+            Contribution::Type(ty) if provided.contains(&type_text(ty)) => {
+                let refuse = refuse_controller(ty);
+                quote_spanned! {ty.span()=>
+                    #refuse
+                    #m.contribute::<#into>().reuse::<#ty>(|a| a);
+                }
+            }
             Contribution::Type(ty) => {
                 let refuse = refuse_controller(ty);
                 quote_spanned! {ty.span()=>
@@ -469,6 +481,24 @@ impl Contribution {
             }
         }
     }
+}
+
+/// The types the entries of one `providers` list bind under their own unqualified key, `Type` and
+/// `Type as dyn K`, each as [`type_text`] writes it. A type is matched as spelled: `Alpha` and
+/// `crate::Alpha` are two spellings, and an `into` item spelled unlike the providers entry gets a
+/// binding of its own.
+pub(crate) fn provided_types(entries: &[ProviderEntry]) -> Vec<String> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            ProviderEntry::Provide { ty, qualifier: None } | ProviderEntry::ProvideAs { ty, qualifier: None, .. } => Some(type_text(ty)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn type_text(ty: &Type) -> String {
+    quote!(#ty).to_string()
 }
 
 /// Whether `ty` is spelled like one of the role keys: a path ending in `AnyGuard`,

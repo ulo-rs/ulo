@@ -28,7 +28,7 @@ use crate::lifecycle::shutdown::ShutdownCell;
 use crate::module::Module;
 use crate::module::handle::ModuleRef;
 use crate::redact::redact;
-use crate::resolver::{Purpose, Resolver};
+use crate::resolver::{Building, Purpose, Resolver, reentrant};
 use crate::timer::{BoundKind, BoxFuture, resolve_bound};
 use crate::transport::server::ErasedServer;
 
@@ -67,7 +67,7 @@ impl AppShared {
             graph: RwLock::new(Arc::new(graph)),
             config,
             singletons: SingletonStore::default(),
-            closures: OnceCells::default(),
+            closures: OnceCells::per_app(),
             phase: PhaseCell::new(Phase::Wired),
             draining: Arc::new(Notify::new()),
             live: Arc::new(LiveSet::default()),
@@ -125,6 +125,9 @@ impl AppShared {
     /// - an execution-scoped binding from the execution's cache, built on first read, or
     ///   `ExecutionRequired` without an execution;
     /// - a transient built fresh;
+    /// - `Reentrant` for an execution-scoped or transient binding whose construction is under way
+    ///   further up the reads that led here, through a `ModuleRef` or an `ExecutionRef` read at
+    ///   construction: the cell would wait on itself, and a transient would recurse;
     /// - an alias through its target, a coerced key through its source instance;
     /// - through an execution that has ended, `ExecutionEnded` whatever the binding's scope.
     ///
@@ -159,9 +162,17 @@ impl AppShared {
                 }
                 Effective::PerExecution => {
                     let exec = r.exec.ok_or(LookupError::ExecutionRequired { key })?;
-                    exec.cache.get_or_build(Slot::Binding(id), key, || self.build(r, binding, ctor, key)).await?
+                    if let Some(refusal) = reentrant(r.building.as_ref(), id, key) {
+                        return Err(refusal);
+                    }
+                    exec.cache.get_or_build(Slot::Binding(id), key, || self.build(r, id, binding, ctor, key)).await?
                 }
-                Effective::Transient => self.build(r, binding, ctor, key).await?,
+                Effective::Transient => {
+                    if let Some(refusal) = reentrant(r.building.as_ref(), id, key) {
+                        return Err(refusal);
+                    }
+                    self.build(r, id, binding, ctor, key).await?
+                }
             },
         };
         Ok(match &binding.record.into_primary {
@@ -186,7 +197,7 @@ impl AppShared {
             app: Arc::clone(self),
             module,
             routed: OnceLock::new(),
-            cache: OnceCells::default(),
+            cache: OnceCells::per_execution(),
             extensions: Extensions::default(),
             inputs: Seeded::default(),
             cancel: Arc::new(Notify::new()),
@@ -199,6 +210,7 @@ impl AppShared {
             stream_end: Mutex::new(StreamEnd::default()),
             terminal,
             ended: AtomicBool::new(false),
+            committed: AtomicBool::new(false),
         });
         self.live.attach(&live, &shared);
         Ok(Execution { shared, _live: live })
@@ -260,11 +272,13 @@ impl AppShared {
     async fn build(
         self: &Arc<Self>,
         r: &Resolver<'_>,
+        id: BindingId,
         binding: &FrozenBinding,
         ctor: &ErasedCtor,
         key: KeyName,
     ) -> Result<Instance, LookupError> {
-        let r = r.in_module(binding.origin);
+        let building = Building::start(id, key, r.building.clone());
+        let r = r.in_module(binding.origin).within(Some(building.link()));
         let defaults = self.config.defaults();
         let bound = resolve_bound(binding.record.construct_bound, BoundKind::Construction, defaults.as_ref());
         let secrets = &r.graph.secrets;
@@ -427,9 +441,9 @@ impl LiveSet {
         })
     }
 
-    /// Fires cancellation on every live execution and returns how many there were, and how many
-    /// of them were terminal: the drain's end (§9.5 step 4). An execution whose `Execution` is
-    /// dropping has ended and is not counted.
+    /// Fires cancellation on every live execution and returns how many were abandoned, those whose
+    /// answer was not committed, and how many of them were terminal: the drain's end (§9.5 step
+    /// 4). An execution whose `Execution` is dropping has ended and is not counted.
     pub(crate) fn cancel_all(&self) -> (usize, usize) {
         // Upgraded under the lock and released after it: an upgraded handle may be the last one,
         // and what its shared state holds may drop an `Execution`, whose slot takes the lock.
@@ -442,8 +456,9 @@ impl LiveSet {
         for exec in &live {
             exec.cancel_with(CancelReason::Drain);
         }
-        let terminal = live.iter().filter(|exec| exec.terminal).count();
-        (live.len(), terminal)
+        let abandoned: Vec<&Arc<ExecShared>> = live.iter().filter(|exec| !exec.committed.load(Ordering::Acquire)).collect();
+        let terminal = abandoned.iter().filter(|exec| exec.terminal).count();
+        (abandoned.len(), terminal)
     }
 
     fn lock(&self) -> MutexGuard<'_, LiveInner> {

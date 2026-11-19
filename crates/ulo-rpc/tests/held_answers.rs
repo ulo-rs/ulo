@@ -376,7 +376,10 @@ async fn under_a_spent_cap_an_unhandled_patterns_answer_ready_unwoken_is_sent_in
 
     let closed = tokio::time::timeout(PATIENCE, running.handle.close(Signal::new("held answers"))).await.expect("the capped close");
     let shutdown = closed.unwrap_or_else(|error| panic!("a close the scripted link ends in its first poll failed: {error}"));
-    assert_eq!(shutdown.abandoned, 1, "the unhandled pattern's execution, live at the drain's end");
+    assert_eq!(
+        shutdown.abandoned, 0,
+        "the unhandled pattern's execution, live at the drain's end, had begun writing its answer, so it is not abandoned"
+    );
     assert_eq!(sent.frames(), vec![unhandled(1)], "the answer to a pattern nothing handles");
     tokio::time::timeout(PATIENCE, running.serving).await.expect("serve returned").expect("the serving task");
 }

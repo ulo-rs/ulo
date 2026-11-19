@@ -9,9 +9,14 @@
 mod common;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::*;
-use ulo::{ExecOptions, LookupError, LookupKind, Meta, Module, ModuleDef, ModuleIdentity, ModuleRef};
+use ulo::scope::{PerExecution, Transient};
+use ulo::{
+    Construct, ConstructError, Dep, Dependencies, ExecOptions, ExecutionRef, Key, LookupError, LookupKind, Meta, Module, ModuleDef, ModuleIdentity,
+    ModuleRef, Resolver,
+};
 
 struct A;
 struct B;
@@ -200,4 +205,136 @@ async fn an_injected_module_ref_is_the_enclosing_module() {
     assert_eq!(holder.0.name().to_string(), mod_name::<B>());
     assert!(holder.0.get::<Hidden>().await.is_ok(), "the handle reads what `B` sees, a private binding included");
     assert!(app.get::<Hidden>().await.is_err());
+}
+
+/// A construction that reads a handle, its `ModuleRef` or its `ExecutionRef` as `$handle` takes
+/// it, and through it `Back`, whose construction reads the reader back: a cycle `wire()` cannot
+/// see, since neither handle declares a key. `$depth` counts the reader's constructions, so a
+/// recursion the refusal fails to stop ends in an error before it can overflow the stack.
+macro_rules! reads_back {
+    ($reader:ident, $back:ident, $scope:ty, $depth:ident, $handle:expr) => {
+        static $depth: AtomicUsize = AtomicUsize::new(0);
+
+        struct $reader;
+
+        impl Construct for $reader {
+            type Scope = $scope;
+
+            fn dependencies(d: &mut Dependencies) {
+                d.field::<ModuleRef>("here");
+                d.field::<ExecutionRef>("exec");
+            }
+
+            async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+                if $depth.fetch_add(1, Ordering::SeqCst) >= 16 {
+                    return Err(ConstructError::Failed(Box::new(Boom::new("the construction recursed 16 deep"))));
+                }
+                ($handle)(r).get::<$back>().await?;
+                Ok($reader)
+            }
+        }
+
+        struct $back;
+
+        impl Construct for $back {
+            type Scope = $scope;
+
+            fn dependencies(d: &mut Dependencies) {
+                d.field::<Dep<$reader>>("reader");
+            }
+
+            async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+                r.dep::<$reader>().await?;
+                Ok($back)
+            }
+        }
+    };
+}
+
+reads_back!(ExecReader, ExecBack, PerExecution, EXEC_DEPTH, |r: &Resolver<'_>| r.module());
+reads_back!(TransientReader, TransientBack, Transient, TRANSIENT_DEPTH, |r: &Resolver<'_>| r.module());
+reads_back!(HandleReader, HandleBack, PerExecution, HANDLE_DEPTH, |r: &Resolver<'_>| r.execution().unwrap());
+
+/// The key read while it was being built and the key of the construction that read it back, from
+/// a `Reentrant` refusal.
+fn reentrant_keys<T: ?Sized>(answer: Result<Dep<T>, LookupError>) -> (Key, Key) {
+    match answer {
+        Err(LookupError::Reentrant { key, reader }) => (key.key(), reader.key()),
+        Err(other) => panic!("expected `Reentrant`, got: {other}"),
+        Ok(_) => panic!("expected `Reentrant`, the read succeeded"),
+    }
+}
+
+#[tokio::test]
+async fn an_execution_scoped_construction_read_back_through_its_module_ref_is_refused_naming_both_keys() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.provide::<ExecReader>();
+        m.provide::<ExecBack>();
+    }))
+    .await;
+    let answer = app
+        .execute(ExecOptions::new(), async |exec| within("a read of a construction that reads itself back", exec.get::<ExecReader>()).await)
+        .await
+        .unwrap();
+    let (key, reader) = reentrant_keys(answer);
+    assert_eq!(key, Key::of::<ExecReader, ()>(), "the binding read while it was being built");
+    assert_eq!(reader, Key::of::<ExecBack, ()>(), "the construction that read it back");
+    assert_eq!(EXEC_DEPTH.load(Ordering::SeqCst), 1, "the reader was built once");
+}
+
+/// Run on a thread with a stack far larger than the depth counter's bound needs, so a recursion
+/// the refusal fails to stop ends in the counter's error rather than aborting the test process.
+#[test]
+fn a_transient_construction_read_back_through_its_module_ref_is_refused_rather_than_recursing() {
+    let run = || {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let app = connects(Mod::<A>::new(|m| {
+                m.provide::<TransientReader>();
+                m.provide::<TransientBack>();
+            }))
+            .await;
+            app.execute(ExecOptions::new(), async |exec| exec.get::<TransientReader>().await).await.unwrap()
+        })
+    };
+    let answer = std::thread::Builder::new().stack_size(128 << 20).spawn(run).unwrap().join().unwrap();
+    let (key, reader) = reentrant_keys(answer);
+    assert_eq!(key, Key::of::<TransientReader, ()>());
+    assert_eq!(reader, Key::of::<TransientBack, ()>());
+    assert_eq!(TRANSIENT_DEPTH.load(Ordering::SeqCst), 1, "no construction recursed");
+}
+
+#[tokio::test]
+async fn a_construction_read_back_through_its_execution_ref_is_refused_naming_both_keys() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.provide::<HandleReader>();
+        m.provide::<HandleBack>();
+    }))
+    .await;
+    let answer = app
+        .execute(ExecOptions::new(), async |exec| within("a read of a construction that reads itself back", exec.get::<HandleReader>()).await)
+        .await
+        .unwrap();
+    let (key, reader) = reentrant_keys(answer);
+    assert_eq!(key, Key::of::<HandleReader, ()>());
+    assert_eq!(reader, Key::of::<HandleBack, ()>());
+}
+
+struct KeepsHandle(ModuleRef);
+struct LaterRead;
+
+#[tokio::test]
+async fn a_module_ref_kept_past_its_construction_reads_that_binding_again() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.transient(|here: ModuleRef| async move { KeepsHandle(here) });
+        m.transient(|| async { LaterRead });
+    }))
+    .await;
+    app.execute(ExecOptions::new(), async |exec| {
+        let kept = exec.get::<KeepsHandle>().await.unwrap();
+        assert!(kept.0.get::<KeepsHandle>().await.is_ok(), "a construction that has ended refuses nothing");
+        assert!(kept.0.get::<LaterRead>().await.is_ok());
+    })
+    .await
+    .unwrap();
 }

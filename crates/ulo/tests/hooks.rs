@@ -260,8 +260,9 @@ async fn a_failing_bootstrap_hook_fails_connect_after_every_init_hook_ran() {
     assert!(matches!(reason, FailureReason::Errored(_)), "got: {reason}");
     assert_eq!(
         hook_events(&log),
-        ["t1 init", "t2 init", "t1 bootstrap"],
-        "init hooks all ran; bootstrap stopped at the failing one, so the next bootstrap hook did not"
+        ["t1 init", "t2 init", "t1 bootstrap", "t2 destroy", "t1 destroy"],
+        "init hooks all ran; bootstrap stopped at the failing one, so the next bootstrap hook did not, and every \
+         initialized binding's destroy hook ran in reverse (`startup_teardown.rs`)"
     );
 }
 

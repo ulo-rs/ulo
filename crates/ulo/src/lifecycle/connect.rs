@@ -1,7 +1,8 @@
 //! The connect phase (§9.2, §9.3): singletons in a stable topological order, each followed by
 //! its readiness check, then every `OnModuleInit` hook in the same order with a module's own
 //! hooks after its providers', then every `OnApplicationBootstrap` hook. The first failure
-//! stops the walk and is returned as a `ConnectError`.
+//! stops the walk, the `OnModuleDestroy` hooks of every owner whose init stage completed run in
+//! reverse, and the failure is returned as a `ConnectError` carrying what those hooks recorded.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use crate::graph::{BindingId, FrozenBinding, Graph, ModuleId, Visible};
 use crate::hooks::{HookCx, HookKind, HookRecord};
 use crate::key::{BindingKind, Key, KeyName};
 use crate::lifecycle::run::{Cap, Outcome, run, shut_down};
+use crate::lifecycle::shutdown::tear_down;
 use crate::module::ModuleName;
 use crate::redact::{Redacted, SecretRegistry, redact};
 use crate::resolver::{Purpose, Resolver};
@@ -36,9 +38,24 @@ pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], m
             run_readiness(shared, id, ready).await?;
         }
     }
-    run_startup_hooks(shared, HookKind::OnModuleInit, singletons, modules).await?;
-    run_startup_hooks(shared, HookKind::OnApplicationBootstrap, singletons, modules).await?;
+    let plan = hook_plan(&shared.graph(), singletons, modules);
+    if let Err((error, failed_at)) = run_startup_hooks(shared, HookKind::OnModuleInit, &plan).await {
+        return Err(torn_down(shared, &plan[..failed_at], error).await);
+    }
+    if let Err((error, _)) = run_startup_hooks(shared, HookKind::OnApplicationBootstrap, &plan).await {
+        return Err(torn_down(shared, &plan, error).await);
+    }
     Ok(())
+}
+
+/// `error` after the destroy hooks of `initialized` have run (§9.2), the failures they recorded
+/// carried beside it as `ConnectError::Teardown`.
+pub(crate) async fn torn_down(shared: &Arc<AppShared>, initialized: &[HookOwner], error: ConnectError) -> ConnectError {
+    let failures = tear_down(shared, initialized).await;
+    if failures.is_empty() {
+        return error;
+    }
+    ConnectError::Teardown { error: Box::new(error), failures }
 }
 
 /// Builds one singleton under its construction bound, panics caught, and stores it.
@@ -165,17 +182,12 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
     })
 }
 
-/// Every hook of `kind` on `singletons` and `modules`, in connect order with each module's own
-/// hooks after its providers'. `Hook { hook, key, reason }` on the first failure.
+/// Every hook of `kind` on the owners of `plan`, in its order. `Hook { hook, key, reason }` on the
+/// first failure, with the position in `plan` of the owner whose hook failed.
 #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-pub(crate) async fn run_startup_hooks(
-    shared: &Arc<AppShared>,
-    kind: HookKind,
-    singletons: &[BindingId],
-    modules: &[ModuleId],
-) -> Result<(), ConnectError> {
+pub(crate) async fn run_startup_hooks(shared: &Arc<AppShared>, kind: HookKind, plan: &[HookOwner]) -> Result<(), (ConnectError, usize)> {
     let graph = shared.graph();
-    for owner in hook_plan(&graph, singletons, modules) {
+    for (position, &owner) in plan.iter().enumerate() {
         for hook in hooks_of(&graph, owner).iter().filter(|h| h.kind == kind) {
             let reason = match run_hook(shared, &graph, owner, hook, None, None).await {
                 None | Some(Outcome::Done(Ok(()))) => continue,
@@ -184,7 +196,7 @@ pub(crate) async fn run_startup_hooks(
                 Some(Outcome::TimedOut { after, limit }) => FailureReason::TimedOut { after, limit },
                 Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
             };
-            return Err(ConnectError::Hook { hook: kind, key: owner_key(&graph, owner), reason });
+            return Err((ConnectError::Hook { hook: kind, key: owner_key(&graph, owner), reason }, position));
         }
     }
     Ok(())

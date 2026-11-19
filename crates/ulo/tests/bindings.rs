@@ -317,6 +317,63 @@ async fn a_contribution_is_a_value_a_type_or_a_factory_output() {
     assert_eq!(again.len(), 3);
 }
 
+/// A provider of its own type that is also a `Plugin`, counting its constructions and its init
+/// hook's runs.
+struct Counted;
+
+static COUNTED_BUILT: AtomicUsize = AtomicUsize::new(0);
+static COUNTED_INIT: AtomicUsize = AtomicUsize::new(0);
+
+impl Plugin for Counted {
+    fn id(&self) -> &'static str {
+        "counted"
+    }
+}
+
+impl Construct for Counted {
+    type Scope = Singleton;
+
+    fn hooks(h: &mut ulo::Hooks<Self>) {
+        h.on_module_init();
+    }
+
+    fn dependencies(_d: &mut ulo::Dependencies) {}
+
+    async fn construct(_r: &Resolver<'_>) -> Result<Self, ConstructError> {
+        COUNTED_BUILT.fetch_add(1, Ordering::SeqCst);
+        Ok(Counted)
+    }
+}
+
+impl ulo::OnModuleInit for Counted {
+    async fn on_module_init(&self) -> Result<(), ulo::BoxError> {
+        COUNTED_INIT.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// A contribution built by a factory reading `Dep<T>` and widened through `Dep::arc` is the
+/// binding's own instance: one construction and one init hook, the collection's item and a direct
+/// read the same object.
+#[tokio::test]
+async fn a_contribution_reading_a_binding_shares_its_instance_and_hooks() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.provide::<Counted>();
+        m.contribute::<dyn Plugin>().with(|counted: Dep<Counted>| async move { counted }, |dep| -> Arc<dyn Plugin> {
+            dep.arc().clone()
+        });
+    }))
+    .await;
+
+    let direct = app.get::<Counted>().await.unwrap();
+    let plugins = read_many::<dyn Plugin>(&app).await.unwrap();
+    assert_eq!(plugins.len(), 1);
+    let item: &Arc<dyn Plugin> = &plugins.iter().next().map(Arc::clone).unwrap();
+    assert!(std::ptr::addr_eq(Arc::as_ptr(item), Arc::as_ptr(direct.arc())), "the collection's item is the binding's instance");
+    assert_eq!(COUNTED_BUILT.load(Ordering::SeqCst), 1, "built once");
+    assert_eq!(COUNTED_INIT.load(Ordering::SeqCst), 1, "its init hook ran once");
+}
+
 #[tokio::test]
 async fn a_foreign_type_is_bound_by_value_and_by_factory() {
     // Neither type is the crate's: no `Construct` impl, no annotation, no trait of ours.

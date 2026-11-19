@@ -11,13 +11,14 @@
 //! the upgrade under `refuse = handshake` and closed 1013 after it under `refuse = close`, and a
 //! connect guard decides before the slot is taken. Under `max_inflight = 1` a connection's answers leave in the order their
 //! messages arrived, the first answer held before its queueing through `conformance-probe`'s
-//! `AnswerHold`. The table's `GatewayDefaults::max_message` bounds a gateway whose attribute sets
+//! `AnswerHold`, and an answer held there past the drain's end is committed and not counted
+//! abandoned, as is a streamed answer whose last frame waits for room in the outbound queue. The table's `GatewayDefaults::max_message` bounds a gateway whose attribute sets
 //! none.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, Stream, StreamExt, stream};
 use http::header::{ALLOW, CONTENT_TYPE, HeaderValue, RETRY_AFTER, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_VERSION, UPGRADE};
 use http::request::Parts;
 use http::{Method, StatusCode, Version};
@@ -220,7 +221,38 @@ impl Serial {
     fn second(&self) -> String {
         "second".to_owned()
     }
+
+    /// Answers at once, leaving its execution where the answer hold finds it.
+    #[ulo_ws::message("committed")]
+    fn committed(&self, exec: ulo::ExecutionRef) -> String {
+        let _ = COMMITTED.set(exec);
+        "committed".to_owned()
+    }
 }
+
+/// The execution of the `committed` message, for the answer hold to wait on.
+static COMMITTED: std::sync::OnceLock<ulo::ExecutionRef> = std::sync::OnceLock::new();
+
+/// A streamed answer whose end waits for room in a queue of one.
+#[controller]
+struct Streamed;
+
+#[handlers]
+#[ulo_ws::gateway(path = "/streamed", port = own, max_outbound = 1)]
+impl Streamed {
+    /// Two items larger than the pipe's buffer: with the client reading nothing, the first fills
+    /// the pipe, the second the queue, and the stream's last frame waits for room.
+    #[ulo_ws::message("large")]
+    fn large(&self, exec: ulo::ExecutionRef) -> impl Stream<Item = Result<String, ulo_transport::CallError>> + use<> {
+        let _ = STREAMED.set(exec);
+        STREAMING.notify_one();
+        stream::iter(["x".repeat(96 * 1024), "y".repeat(96 * 1024)].map(Ok))
+    }
+}
+
+/// The execution of the `large` message, and the signal that its handler ran.
+static STREAMED: std::sync::OnceLock<ulo::ExecutionRef> = std::sync::OnceLock::new();
+static STREAMING: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 struct Root {
     joined: Joined,
@@ -241,6 +273,7 @@ impl Module for Root {
         m.controller::<Loose>();
         m.controller::<Capped>();
         m.controller::<Serial>();
+        m.controller::<Streamed>();
     }
 }
 
@@ -736,4 +769,66 @@ async fn under_a_bound_of_one_a_held_answer_is_not_overtaken() {
     let _ = client.close(None).await;
     within("the server's end of the connection", async { while let Some(Ok(_)) = client.next().await {} }).await;
     app.stop().await;
+}
+
+/// An answer decided and held before its queueing until the drain's end cancels its execution is
+/// committed: the drain cancels it with the rest and does not count it abandoned. The hold releases
+/// on the cancellation itself, so the drain's end, not a wall-clock margin, orders the two.
+#[tokio::test]
+async fn an_answer_held_before_its_queueing_past_the_drains_end_is_not_abandoned() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let hold = AnswerHold::new({
+        let entered = Arc::clone(&entered);
+        move |event| {
+            let (entered, event) = (Arc::clone(&entered), event.to_owned());
+            Box::pin(async move {
+                if event == "committed" {
+                    let exec = COMMITTED.get().expect("the handler ran before its answer is queued").clone();
+                    entered.notify_one();
+                    exec.cancelled().await;
+                }
+            })
+        }
+    });
+    let app = start_with(GatewayDefaults::default().answer_hold(hold)).await;
+    let Handshake::Switch(switch) = app.table.handshake(head("/serial", |_| {}), None).await else {
+        panic!("a valid upgrade request to a gateway was refused");
+    };
+    let (server, mut client) = pipe().await;
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    client.send(Message::text(json!({ "event": "committed", "id": 1 }).to_string())).await.expect("the message was sent");
+    within("the answer reaching its hold", entered.notified()).await;
+
+    let reading = tokio::spawn(async move { while let Some(Ok(_)) = client.next().await {} });
+    let shutdown = within("the app's close", app.handle.close(Signal::new("test"))).await.expect("shutdown reported a failure");
+    assert_eq!(shutdown.abandoned, 0, "the answer was decided and committed before the drain's end");
+    assert!(COMMITTED.get().is_some_and(|exec| exec.cancel_reason() == Some(ulo::CancelReason::Drain)), "and its execution was cancelled");
+    within("the client's end of the connection", reading).await.expect("the reading task");
+    within("serve", app.serving).await.expect("the serving task");
+}
+
+/// A streamed answer whose last frame is waiting for room in the outbound queue when the drain ends
+/// is committed: the drain cancels it and does not count it abandoned. The client starts reading
+/// only once the drain's end has cancelled the execution, so the drain's end, not a wall-clock
+/// margin, orders the two.
+#[tokio::test]
+async fn a_streamed_answer_whose_last_frame_waits_for_room_past_the_drains_end_is_not_abandoned() {
+    let app = start().await;
+    let Handshake::Switch(switch) = app.table.handshake(head("/streamed", |_| {}), None).await else {
+        panic!("a valid upgrade request to a gateway was refused");
+    };
+    let (server, mut client) = pipe().await;
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    client.send(Message::text(json!({ "event": "large", "id": 1 }).to_string())).await.expect("the message was sent");
+    within("the handler", STREAMING.notified()).await;
+    let exec = STREAMED.get().expect("the handler ran").clone();
+
+    let reading = tokio::spawn(async move {
+        exec.cancelled().await;
+        while let Some(Ok(_)) = client.next().await {}
+    });
+    let shutdown = within("the app's close", app.handle.close(Signal::new("test"))).await.expect("shutdown reported a failure");
+    assert_eq!(shutdown.abandoned, 0, "the stream's last frame was being queued when the drain ended");
+    within("the client's end of the connection", reading).await.expect("the reading task");
+    within("serve", app.serving).await.expect("the serving task");
 }

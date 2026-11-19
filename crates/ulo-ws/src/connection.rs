@@ -1604,6 +1604,11 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
     // the next message as this one leaves the count, cannot queue that message's answer first. A
     // streamed answer is counted out as its stream arrives: its items are written as the client
     // takes them, which the bound does not wait for.
+    // A unary answer, or no answer for a message without an id, commits as it is queued: queueing
+    // is its final write (§9.5 step 4). A streamed answer commits at its last frame, in `pump`.
+    if !matches!(outcome, Ok(Reply::Many(_))) {
+        handle.commit();
+    }
     flight.answer_hold.before_queueing(&name).await;
     match outcome {
         Err(err) => {
@@ -1707,6 +1712,7 @@ async fn pump(
             Some(Err(err)) => late(err, handler, exec, cx, id, codec).await,
             None => envelope::complete(codec, id),
         };
+        exec.commit();
         let _ = outbound.push_wait(last).await;
         return;
     }

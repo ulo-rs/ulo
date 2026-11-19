@@ -22,9 +22,9 @@ use crate::module::handle::ModuleRef;
 /// existing handle, unless its settings differ from the graph's module. Lazily loaded modules
 /// shut down in reverse load order.
 ///
-/// A load that fails to connect leaves the app as it found it: the graph it extended is put
-/// back and the singletons it built are dropped, so a later load of the same module wires
-/// again from the start.
+/// A load that fails to connect runs the destroy hooks of what it initialized, in reverse (§9.2),
+/// then leaves the app as it found it: the graph it extended is put back and the singletons it
+/// built are dropped, so a later load of the same module wires again from the start.
 #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn load(
     shared: &Arc<AppShared>,

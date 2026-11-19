@@ -92,8 +92,12 @@ pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// output is a `Result`), `with(<scope>) = |..| ..` (`singleton`, `execution` or `transient`, or
 /// the `try_` form), a bare closure (shorthand for `with = closure`), `K: with = |..| ..` and
 /// `K: with(<scope>) = |..| ..` (the same binding, also bound under the trait key `K` with
-/// `also_as::<K>(|a| a)`), and `into dyn Trait: [..]` (contributions). A bare path reads as a
-/// type, so a constant is bound by value with a block, `{ LIMITS }`. Export entries: `Type` and
+/// `also_as::<K>(|a| a)`), and `into dyn Trait: [..]` (contributions). An `into` item naming a
+/// type the same list binds unqualified, `Type` or `Type as dyn K`, contributes that binding's
+/// instance in that binding's scope, its hooks run once; any other type is contributed as a binding of its
+/// own, its hooks run on it. The two are matched as spelled, so `Alpha` and `crate::Alpha` are two
+/// types here. A bare path reads as a type, so a constant is bound by value with a block,
+/// `{ LIMITS }`. Export entries: `Type` and
 /// `reexport Type`. A `controllers` entry implements `Handlers`, and through it `Controller`, by
 /// `#[controller]` and `#[handlers]` or by hand, and an entry under `providers`, by type or by
 /// value, implements no `Controller`; each mistake is a compile

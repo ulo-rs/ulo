@@ -8,7 +8,7 @@ use crate::execution::{ExecOptions, Execution, ExecutionRef};
 use crate::graph::ModuleId;
 use crate::module::ModuleName;
 use crate::module::meta::Meta;
-use crate::resolver::{Purpose, Resolver};
+use crate::resolver::{Building, Purpose, Resolver};
 
 /// A handle to one module, for runtime lookups limited to what that module sees (§8.5).
 ///
@@ -17,23 +17,29 @@ use crate::resolver::{Purpose, Resolver};
 /// execution, so `get` reaches execution-scoped bindings too.
 ///
 /// During `connect`, `get` for a singleton the eager walk has not built yet is refused with
-/// `LookupError::NotReady`; once `connect` returns it cannot occur.
+/// `LookupError::NotReady`; once `connect` returns it cannot occur. A handle read during a
+/// construction carries it: a `get` that comes back to an execution-scoped or transient binding
+/// still being built further up the same reads is refused with `LookupError::Reentrant`, where it
+/// would wait on its own build or recurse. A handle kept past its construction refuses nothing.
 #[derive(Clone)]
 pub struct ModuleRef {
     pub(crate) app: Arc<AppShared>,
     pub(crate) module: ModuleId,
     pub(crate) exec: Option<ExecutionRef>,
+    /// The construction that read this handle, for one read at construction: see
+    /// `Resolver::building`.
+    pub(crate) building: Option<Arc<Building>>,
 }
 
 impl ModuleRef {
     pub(crate) fn new(app: Arc<AppShared>, module: ModuleId, exec: Option<ExecutionRef>) -> Self {
-        ModuleRef { app, module, exec }
+        ModuleRef { app, module, exec, building: None }
     }
 
     /// The binding `T` as this module sees it.
     pub async fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Result<Dep<T>, LookupError> {
         let exec = self.exec.as_ref().map(|exec| &exec.shared);
-        let r = Resolver::new(&self.app, self.module, exec, Purpose::Lookup);
+        let r = Resolver::new(&self.app, self.module, exec, Purpose::Lookup).within(self.building.clone());
         r.dep::<T>().await
     }
 
@@ -56,7 +62,7 @@ impl ModuleRef {
     /// this module sees resolves as `wire()` checked it (transports DESIGN §3.3, X9). A transport
     /// resolves a pre-dispatch entry this way through the module that declared it.
     pub fn with_execution(&self, exec: &ExecutionRef) -> ModuleRef {
-        ModuleRef { app: Arc::clone(&self.app), module: self.module, exec: Some(exec.clone()) }
+        ModuleRef { app: Arc::clone(&self.app), module: self.module, exec: Some(exec.clone()), building: self.building.clone() }
     }
 
     /// The metadata of type `T` this module wrote, if any.

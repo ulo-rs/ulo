@@ -37,7 +37,7 @@ use crate::app::shared::AppShared;
 use crate::error::{FailureReason, Limit, Shutdown, ShutdownError, ShutdownFailure};
 use crate::execution::notify::{Listen, Notify};
 use crate::graph::{BindingId, Graph, ModuleId};
-use crate::hooks::HookKind;
+use crate::hooks::{HookKind, HookRecord};
 use crate::lifecycle::connect::{HookOwner, hook_plan, hooks_of, owner_key, run_hook};
 use crate::lifecycle::phase::Phase;
 use crate::lifecycle::run::{Cap, CatchUnwind, Outcome, shut_down};
@@ -339,26 +339,57 @@ pub(crate) async fn run_hook_step(shared: &Arc<AppShared>, kind: HookKind, signa
     while let Some(&(owner, index)) = plan.get(*cursor) {
         *cursor += 1;
         let Some(hook) = hooks_of(&graph, owner).get(index) else { continue };
-        let expired = match (cap, timer) {
-            (Some(cap), Some(timer)) => cap.expired(timer),
-            _ => false,
-        };
-        let reason = if expired {
-            FailureReason::Skipped
-        } else {
-            match run_hook(shared, &graph, owner, hook, signal, cap).await {
-                None | Some(Outcome::Done(Ok(()))) => continue,
-                // A closure hook whose dependency read failed: the hook itself returns `()`.
-                Some(Outcome::Done(Err(e))) => FailureReason::Errored(redact(&graph.secrets, e)),
-                Some(Outcome::Panicked(p)) => FailureReason::Panicked(p),
-                Some(Outcome::TimedOut { after, limit }) => FailureReason::TimedOut { after, limit },
-                Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
-            }
-        };
-        failures.push(ShutdownFailure::Hook { hook: kind, key: owner_key(&graph, owner), reason });
+        failures.extend(run_shutdown_hook(shared, &graph, timer, owner, hook, signal, cap).await);
     }
     *slot = None;
     *cursor = 0;
+}
+
+/// One shutdown-side hook under its own bound and the cap, `Skipped` once the cap has expired;
+/// what it records, if anything.
+async fn run_shutdown_hook(
+    shared: &Arc<AppShared>,
+    graph: &Graph,
+    timer: Option<&dyn Timer>,
+    owner: HookOwner,
+    hook: &HookRecord,
+    signal: Option<&Signal>,
+    cap: Option<Cap>,
+) -> Option<ShutdownFailure> {
+    let expired = match (cap, timer) {
+        (Some(cap), Some(timer)) => cap.expired(timer),
+        _ => false,
+    };
+    let reason = if expired {
+        FailureReason::Skipped
+    } else {
+        match run_hook(shared, graph, owner, hook, signal, cap).await {
+            None | Some(Outcome::Done(Ok(()))) => return None,
+            // A closure hook whose dependency read failed: the hook itself returns `()`.
+            Some(Outcome::Done(Err(e))) => FailureReason::Errored(redact(&graph.secrets, e)),
+            Some(Outcome::Panicked(p)) => FailureReason::Panicked(p),
+            Some(Outcome::TimedOut { after, limit }) => FailureReason::TimedOut { after, limit },
+            Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
+        }
+    };
+    Some(ShutdownFailure::Hook { hook: hook.kind, key: owner_key(graph, owner), reason })
+}
+
+/// The partial teardown of a connect walk that failed (§9.2): the `OnModuleDestroy` hooks of
+/// `initialized`, the owners whose init hooks all completed, in the exact reverse of their startup
+/// order, each under its own bound and the whole under a `shutdown_timeout` cap starting now, as at
+/// close (§9.5). Every hook is attempted; what they record is returned in the order they ran.
+pub(crate) async fn tear_down(shared: &Arc<AppShared>, initialized: &[HookOwner]) -> Vec<ShutdownFailure> {
+    let graph = shared.graph();
+    let timer = shared.config.timer.as_deref();
+    let cap = cap_from_now(timer, shared.config.shutdown_timeout);
+    let mut failures = Vec::new();
+    for &owner in initialized.iter().rev() {
+        for hook in hooks_of(&graph, owner).iter().rev().filter(|hook| hook.kind == HookKind::OnModuleDestroy) {
+            failures.extend(run_shutdown_hook(shared, &graph, timer, owner, hook, None, cap).await);
+        }
+    }
+    failures
 }
 
 /// Steps 2 to 4: stop accepting, the drain, then cancel and abandon. Answers

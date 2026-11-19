@@ -1,11 +1,13 @@
 //! Handler parameters built from the call (transports DESIGN §2.2).
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
+use std::sync::{LazyLock, Mutex, PoisonError};
 
-use ulo::{Dependencies, ExecutionRef, FromContainer, LookupError, Redacted, Transport};
+use ulo::{Dependencies, ExecutionRef, FromContainer, KeyName, LookupError, LookupKind, Redacted, Transport};
 
 use crate::details::{Detail, Details, FieldViolation};
 use crate::error::{Classify, ErrorKind, INTERNAL_MESSAGE, from_lookup};
@@ -44,11 +46,17 @@ impl<T: Transport, P: FromCall<T>> FromCall<T> for Option<P> {
         P::dependencies(d);
     }
 
-    async fn from_call(cx: &T::Cx) -> Result<Self, ExtractError> {
-        match P::from_call(cx).await {
-            Ok(value) => Ok(Some(value)),
-            Err(ExtractError::Missing { .. } | ExtractError::HostMissing { .. }) => Ok(None),
-            Err(other) => Err(other),
+    // `+ Send` in the signature rather than an `async fn`, for the reason `Param::extract` gives
+    // (transports DESIGN decision 107): a caller naming `Option<Json<Name<'static>>>` would
+    // otherwise read through to `P::from_call`'s future with its lifetimes generic.
+    #[allow(clippy::manual_async_fn)]
+    fn from_call(cx: &T::Cx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
+        async move {
+            match P::from_call(cx).await {
+                Ok(value) => Ok(Some(value)),
+                Err(ExtractError::Missing { .. } | ExtractError::HostMissing { .. }) => Ok(None),
+                Err(other) => Err(other),
+            }
         }
     }
 }
@@ -68,13 +76,57 @@ where
         d.add::<S>();
     }
 
-    async fn from_call(cx: &T::Cx) -> Result<Self, ExtractError> {
-        let exec: &ExecutionRef = cx.as_ref();
-        let resolver = exec.resolver();
-        match S::from_container(&resolver).await {
-            Ok(value) => Ok(Injected(value)),
-            Err(source) => Err(ExtractError::Dependency { param: std::any::type_name::<S>(), source }),
+    // `+ Send` in the signature, as for `Option<P>` above.
+    #[allow(clippy::manual_async_fn)]
+    fn from_call(cx: &T::Cx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
+        async move {
+            let exec: &ExecutionRef = cx.as_ref();
+            let resolver = exec.resolver();
+            match S::from_container(&resolver).await {
+                Ok(value) => Ok(Injected(value)),
+                Err(source) => {
+                    let param = std::any::type_name::<S>();
+                    if let LookupError::NotFound { key, kind: LookupKind::Extension } = &source {
+                        unwritten_extension(exec, param, *key);
+                    }
+                    Err(ExtractError::Dependency { param, source })
+                }
+            }
         }
+    }
+}
+
+/// The handlers and parameter types an unwritten extension has been logged for at `warn`. An entry
+/// is made of names the compiled code holds, the handler's transport, controller and method and
+/// the parameter's type, so the set is bounded by the application's handlers and grows with no
+/// request data.
+type Seen = HashSet<(&'static str, Option<KeyName>, &'static str, &'static str)>;
+static UNWRITTEN_SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Logs a handler parameter whose extension nothing wrote: at `warn` the first time for each
+/// handler and parameter type in the process, at `debug` after. The call answers 500, a missing
+/// `Ext<T>` being a fault in the server rather than in the request. `extension` names the type
+/// read, which differs from `param` when the read is a dependency's, an execution-scoped
+/// `Dep<CurrentUser>` built from an `Ext<Session>` among them.
+fn unwritten_extension(exec: &ExecutionRef, param: &'static str, extension: KeyName) {
+    let info = exec.handler();
+    let entry = match info {
+        Some(info) => (info.transport(), Some(info.controller()), info.name(), param),
+        None => ("", None, "", param),
+    };
+    let first = UNWRITTEN_SEEN.lock().unwrap_or_else(PoisonError::into_inner).insert(entry);
+    let route = info.and_then(|info| info.route()).unwrap_or("");
+    let handler = info.map(|info| format!("{}::{}", info.controller(), info.name())).unwrap_or_default();
+    if first {
+        tracing::warn!(
+            param,
+            extension = %format_args!("{extension:#}"),
+            handler,
+            route,
+            "nothing wrote the extension this handler parameter reads earlier in the execution; answered 500, and later misses of it on this handler are logged at `debug`"
+        );
+    } else {
+        tracing::debug!(param, extension = %format_args!("{extension:#}"), handler, route, "nothing wrote the extension this handler parameter reads earlier in the execution; answered 500");
     }
 }
 

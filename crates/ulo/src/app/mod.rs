@@ -338,6 +338,10 @@ impl App<Wired> {
     /// bound, for `AppHandle::trace_source()` to answer (I15). A source that cannot be read, one
     /// two exports answer or one bound per execution, fails the connect as
     /// `ConnectError::Construct` naming it.
+    ///
+    /// A failure runs the `OnModuleDestroy` hooks of every binding and module whose init stage
+    /// completed, in reverse startup order, each under its bound and all under `shutdown_timeout`;
+    /// a hook that fails or overruns arrives beside the failure as `ConnectError::Teardown`.
     #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub async fn connect(self) -> Result<App<Connected>, StartupError> {
         let shared = self.shared;
@@ -353,7 +357,11 @@ impl App<Wired> {
                     let _ = shared.trace_source.set(source.into_arc());
                 }
                 Ok(None) => {}
-                Err(error) => return Err(StartupError::Connect(trace_source_failure(&graph, error))),
+                Err(error) => {
+                    let initialized = connect::hook_plan(&graph, &graph.connect_order, &modules);
+                    let failure = connect::torn_down(&shared, &initialized, trace_source_failure(&graph, error)).await;
+                    return Err(StartupError::Connect(failure));
+                }
             }
         }
         shared.phase.advance(Stage::Running);
