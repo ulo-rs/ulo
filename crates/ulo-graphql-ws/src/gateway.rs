@@ -77,7 +77,8 @@ const NO_SESSION: &str = "the connection has no graphql-transport-ws session";
 ///
 /// The connect guards are graphql-transport-ws's only authorization point: they run once per
 /// connection, and no `Ws` guard, interceptor or error handler runs per `subscribe`, the gateway
-/// being hand-written with no message handler for them to wrap.
+/// being hand-written with no message handler for them to wrap. The operations of a subscription
+/// run past a connect guard, so a resolver that needs authorization decides it for itself.
 pub struct GraphqlWs<Q = ()> {
     pub(crate) _engine: PhantomData<fn() -> Q>,
     engine: Dep<dyn Engine, Q>,
