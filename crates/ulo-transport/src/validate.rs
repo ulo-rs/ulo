@@ -1,6 +1,7 @@
 //! Declarative, opt-in validation through the parameter type (transports DESIGN §2.2).
 
 use std::any::type_name;
+use std::future::Future;
 use std::ops::Deref;
 
 use ulo::{Dependencies, Transport};
@@ -48,14 +49,21 @@ impl<T: Transport, P: FromCall<T> + Validate> FromCall<T> for Valid<P> {
         P::dependencies(d);
     }
 
-    async fn from_call(cx: &T::Cx) -> Result<Self, ExtractError> {
-        let value = match P::from_call(cx).await {
-            Ok(value) => value,
-            Err(err) => return Err(err),
-        };
-        match value.validate() {
-            Ok(()) => Ok(Valid(value)),
-            Err(violations) => Err(ExtractError::Invalid { param: outer_name(type_name::<P>()), violations }),
+    // `+ Send` in the signature rather than an `async fn`, for the reason `Param::extract` gives
+    // (transports DESIGN decision 107): an `async fn` declares no `Send`, so a caller naming
+    // `Valid<Json<Name<'static>>>` reads through to `P::from_call`'s future with its lifetimes
+    // generic and fails with "implementation of `Deserialize` is not general enough".
+    #[allow(clippy::manual_async_fn)]
+    fn from_call(cx: &T::Cx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
+        async move {
+            let value = match P::from_call(cx).await {
+                Ok(value) => value,
+                Err(err) => return Err(err),
+            };
+            match value.validate() {
+                Ok(()) => Ok(Valid(value)),
+                Err(violations) => Err(ExtractError::Invalid { param: outer_name(type_name::<P>()), violations }),
+            }
         }
     }
 }
