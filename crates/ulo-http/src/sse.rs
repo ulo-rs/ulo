@@ -242,7 +242,7 @@ where
     S::Item: SseItem,
 {
     fn into_reply(self, cx: &HttpCx) -> Result<Response, IntoReplyError> {
-        let end_event = self.end_event.map(|name| EventName::new(name)).transpose().map_err(IntoReplyError::new)?;
+        let end_event = self.end_event.map(EventName::new).transpose().map_err(IntoReplyError::new)?;
         let body = SseBody {
             stream: Box::pin(self.stream),
             keep_alive: self.keep_alive.map(|every| KeepAlive { every, timer: Arc::clone(cx.timer()), sleep: None, refused: false }),
