@@ -144,9 +144,7 @@ impl AppConfig {
     /// The defaults `Bound::Default` resolves against; `None` without a `Timer`, where an item
     /// left at `Default` runs unbounded.
     pub(crate) fn defaults(&self) -> Option<Defaults> {
-        if self.timer.is_none() {
-            return None;
-        }
+        self.timer.as_ref()?;
         Some(Defaults {
             hook_timeout: self.hook_timeout.unwrap_or(Self::DEFAULT_HOOK),
             construct_timeout: self.construct_timeout.unwrap_or(Self::DEFAULT_CONSTRUCT),
