@@ -1,8 +1,9 @@
 //! Routing as every backend sees it: a trailing slash is insignificant, `{name}` and `{*rest}`
 //! parameters are decoded but for `%2F` and typed, a path with a `.` or `..` segment or a `\`,
 //! raw or as `%5C`, is refused before routing, a static segment outranks a parameter, one path carries one
-//! handler per verb, and a route table that cannot be built is refused by `listen()` naming the
-//! controllers involved, a segment written `:id` or `*rest` among them.
+//! handler per verb, a miss is 404, 405 or 501 by the precedence RFC 9110 gives, and a route table
+//! that cannot be built is refused by `listen()` naming the controllers involved, a segment written
+//! `:id` or `*rest` among them.
 
 mod o1_support;
 
@@ -61,6 +62,12 @@ impl Pages {
     #[ulo_http::post("/shared")]
     fn shared_post(&self) -> &'static str {
         "post"
+    }
+
+    /// The table's one `PUT`, which makes `PUT` a method the server answers on another path.
+    #[ulo_http::put("/writable")]
+    fn writable(&self) -> &'static str {
+        "put"
     }
 }
 
@@ -276,6 +283,43 @@ async fn one_path_answers_each_verb_with_its_own_handler_and_lists_them_in_allow
     let options = app.send(Call::new(Method::OPTIONS, "/shared")).await;
     assert_eq!(options.status, StatusCode::NO_CONTENT);
     assert_eq!(options.values("allow"), expected);
+    app.stop().await;
+}
+
+/// The precedence of a miss, RFC 9110 §9.1 and §15.6.2 with the path read first:
+///
+/// | Path | Method | Answer |
+/// |---|---|---|
+/// | no route matches | any, an unknown one included | 404 |
+/// | a route matches | one it declares | its handler |
+/// | a route matches | `HEAD`, the route declaring `GET` | the `GET` handler, no body |
+/// | a route matches | `OPTIONS`, undeclared | 204 with the path's `Allow` |
+/// | a route matches | one another route declares, or `GET` or `HEAD` | 405 with the path's `Allow` |
+/// | a route matches | one no route declares | 501 |
+#[tokio::test]
+async fn a_miss_is_404_off_every_path_and_on_a_path_501_for_a_method_no_route_answers_and_405_for_one_another_does() {
+    let app = running().await;
+    let send = |method: &str, path: &str| app.send(Call::new(Method::from_bytes(method.as_bytes()).expect("a method"), path));
+
+    for (method, path) in [("PROPFIND", "/nowhere"), ("PUT", "/nowhere"), ("GET", "/nowhere"), ("DELETE", "/nowhere")] {
+        let reply = send(method, path).await;
+        assert_eq!((reply.status, reply.routing.clone().map(|r| format!("{r:?}"))), (StatusCode::NOT_FOUND, Some("NotFound".to_owned())), "{method} {path}");
+    }
+    for method in ["PROPFIND", "PURGE", "DELETE", "PATCH", "TRACE", "CONNECT"] {
+        let reply = send(method, "/shared").await;
+        assert_eq!(reply.status, StatusCode::NOT_IMPLEMENTED, "{method} /shared: no route answers it");
+        assert!(reply.header("content-type").is_some_and(|value| value.starts_with("application/problem+json")), "{method}");
+        assert_eq!(reply.header("allow"), None, "{method}: a 501 carries no `Allow`");
+        assert!(matches!(reply.routing, Some(Routing::MethodNotImplemented)), "{method}: {:?}", reply.routing);
+        assert_eq!(reply.json()["detail"], format!("no route of this server answers `{method}`"));
+    }
+    for (method, path, allow) in [("PUT", "/shared", "GET, HEAD, POST, OPTIONS"), ("GET", "/writable", "PUT, OPTIONS"), ("HEAD", "/writable", "PUT, OPTIONS"), ("POST", "/a", "GET, HEAD, OPTIONS")] {
+        let reply = send(method, path).await;
+        assert_eq!((reply.status, reply.header("allow")), (StatusCode::METHOD_NOT_ALLOWED, Some(allow)), "{method} {path}");
+        assert!(matches!(reply.routing, Some(Routing::MethodNotAllowed)), "{method} {path}: {:?}", reply.routing);
+    }
+    let options = send("OPTIONS", "/writable").await;
+    assert_eq!((options.status, options.header("allow")), (StatusCode::NO_CONTENT, Some("PUT, OPTIONS")));
     app.stop().await;
 }
 

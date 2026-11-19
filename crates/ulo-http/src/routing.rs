@@ -17,7 +17,7 @@ use ulo::HandlerInfo;
 /// # fn f(response: http::Response<()>, metrics: Metrics) {
 /// match response.extensions().get::<ulo_http::Routing>() {
 ///     Some(Routing::Matched { route, .. } | Routing::Options { route }) => metrics.record(route),
-///     Some(Routing::NotFound | Routing::MethodNotAllowed) => metrics.record("<miss>"),
+///     Some(Routing::NotFound | Routing::MethodNotAllowed | Routing::MethodNotImplemented) => metrics.record("<miss>"),
 ///     Some(_) => metrics.record("<unrouted>"),
 ///     None => {} // not the app's answer
 /// }
@@ -34,12 +34,15 @@ pub enum Routing {
     Options { route: Arc<str> },
     /// No route matches the path.
     NotFound,
-    /// A route matches the path and has no handler for the method: a 405 with `Allow`.
+    /// A route matches the path and has no handler for the method, which another route answers:
+    /// a 405 with `Allow`.
     MethodNotAllowed,
     /// The app answered without routing the request: a load-shedding or drain refusal, the
     /// embedding's refusal before `listen()` or after `close`, an unscoped pre-dispatch entry
     /// answering without `next` or failing, and an upgrade request an upgrade handler took.
     Unrouted,
+    /// A route matches the path, and no route answers the method: a 501.
+    MethodNotImplemented,
 }
 
 impl fmt::Debug for Routing {
@@ -53,6 +56,7 @@ impl fmt::Debug for Routing {
             Routing::Options { route } => f.debug_struct("Options").field("route", route).finish(),
             Routing::NotFound => f.write_str("NotFound"),
             Routing::MethodNotAllowed => f.write_str("MethodNotAllowed"),
+            Routing::MethodNotImplemented => f.write_str("MethodNotImplemented"),
             Routing::Unrouted => f.write_str("Unrouted"),
         }
     }

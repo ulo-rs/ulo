@@ -292,13 +292,14 @@ pub async fn app_for(limits: EmbedLimits, runtime: impl Runtime) -> App<Connecte
 }
 
 /// How [`ROUTING_HEADER`] spells a `Routing`: `matched <route>`, `options <route>`, `not-found`,
-/// `method-not-allowed` or `unrouted`.
+/// `method-not-allowed`, `method-not-implemented` or `unrouted`.
 pub fn routing_label(routing: &Routing) -> String {
     match routing {
         Routing::Matched { route, .. } => format!("matched {route}"),
         Routing::Options { route } => format!("options {route}"),
         Routing::NotFound => "not-found".to_owned(),
         Routing::MethodNotAllowed => "method-not-allowed".to_owned(),
+        Routing::MethodNotImplemented => "method-not-implemented".to_owned(),
         Routing::Unrouted => "unrouted".to_owned(),
         _ => "other".to_owned(),
     }
@@ -347,6 +348,7 @@ macro_rules! http_conformance_suite {
             routing_hit => routing::hit,
             not_found_with_no_route => routing::not_found,
             method_not_allowed_with_allow => routing::method_not_allowed,
+            method_not_implemented_501 => routing::method_not_implemented,
             options_answered_204 => routing::options,
             head_answered_from_get => routing::head,
             extraction_failures => extraction::failures,

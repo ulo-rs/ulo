@@ -7,8 +7,8 @@
 //!    path, they see misses, and they can answer without calling `next`.
 //! 2. The route is matched and the execution routed to the controller's module
 //!    (`Execution::route_to`); then the entries whose scope matches the request path run, the
-//!    path the router matched. A request no route matches runs them too, before its 404, 405 or
-//!    `OPTIONS` answer and before an upgrade handler takes it, so whether an entry runs never
+//!    path the router matched. A request no route matches runs them too, before its 404, 405, 501
+//!    or `OPTIONS` answer and before an upgrade handler takes it, so whether an entry runs never
 //!    depends on the route table. In an embedding under `Miss::Forward`, a request no route
 //!    matches runs none when the host can route it again: the host protects its own paths.
 //!
@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bytes::Bytes;
+use http::Method;
 use ulo::{
     AppHandle, BoxError, BoxFuture, Dep, Dependencies, DispatchStage, ExecutionRef, LookupError, Meta, ModuleRef, TypeName,
     Unreached,
@@ -774,6 +775,14 @@ pub trait StageHost: Send + Sync + 'static {
     fn app(&self) -> &AppHandle;
     fn exec(&self) -> &ExecutionRef;
     fn fail(&self, err: BoxError) -> BoxFuture<'_, Response>;
+
+    /// The methods the route matching `path` declares, in declaration order, which a `Cors`
+    /// preflight advertises; `None` when no route matches, or for a transport without a route
+    /// table, whose preflight advertises the configured methods.
+    fn route_methods(&self, path: &str) -> Option<Vec<Method>> {
+        let _ = path;
+        None
+    }
 }
 
 /// One request's sub-step, as an entry's failure is offered to the error handlers.
@@ -800,6 +809,13 @@ impl StageHost for StageCx {
 
     fn fail(&self, err: BoxError) -> BoxFuture<'_, Response> {
         Box::pin(self.render(err))
+    }
+
+    fn route_methods(&self, path: &str) -> Option<Vec<Method>> {
+        if self.head.parts.extensions.get::<crate::embed::OutsidePrefix>().is_some() {
+            return None;
+        }
+        self.service.router.declared_methods(path).map(|methods| methods.cloned().collect())
     }
 }
 
@@ -833,7 +849,7 @@ pub(crate) fn run(at: Arc<dyn StageHost>, steps: Arc<[Runnable]>, from: usize, r
         let rest_at = Arc::clone(&at);
         let rest_steps = Arc::clone(&steps);
         let rest: Rest = Box::new(move |req| run(rest_at, rest_steps, index + 1, req, end));
-        steps[index].start(at.exec(), req, rest)
+        steps[index].start(&at, req, rest)
     };
     Box::pin(async move {
         match at.app().catch_panic(DispatchStage::PreDispatch, attempt).await {
@@ -848,14 +864,16 @@ impl Runnable {
         self.exclude.iter().any(|scope| scope.covers_path(path))
     }
 
-    fn start(&self, exec: &ExecutionRef, req: Request, rest: Rest) -> BoxFuture<'static, Result<Response, BoxError>> {
+    fn start(&self, at: &Arc<dyn StageHost>, req: Request, rest: Rest) -> BoxFuture<'static, Result<Response, BoxError>> {
+        let exec = at.exec();
         match &self.action {
-            Action::Value(middleware) => Box::pin(handle(Arc::clone(middleware), req, rest)),
+            Action::Value(middleware) => Box::pin(handle(Arc::clone(middleware), req, rest, Arc::clone(at))),
             Action::ByType(resolve) => {
                 let resolving = resolve(self.module.with_execution(exec));
+                let at = Arc::clone(at);
                 Box::pin(async move {
                     let middleware = resolving.await?;
-                    handle(middleware, req, rest).await
+                    handle(middleware, req, rest, at).await
                 })
             }
             Action::Adopt(copy) => {
@@ -882,8 +900,8 @@ impl Runnable {
     }
 }
 
-async fn handle(middleware: Arc<dyn ErasedMiddleware>, req: Request, rest: Rest) -> Result<Response, BoxError> {
-    let next = Next::new(move |req| {
+async fn handle(middleware: Arc<dyn ErasedMiddleware>, req: Request, rest: Rest, at: Arc<dyn StageHost>) -> Result<Response, BoxError> {
+    let next = Next::new(at, move |req| {
         let answer = rest(req);
         Box::pin(async move { Ok::<_, BoxError>(answer.await) })
     });

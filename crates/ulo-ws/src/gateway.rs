@@ -29,6 +29,7 @@ use crate::codec::Codec;
 use crate::connection::Connection;
 use crate::envelope::Frame;
 use crate::module::ReadsHandoff;
+use crate::origin::OriginCheck;
 use crate::table::GatewayDefaults;
 use crate::session::SessionFactory;
 use crate::transport::{ConnectCx, ConnectReply, Ws, WsConnect};
@@ -682,6 +683,8 @@ pub(crate) struct GatewayRuntime {
     pub(crate) event_field: Arc<str>,
     pub(crate) controller: TypeName,
     pub(crate) limits: Limits,
+    /// The server's or the module's `origins`, which the handshake checks.
+    pub(crate) origins: Arc<OriginCheck>,
     pub(crate) handler: Arc<ConnectHandler>,
     pub(crate) connect: MountedHandler<WsConnect>,
     pub(crate) events: HashMap<String, Event>,
@@ -716,6 +719,8 @@ pub(crate) fn build_table(
     failures: &mut Failures,
 ) -> Vec<Arc<GatewayRuntime>> {
     let mut table: Vec<Arc<GatewayRuntime>> = Vec::new();
+    // An entry that is not an origin is refused by `check_defaults`, which every caller runs.
+    let origins = Arc::new(OriginCheck::of(&defaults.origins, &mut Vec::new()));
     for connect in connects {
         let Some(handler) = connect.handler::<Arc<ConnectHandler>>() else { continue };
         let handler = Arc::clone(handler);
@@ -788,6 +793,7 @@ pub(crate) fn build_table(
             event_field: Arc::from(&*settings.event),
             controller,
             limits: Limits::resolve(settings, defaults),
+            origins: Arc::clone(&origins),
             handler: Arc::clone(&handler),
             connect: connect.clone(),
             events,
@@ -811,7 +817,8 @@ pub(crate) fn build_table(
     table
 }
 
-/// The zero refusals of a server's or a module's defaults, `owner` naming which.
+/// The zero refusals of a server's or a module's defaults, and each `origins` entry that is not an
+/// origin, `owner` naming which.
 pub(crate) fn check_defaults(owner: &str, defaults: &GatewayDefaults, failures: &mut Failures) {
     let settings = GatewaySettings {
         max_message: defaults.max_message,
@@ -833,6 +840,11 @@ pub(crate) fn check_defaults(owner: &str, defaults: &GatewayDefaults, failures: 
         "stop reading every connection before its first message",
     ) {
         failures.push(format!("{owner}: {}", failure.text(&names)));
+    }
+    let mut refusals = Vec::new();
+    OriginCheck::of(&defaults.origins, &mut refusals);
+    for text in refusals {
+        failures.push(format!("{owner}: {text}"));
     }
 }
 

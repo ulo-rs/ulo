@@ -1,5 +1,5 @@
 //! Under `Miss::Forward` a scoped pre-dispatch entry speaks for the app's own routes only: a
-//! request a route of the app matches runs it, a 405 included, and a request no route of the app
+//! request a route of the app matches runs it, a 501 included, and a request no route of the app
 //! matches goes back to rocket untouched, so the host's own `/admin/host` is answered by the host
 //! and not refused with the app's 401.
 
@@ -125,11 +125,11 @@ async fn a_scoped_entry_runs_for_the_apps_routes_and_a_forwarded_miss_reaches_th
     });
     let port = port.await.expect("rocket lifts off");
 
-    // The app's route, and its 405, run the scoped entry.
+    // The app's route, and its 501 for a method no route of the app answers, run the scoped entry.
     assert_eq!(send(port, "GET", "/admin/app", None).await.0, 401, "GET /admin/app, anonymous");
     assert_eq!(send(port, "DELETE", "/admin/app", None).await.0, 401, "DELETE /admin/app, anonymous");
     assert_eq!(send(port, "GET", "/admin/app", Some("open")).await, (200, "app".to_owned()));
-    assert_eq!(send(port, "DELETE", "/admin/app", Some("open")).await.0, 405);
+    assert_eq!(send(port, "DELETE", "/admin/app", Some("open")).await.0, 501);
     assert_eq!(send(port, "OPTIONS", "/admin/app", None).await.0, 401, "OPTIONS /admin/app, anonymous");
 
     // A miss the app answers itself, its path rewritten, is the app's surface: the scope refuses

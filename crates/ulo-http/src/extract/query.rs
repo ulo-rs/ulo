@@ -14,6 +14,11 @@ use crate::transport::Http;
 /// `None` then; a value that does not parse is `Malformed` naming it. Both are 400: the query is
 /// part of the request's target rather than its content, so the 422 a body that does not fit its
 /// type answers does not apply.
+///
+/// A name written more than once fills a `Vec` field with every value, in the order written, and a
+/// name written once fills it with one: `?tag=a&tag=b` reads as `tag: vec!["a", "b"]`. Into a field
+/// that is not a sequence a repeated name is `Malformed` naming the field, never its first or last
+/// value. `Query<Vec<(String, String)>>` takes every pair as written, repeats included.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Query<T>(pub T);
 

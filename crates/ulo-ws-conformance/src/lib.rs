@@ -273,6 +273,7 @@ macro_rules! ws_conformance_suite {
             handshake_upgrades_as_the_host_declares => handshake::as_declared,
             handshake_switches_with_the_accept_key => handshake::switches,
             handshake_refuses_a_path_without_a_gateway => handshake::no_gateway,
+            handshake_checks_origin => handshake::origin,
             handshake_refuses_a_method_other_than_get => handshake::method,
             handshake_refuses_http_1_0 => handshake::http_1_0,
             handshake_refuses_a_malformed_upgrade => handshake::malformed,

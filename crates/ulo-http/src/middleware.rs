@@ -6,9 +6,12 @@
 //! type.
 
 use std::future::Future;
+use std::sync::Arc;
 
+use http::Method;
 use ulo::{BoxError, BoxFuture};
 
+use crate::pre_dispatch::StageHost;
 use crate::request::Request;
 use crate::response::Response;
 
@@ -53,6 +56,7 @@ pub trait Middleware: Send + Sync + 'static {
 /// answers the request itself.
 pub struct Next<'a> {
     pub(crate) rest: Box<dyn FnOnce(Request) -> BoxFuture<'a, Result<Response, BoxError>> + Send + 'a>,
+    host: Arc<dyn StageHost>,
 }
 
 impl<'a> Next<'a> {
@@ -66,8 +70,13 @@ impl<'a> Next<'a> {
 
     /// The bound fixes the closure's return type at `BoxFuture<'a, _>`, so a closure answering a
     /// `'static` future coerces into a `Next` borrowing whatever the middleware's `&self` borrows.
-    pub(crate) fn new(rest: impl FnOnce(Request) -> BoxFuture<'a, Result<Response, BoxError>> + Send + 'a) -> Self {
-        Next { rest: Box::new(rest) }
+    pub(crate) fn new(host: Arc<dyn StageHost>, rest: impl FnOnce(Request) -> BoxFuture<'a, Result<Response, BoxError>> + Send + 'a) -> Self {
+        Next { rest: Box::new(rest), host }
+    }
+
+    /// The methods the route matching `path` declares, as [`StageHost::route_methods`] answers.
+    pub(crate) fn route_methods(&self, path: &str) -> Option<Vec<Method>> {
+        self.host.route_methods(path)
     }
 }
 

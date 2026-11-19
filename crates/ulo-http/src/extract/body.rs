@@ -116,6 +116,10 @@ impl<T: Validate> Validate for Json<T> {
 /// `BodyTaken` (500). Every byte sequence decodes as a form, so what fails is the fit to `T`: a
 /// required field the form lacks, or a value that does not parse as its field, is `Mismatched`
 /// (422) naming the field, and `Option<Form<T>>` is `None` only for an empty body.
+///
+/// A name written more than once fills a `Vec` field with every value, in the order written; into
+/// a field that is not a sequence it is `Mismatched` naming the field, as [`Query`](crate::Query)
+/// reads a repeated key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Form<T>(pub T);
 
