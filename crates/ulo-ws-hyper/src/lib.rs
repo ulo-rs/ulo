@@ -38,7 +38,7 @@ use ulo_transport::Count;
 use ulo_transport::prepare::{Failures, zero_bound};
 #[cfg(feature = "conformance-probe")]
 use ulo_ws::MessagesRead;
-use ulo_ws::{GatewayDefaults, GatewayTable, Handshake, Ws};
+use ulo_ws::{GatewayDefaults, GatewayTable, Handshake, Origins, Ws};
 
 /// The name a refusal in `prepare` gives the server.
 const NAME: &str = "ulo_ws_hyper::Server";
@@ -194,6 +194,13 @@ impl<L: Listener> ServerOn<L> {
 
     pub fn pong_timeout(mut self, timeout: Bound) -> Self {
         self.defaults = self.defaults.pong_timeout(timeout);
+        self
+    }
+
+    /// The pages whose handshakes this server's gateways admit: a same-origin page unset, as
+    /// [`GatewayDefaults::origins`](ulo_ws::GatewayDefaults::origins).
+    pub fn origins(mut self, origins: impl Into<Origins>) -> Self {
+        self.defaults = self.defaults.origins(origins);
         self
     }
 }

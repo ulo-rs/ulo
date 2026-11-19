@@ -114,7 +114,7 @@ pub use extract::{BodyStream, Form, Header, Host, Json, LastEventId, Multipart, 
 pub use handler::HttpHandler;
 pub use limits::{KB, MB, MaxBody, Timeout};
 pub use middleware::Middleware;
-pub use miss::{MethodNotAllowed, NoRoute, NotAcceptable};
+pub use miss::{MethodNotAllowed, MethodNotImplemented, NoRoute, NotAcceptable};
 pub use pre_dispatch::PreDispatch;
 pub use render::WithHttpStatus;
 pub use request::{ConnInfo, OnUpgrade, Request, TlsInfo, Upgraded};

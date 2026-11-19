@@ -10,6 +10,7 @@ use ulo_transport::Count;
 
 use crate::broadcast::{BroadcastAdapter, InMemory, NodeId, Target};
 use crate::handoff::Handoff;
+use crate::origin::Origins;
 use crate::rooms::{Hub, Rooms};
 use crate::table::GatewayDefaults;
 
@@ -111,6 +112,14 @@ impl WsModule {
         self.defaults.pong_timeout = timeout;
         self
     }
+
+    /// The pages whose handshakes the gateways on the HTTP server's port admit: a same-origin page
+    /// unset, as [`GatewayDefaults::origins`](crate::GatewayDefaults::origins). A `Cors` entry's
+    /// allowed origins do not reach a handshake.
+    pub fn origins(mut self, origins: impl Into<Origins>) -> Self {
+        self.defaults.origins = origins.into();
+        self
+    }
 }
 
 impl Module for WsModule {
@@ -129,6 +138,7 @@ impl Module for WsModule {
             .with("max_outbound", defaults.max_outbound)
             .with("ping_interval", defaults.ping_interval)
             .with("pong_timeout", defaults.pong_timeout)
+            .with("origins", &defaults.origins)
     }
 
     /// The module is global, so `Dep<Rooms>` and `Dep<dyn BroadcastAdapter>` resolve in every

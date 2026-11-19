@@ -628,7 +628,8 @@ impl Drop for Switch {
 }
 
 /// Decides one upgrade request on `accept`'s gateway: the RFC 6455 handshake checks, the
-/// subprotocol negotiation, and the connection phase before the 101 under `refuse = handshake`.
+/// subprotocol negotiation, the `Origin` check, and the connection phase before the 101 under
+/// `refuse = handshake`.
 ///
 /// The connection phase runs as a task the table's drain and close reach, and the decision waits
 /// for its answer. A server that drops the decision while `OnConnect` runs, as hyper drops a
@@ -639,6 +640,9 @@ pub(crate) async fn handshake(accept: Accept, head: Parts, peer: Option<SocketAd
         Ok(checked) => checked,
         Err(refusal) => return Handshake::Refuse(refusal),
     };
+    if let Err(refusal) = accept.gateway.origins.check(&head) {
+        return Handshake::Refuse(refusal);
+    }
     let answers = ulo_http::__private::handshake_answers(&head.extensions);
     if accept.tracker.is_draining() {
         return Handshake::Refuse(refusal(ConnectRefused::shutting_down(), &answers));

@@ -64,7 +64,8 @@ at the first step that fails:
 cargo-semver-checks has no lint for a changed type: a parameter or return type that changes, or a
 tuple struct's field that stops being public, passes step 3. A change making such a break adds a
 comment line to `ci/semver-breaks.txt` in the form `# unchecked <package> <item>  # reason`, which
-the script skips. The pull request that cuts a release lists those lines in the release's notes
+the script skips. A change to what an unchanged call does, a default that refuses what it admitted
+or a status a request is answered with, is a break of the same kind and gets the same line. The pull request that cuts a release lists those lines in the release's notes
 beside the `break` entries; the first change after the tag replaces both.
 
 ## Reading a failure

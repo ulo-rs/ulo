@@ -24,7 +24,7 @@ use crate::body::HttpBody;
 use crate::cx::{BodySlot, CxInner, HttpCx, MatchedRoute, PathParams};
 use crate::limits::MB;
 use crate::embed::{Forwardable, OriginalPath};
-use crate::miss::{MethodNotAllowed, NoRoute};
+use crate::miss::{MethodNotAllowed, MethodNotImplemented, NoRoute};
 use crate::pre_dispatch::{self, Rest, Stage, StageCx};
 use crate::render;
 use crate::request::{ConnInfo, OnUpgrade, Request};
@@ -59,9 +59,9 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 /// 5. An `Upgrade` request on an upgrade path goes to its `UpgradeHandler`, after the scoped
 ///    entries whose scope matches its path. Otherwise routing: a miss runs the scoped entries
 ///    whose scope matches its path, then is offered to the global error handlers through
-///    `ulo::recover(None, ..)` as a `CallError` whose source is [`NoRoute`] or
-///    [`MethodNotAllowed`], rendered 404, or 405 with `Allow`, when none claims it; `OPTIONS`
-///    with no handler answers 204 with `Allow`. A request outside an embedding's prefix runs no
+///    `ulo::recover(None, ..)` as a `CallError` whose source is [`NoRoute`],
+///    [`MethodNotAllowed`] or [`MethodNotImplemented`], rendered 404, 405 with `Allow`, or 501,
+///    when none claims it; `OPTIONS` with no handler answers 204 with `Allow`. A request outside an embedding's prefix runs no
 ///    scoped entry.
 /// 6. `Execution::route_to` the controller's module, the route's timeout armed on the app's
 ///    `Timer`, the scoped entries whose scope matches the path run. When the timeout passes
@@ -180,6 +180,7 @@ impl Tracking {
 enum Miss {
     NotFound,
     MethodNotAllowed(HeaderValue),
+    NotImplemented,
     Options(HeaderValue, Arc<str>),
 }
 
@@ -333,6 +334,7 @@ impl ServiceInner {
                 Routed::Found { target, params, head_from_get } => Ok((Arc::clone(target), params, head_from_get)),
                 Routed::NotFound => Err(Miss::NotFound),
                 Routed::MethodNotAllowed { allow } => Err(Miss::MethodNotAllowed(allow)),
+                Routed::NotImplemented => Err(Miss::NotImplemented),
                 Routed::Options { allow, route } => Err(Miss::Options(allow, route)),
             };
             let miss = match routed {
@@ -346,6 +348,7 @@ impl ServiceInner {
                 Miss::NotFound => Routing::NotFound,
                 Miss::Options(_, route) => Routing::Options { route: Arc::clone(route) },
                 Miss::MethodNotAllowed(_) => Routing::MethodNotAllowed,
+                Miss::NotImplemented => Routing::MethodNotImplemented,
             });
             let handle = exec.handle();
             // Under `Miss::Forward` a path no route matches belongs to the host when it can route
@@ -545,6 +548,7 @@ impl ServiceInner {
             Miss::Options(allow, _) => return options(allow),
             Miss::NotFound => Box::new(NoRoute::error()),
             Miss::MethodNotAllowed(allow) => Box::new(MethodNotAllowed::new(req.head.method.clone(), allow).into_error()),
+            Miss::NotImplemented => Box::new(MethodNotImplemented::error(req.head.method.clone())),
         };
         let Request { head, body, conn, upgrade } = req;
         let cx = self.context(exec, Arc::new(RequestHead { parts: head }), conn, None, Some(body), upgrade);

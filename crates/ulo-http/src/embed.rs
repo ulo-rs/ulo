@@ -372,13 +372,14 @@ pub enum Miss {
     /// The host routes the request again, where it can (`EmbedLimits::forward_miss`): a request
     /// whose body nothing has polled and whose path no pre-dispatch entry rewrote is answered 404
     /// with [`Forwardable`] in its extensions, skipping the error handlers, for the adapter to
-    /// hand back. Any other miss is the app's own 404, logged at `warn`. A 405 is never
+    /// hand back. Any other miss is the app's own 404, logged at `warn`. A 405 or a 501 is never
     /// forwarded: a route of the app matches the path.
     ///
-    /// A scoped pre-dispatch entry runs only for the requests the app answers, a 405 among them: a
-    /// forwardable miss is the host's, and the host protects its own paths. A path holding a `\`
-    /// or a dot segment, which the app refuses with 400 before any entry, is the app's to refuse
-    /// only when a route or an upgrade path of the app matches it as received; any other is
+    /// A scoped pre-dispatch entry runs only for the requests the app answers, a 405 or a 501
+    /// among them: a forwardable miss is the host's, and the host protects its own paths. A path
+    /// holding a `\` or a dot segment, which the app refuses with 400 before any entry, is the
+    /// app's to refuse only when a route or an upgrade path of the app matches it as received; any
+    /// other is
     /// answered forwardable, before any entry runs, and reaches the host as the client sent it.
     Forward,
 }
@@ -638,7 +639,7 @@ impl<A: Embed> Embedded<A> {
     /// whatever its `exclude`, which a later rewrite can make miss or match; one after a scoped
     /// entry, the handlers of the routes that entry runs on for every request reaching them. An
     /// exclusion counts against a route only where a request can reach the route through it: a
-    /// path a route of higher precedence matches is answered there, by its handler or with a 405,
+    /// path a route of higher precedence matches is answered there, by its handler, a 405 or a 501,
     /// so `/admin/health` excluded from `/admin/*` leaves `/admin/{page}` covered when the route
     /// `/admin/health` exists. `service` is
     /// `None` when the stage or the route table failed, and the handlers are then not checked,
