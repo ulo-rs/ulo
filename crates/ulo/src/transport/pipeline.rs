@@ -225,11 +225,10 @@ async fn build_interceptors<T: Transport>(handler: &MountedHandler<T>, at: &Look
 /// lookup reads the stored singleton or the execution's cached instance. A transient
 /// controller is left to that lookup: building one here would build a second.
 async fn build_controller<T: Transport>(handler: &MountedHandler<T>, at: &Lookup<'_>) -> Result<(), LookupError> {
-    if let Some(&Visible::Binding(id)) = at.graph.lookup(at.module, handler.controller.key()) {
-        if at.graph.binding(id).effective != Effective::Transient {
+    if let Some(&Visible::Binding(id)) = at.graph.lookup(at.module, handler.controller.key())
+        && at.graph.binding(id).effective != Effective::Transient {
             at.resolver.instance(id).await?;
         }
-    }
     Ok(())
 }
 

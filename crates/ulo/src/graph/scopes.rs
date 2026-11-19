@@ -119,11 +119,10 @@ pub(crate) fn assign_roles(graph: &mut Graph) {
     let mut named: Vec<BindingId> = Vec::new();
     for handler in &graph.handlers {
         for dep in &handler.decl.enhancer_deps {
-            if let EnhancerDep::Type(key) = dep {
-                if let Some(Visible::Binding(id)) = graph.lookup(handler.module, *key) {
+            if let EnhancerDep::Type(key) = dep
+                && let Some(Visible::Binding(id)) = graph.lookup(handler.module, *key) {
                     named.push(through_aliases(graph, *id));
                 }
-            }
         }
     }
 
@@ -369,11 +368,10 @@ fn execution_read(
 fn execution_steps(graph: &Graph, id: BindingId) -> Vec<String> {
     let ids = execution_path(graph, id);
     let mut steps: Vec<String> = ids.iter().map(|&step| graph.scoped_label(step)).collect();
-    if let Some(&last) = ids.last() {
-        if let Some(edge) = graph.direct_execution_edge(last) {
+    if let Some(&last) = ids.last()
+        && let Some(edge) = graph.direct_execution_edge(last) {
             steps.push(graph.dependency_step(last, edge.dependency));
         }
-    }
     steps
 }
 
@@ -469,14 +467,13 @@ impl<'g> InputWalk<'g> {
         }
         while let Some(node) = queue.pop_front() {
             for edge in &graph.binding(node).edges {
-                if let EdgeTarget::Input(input) = &edge.target {
-                    if !edge.optional {
+                if let EdgeTarget::Input(input) = &edge.target
+                    && !edge.optional {
                         let mut steps: Vec<String> =
                             chain(&parent, node).into_iter().map(|step| graph.scoped_label(step)).collect();
                         steps.push(graph.dependency_step(node, edge.dependency));
                         self.record(*input, Some(node), steps);
                     }
-                }
             }
             for dep in graph.construction_deps(node) {
                 if in_execution(graph, dep) && !parent.contains_key(&dep) {
@@ -587,11 +584,10 @@ fn printed_path(graph: &Graph, from: BindingId) -> Vec<String> {
         .enumerate()
         .map(|(position, &id)| if position == 0 { graph.label(id) } else { graph.scoped_label(id) })
         .collect();
-    if let Some(&last) = ids.last() {
-        if let Some(edge) = graph.direct_execution_edge(last) {
+    if let Some(&last) = ids.last()
+        && let Some(edge) = graph.direct_execution_edge(last) {
             steps.push(graph.dependency_step(last, edge.dependency));
         }
-    }
     steps
 }
 

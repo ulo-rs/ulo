@@ -239,11 +239,10 @@ pub(crate) fn accept_ranges(headers: &HeaderMap) -> Vec<Range> {
             let Some((kind, subtype)) = parts.next().and_then(|range| range.trim().split_once('/')) else { continue };
             let mut q = 1000;
             for parameter in parts {
-                if let Some((name, value)) = parameter.split_once('=') {
-                    if name.trim().eq_ignore_ascii_case("q") {
+                if let Some((name, value)) = parameter.split_once('=')
+                    && name.trim().eq_ignore_ascii_case("q") {
                         q = parse_quality(value.trim());
                     }
-                }
             }
             ranges.push(Range { kind: kind.trim().to_ascii_lowercase(), subtype: subtype.trim().to_ascii_lowercase(), q });
         }

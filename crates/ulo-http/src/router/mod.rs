@@ -213,11 +213,10 @@ impl Router {
             if let Some(target) = entry.target(method) {
                 return Routed::Found { target, params, head_from_get: false };
             }
-            if *method == Method::HEAD {
-                if let Some(target) = entry.target(&Method::GET) {
+            if *method == Method::HEAD
+                && let Some(target) = entry.target(&Method::GET) {
                     return Routed::Found { target, params, head_from_get: true };
                 }
-            }
             if *method == Method::OPTIONS {
                 return Routed::Options { allow: entry.allow.clone(), route: Arc::clone(&entry.route) };
             }
@@ -293,11 +292,10 @@ fn declared_on_method(metadata: &Metadata) -> bool {
 /// declared, since `GET` answers it, and `OPTIONS`, which the router answers itself.
 fn allow_of(methods: &[(Method, Arc<RouteTarget>)]) -> HeaderValue {
     let mut names: Vec<&str> = methods.iter().map(|(method, _)| method.as_str()).collect();
-    if !names.contains(&"HEAD") {
-        if let Some(get) = names.iter().position(|name| *name == "GET") {
+    if !names.contains(&"HEAD")
+        && let Some(get) = names.iter().position(|name| *name == "GET") {
             names.insert(get + 1, "HEAD");
         }
-    }
     if !names.contains(&"OPTIONS") {
         names.push("OPTIONS");
     }

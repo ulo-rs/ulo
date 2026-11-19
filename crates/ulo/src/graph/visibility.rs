@@ -175,8 +175,8 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
         // The pipeline finds the controller by its key in its own module, which an import
         // exporting the same type would make ambiguous; nothing else reads that key.
         let controller = record_key(&graph.binding(handler.controller).record);
-        if let Some(Visible::Ambiguous(list)) = graph.lookup(handler.module, controller) {
-            if reported.insert((handler.module, controller)) {
+        if let Some(Visible::Ambiguous(list)) = graph.lookup(handler.module, controller)
+            && reported.insert((handler.module, controller)) {
                 errors.push(WiringError::Ambiguous {
                     key: controller.name(BindingKind::Single),
                     consumer: format!("{name} (its controller)"),
@@ -184,7 +184,6 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
                     sources: ambiguous_sources(graph, list),
                 });
             }
-        }
         check_dependencies(graph, handler.module, &handler.decl.dependencies, &name, errors, &mut reported);
         for dep in &handler.decl.enhancer_deps {
             match dep {
