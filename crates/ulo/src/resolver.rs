@@ -1,6 +1,6 @@
 use std::any::{TypeId, type_name};
 use std::marker::PhantomData;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::app::shared::AppShared;
@@ -11,7 +11,7 @@ use crate::error::UndeclaredWhat;
 use crate::redact::redact;
 use crate::execution::{ExecShared, ExecutionRef};
 use crate::graph::{BindingId, Graph, ModuleId, Visible};
-use crate::key::{BindingKind, Key};
+use crate::key::{BindingKind, Key, KeyName};
 use crate::module::handle::ModuleRef;
 use crate::type_name::TypeName;
 
@@ -36,6 +36,61 @@ pub struct Resolver<'a> {
     /// refusal still fails its construction. A `OnceLock` rather than a `Mutex`: every
     /// construction pays for the slot whether or not a read goes wrong.
     violation: OnceLock<UndeclaredRead>,
+    /// The construction this resolver reads for and the ones that started it, carried into the
+    /// `ModuleRef` and `ExecutionRef` it hands out, so a read through either that comes back to a
+    /// binding still being built is refused rather than waiting on itself or recursing.
+    pub(crate) building: Option<Arc<Building>>,
+}
+
+/// One per-execution or transient construction under way, linked to the construction whose read
+/// started it. A link is active until its construction ends; a handle kept past that carries an
+/// inactive link, which refuses nothing.
+pub(crate) struct Building {
+    id: BindingId,
+    key: KeyName,
+    parent: Option<Arc<Building>>,
+    active: AtomicBool,
+}
+
+impl Building {
+    /// A link for `id`'s construction, started by a read for `parent`, active until the guard
+    /// drops.
+    pub(crate) fn start(id: BindingId, key: KeyName, parent: Option<Arc<Building>>) -> BuildingGuard {
+        BuildingGuard(Arc::new(Building { id, key, parent, active: AtomicBool::new(true) }))
+    }
+}
+
+/// Ends a construction's link when the construction ends, by return, failure or drop.
+pub(crate) struct BuildingGuard(Arc<Building>);
+
+impl BuildingGuard {
+    pub(crate) fn link(&self) -> Arc<Building> {
+        Arc::clone(&self.0)
+    }
+}
+
+impl Drop for BuildingGuard {
+    fn drop(&mut self) {
+        self.0.active.store(false, Ordering::Release);
+    }
+}
+
+/// The refusal of a read of `id` made while `id` is being built further up `chain`:
+/// `LookupError::Reentrant` naming it and the innermost construction still under way, the one
+/// that read it back. `None` when no active link builds `id`.
+pub(crate) fn reentrant(chain: Option<&Arc<Building>>, id: BindingId, key: KeyName) -> Option<LookupError> {
+    let mut reader = None;
+    let mut link = chain;
+    while let Some(current) = link {
+        if current.active.load(Ordering::Acquire) {
+            let innermost = *reader.get_or_insert(current.key);
+            if current.id == id {
+                return Some(LookupError::Reentrant { key, reader: Box::new(innermost) });
+            }
+        }
+        link = current.parent.as_ref();
+    }
+    None
 }
 
 /// What one `Construct` type declared, held by its erased constructor and checked on every read
@@ -91,7 +146,13 @@ impl<'a> Resolver<'a> {
         exec: Option<&'a Arc<ExecShared>>,
         purpose: Purpose,
     ) -> Self {
-        Resolver { app, graph: app.graph(), module, exec, purpose, reading: OnceLock::new(), violation: OnceLock::new() }
+        Resolver { app, graph: app.graph(), module, exec, purpose, reading: OnceLock::new(), violation: OnceLock::new(), building: None }
+    }
+
+    /// The same view reading for the construction `link` names.
+    pub(crate) fn within(mut self, link: Option<Arc<Building>>) -> Resolver<'a> {
+        self.building = link;
+        self
     }
 
     /// The same view with another module's visibility: a binding is always constructed against
@@ -105,6 +166,7 @@ impl<'a> Resolver<'a> {
             purpose: self.purpose,
             reading: OnceLock::new(),
             violation: OnceLock::new(),
+            building: self.building.clone(),
         }
     }
 
@@ -119,6 +181,7 @@ impl<'a> Resolver<'a> {
             purpose: self.purpose,
             reading: self.reading.clone(),
             violation: OnceLock::new(),
+            building: self.building.clone(),
         }
     }
 
@@ -217,15 +280,17 @@ impl<'a> Resolver<'a> {
 
     /// A handle to the module this resolver reads for.
     pub fn module(&self) -> ModuleRef {
-        let exec = self.exec.map(|shared| ExecutionRef { shared: Arc::clone(shared) });
-        ModuleRef::new(Arc::clone(self.app), self.module, exec)
+        let exec = self.exec.map(|shared| ExecutionRef { shared: Arc::clone(shared), building: self.building.clone() });
+        let mut handle = ModuleRef::new(Arc::clone(self.app), self.module, exec);
+        handle.building = self.building.clone();
+        handle
     }
 
     /// A handle to the current execution.
     pub fn execution(&self) -> Result<ExecutionRef, LookupError> {
         self.declared(Wanted::Execution)?;
         let shared = self.exec_for(Key::of::<ExecutionRef, ()>())?;
-        Ok(ExecutionRef { shared: Arc::clone(shared) })
+        Ok(ExecutionRef { shared: Arc::clone(shared), building: self.building.clone() })
     }
 
     /// The binding under an erased `key`, asked for as `T`. The one lookup that can ask for a

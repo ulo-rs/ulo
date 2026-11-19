@@ -125,6 +125,9 @@ the base graph and removes the singletons it built, and a retry wires again.
 Options: accept; run destroy and shutdown hooks for the built prefix in reverse.
 Recommendation: accept for the first compile. Partial teardown wants its own design row, since
 §9.5's steps presuppose `Connected`.
+Decided: Q32-4, built as `DESIGN.md` §14 item 31: the `OnModuleDestroy` hooks of every binding
+and module whose init stage completed run in reverse, bounded as at close, and their failures
+travel beside the walk's as `ConnectError::Teardown`.
 
 **D14. A panic in a guard, interceptor, handler or error handler unwinds out of `dispatch`.** [F 4]
 §14.5 catches panics in `connect`, `load`, `close` and a build inside a call; silent on the

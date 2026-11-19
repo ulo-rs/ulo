@@ -147,11 +147,48 @@ pub enum ConnectError {
     /// that bind one key (`StoreModule<Sqlite> @ Primary` and `@ Replica`) read apart.
     Readiness { key: KeyName, module: ModuleName, attempts: u32, reason: FailureReason },
     Hook { hook: HookKind, key: KeyName, reason: FailureReason },
+    /// `error` ended the connect walk after some init hooks had completed, and the destroy hooks
+    /// run for those bindings and modules recorded `failures`: each a `ShutdownFailure::Hook` of
+    /// `OnModuleDestroy`, `Errored` for a closure hook whose read failed, `Panicked`, `TimedOut`
+    /// under its own bound or `shutdown_timeout`, or `Skipped` once `shutdown_timeout` had expired
+    /// (§9.2). A walk whose teardown recorded nothing answers `error` alone.
+    /// [`failure`](Self::failure) answers `error` whichever shape arrives.
+    Teardown { error: Box<ConnectError>, failures: Vec<ShutdownFailure> },
+}
+
+impl ConnectError {
+    /// The failure that ended the connect walk: this error, or the one a
+    /// [`Teardown`](Self::Teardown) carries.
+    pub fn failure(&self) -> &ConnectError {
+        match self {
+            ConnectError::Teardown { error, .. } => error.failure(),
+            other => other,
+        }
+    }
+
+    /// What the destroy hooks run after the failure recorded; empty when they recorded nothing.
+    pub fn teardown(&self) -> &[ShutdownFailure] {
+        match self {
+            ConnectError::Teardown { failures, .. } => failures,
+            _ => &[],
+        }
+    }
 }
 
 impl fmt::Display for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ConnectError::Teardown { error, failures } => {
+                fmt::Display::fmt(error, f)?;
+                let count = failures.len();
+                let noun = if count == 1 { "failure" } else { "failures" };
+                write!(f, "\n  the destroy hooks run for what had started recorded {count} {noun}")?;
+                let full = TypeName::colliding(failures.iter().flat_map(ShutdownFailure::type_names));
+                for failure in failures {
+                    write!(f, "\n  × {}", failure.text(&full))?;
+                }
+                Ok(())
+            }
             ConnectError::Construct { key, module, reason } => {
                 write!(f, "failed to construct `{key}` in {module}: {reason}")
             }
@@ -473,6 +510,13 @@ pub enum LookupError {
     Construct { key: KeyName, reason: FailureReason },
     /// A singleton lookup from Destroying on (§9.5).
     Closed { key: KeyName },
+    /// A read of the execution-scoped or transient binding `key` while `key` is itself being built
+    /// further up the same reads, reached through a `ModuleRef` or an `ExecutionRef` read at
+    /// construction, which `wire()` cannot follow (§8.5). `reader` is the construction that read it,
+    /// boxed so a lookup's error stays the size of its other variants. Without the refusal an
+    /// execution-scoped `key` would wait on its own build and a transient one would recurse until
+    /// the stack ran out.
+    Reentrant { key: KeyName, reader: Box<KeyName> },
 }
 
 impl fmt::Display for LookupError {
@@ -505,11 +549,73 @@ impl fmt::Display for LookupError {
             LookupError::Closed { key } => {
                 write!(f, "`{key}` is a singleton, and the application has begun destroying its singletons")
             }
+            LookupError::Reentrant { key, reader } => write!(
+                f,
+                "`{reader}` read `{key}` while `{key}` was being built: a `ModuleRef` or `ExecutionRef` read during `{key}`'s construction led back to it"
+            ),
         }
     }
 }
 
 impl Error for LookupError {}
+
+impl LookupError {
+    /// The same error with every outside original behind a shared pointer, so
+    /// [`share`](Self::share) can hand a copy to each reader of one cached failure (§3.8).
+    pub(crate) fn into_shared(self) -> LookupError {
+        match self {
+            LookupError::Construct { key, reason } => LookupError::Construct { key, reason: reason.into_shared() },
+            other => other,
+        }
+    }
+
+    /// A copy for another reader of the failure [`into_shared`](Self::into_shared) prepared, its
+    /// outside original the same one.
+    pub(crate) fn share(&self) -> LookupError {
+        match self {
+            LookupError::NotFound { key, kind } => LookupError::NotFound { key: *key, kind: *kind },
+            LookupError::NotReady { key } => LookupError::NotReady { key: *key },
+            LookupError::WrongType { key, requested } => LookupError::WrongType { key: *key, requested },
+            LookupError::WrongKind { key, expected, found } => LookupError::WrongKind { key: *key, expected: *expected, found: *found },
+            LookupError::ExecutionRequired { key } => LookupError::ExecutionRequired { key: *key },
+            LookupError::ExecutionEnded { key } => LookupError::ExecutionEnded { key: *key },
+            LookupError::Ambiguous { key, sources } => LookupError::Ambiguous { key: *key, sources: sources.clone() },
+            LookupError::AmbiguousModule { module, candidates } => {
+                LookupError::AmbiguousModule { module, candidates: candidates.clone() }
+            }
+            LookupError::Construct { key, reason } => LookupError::Construct { key: *key, reason: reason.share() },
+            LookupError::Closed { key } => LookupError::Closed { key: *key },
+            LookupError::Reentrant { key, reader } => LookupError::Reentrant { key: *key, reader: reader.clone() },
+        }
+    }
+}
+
+impl FailureReason {
+    fn into_shared(self) -> FailureReason {
+        match self {
+            FailureReason::Panicked(message) => FailureReason::Panicked(message.into_shared()),
+            FailureReason::Errored(error) => FailureReason::Errored(error.into_shared()),
+            other => other,
+        }
+    }
+
+    /// A `Redacted` not made shareable first is copied as its text alone: the original stays with
+    /// the error it came from.
+    fn share(&self) -> FailureReason {
+        let copy = |redacted: &Redacted| {
+            redacted.share().unwrap_or_else(|| {
+                let text = redacted.to_string();
+                Redacted::from_parts(text.clone().into(), text)
+            })
+        };
+        match self {
+            FailureReason::Panicked(message) => FailureReason::Panicked(copy(message)),
+            FailureReason::TimedOut { after, limit } => FailureReason::TimedOut { after: *after, limit: *limit },
+            FailureReason::Skipped => FailureReason::Skipped,
+            FailureReason::Errored(error) => FailureReason::Errored(copy(error)),
+        }
+    }
+}
 
 fn write_list(f: &mut fmt::Formatter<'_>, names: &[ModuleName]) -> fmt::Result {
     let colliding = colliding_names(names);
@@ -841,6 +947,7 @@ fn connect_permanent(error: &ConnectError, depth: usize) -> bool {
         ConnectError::Construct { reason, .. }
         | ConnectError::Readiness { reason, .. }
         | ConnectError::Hook { reason, .. } => reason_permanent(reason, depth),
+        ConnectError::Teardown { error, .. } => depth < MAX_DEPTH && connect_permanent(error, depth + 1),
     }
 }
 
@@ -964,6 +1071,7 @@ fn connect_panicked(error: &ConnectError, depth: usize) -> bool {
         ConnectError::Construct { reason, .. }
         | ConnectError::Readiness { reason, .. }
         | ConnectError::Hook { reason, .. } => reason_panicked(reason, depth),
+        ConnectError::Teardown { error, .. } => depth < MAX_DEPTH && connect_panicked(error, depth + 1),
     }
 }
 

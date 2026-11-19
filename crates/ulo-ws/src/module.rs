@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures_core::stream::BoxStream;
-use ulo::{BoxError, BoxFuture, Bound, Meta, Module, ModuleDef, ModuleIdentity, ModuleSettings, Timer};
+use ulo::{
+    BoxError, BoxFuture, Bound, FromContainer, Key, LookupError, Meta, Module, ModuleDef, ModuleIdentity, ModuleSettings, Requirement,
+    Resolver, Timer,
+};
 use ulo_http::Upgrades;
 use ulo_transport::Count;
 
@@ -25,9 +28,9 @@ use crate::table::GatewayDefaults;
 /// pub struct AppModule;
 /// ```
 ///
-/// A gateway's mount records handlers and cannot bind, which is why the module exists: without it
-/// a gateway on the HTTP server's port is reachable by nothing and `Dep<Rooms>` is a missing
-/// dependency at `wire()`.
+/// A gateway's mount records handlers and cannot bind, which is why the module exists: `wire()`
+/// refuses a gateway on the HTTP server's port in an application that imports none, naming this
+/// import, and `Dep<Rooms>` is a missing dependency there.
 ///
 /// The module's init hook calls the broadcast adapter's `prepare`, so an adapter that cannot run,
 /// one with no runtime among them, fails `connect` whether or not a gateway is served; each
@@ -148,6 +151,8 @@ impl Module for WsModule {
         let hub = Arc::new(Hub::new(Arc::clone(&self.adapter)));
         m.global();
         m.meta::<Upgrades>().register(Handoff::new(self.defaults.clone(), Arc::clone(&hub)));
+        m.value(HttpPortHandoff);
+        m.export::<HttpPortHandoff>();
         m.meta::<HubMeta>().hub = Some(Arc::clone(&hub));
         m.value(Rooms { adapter: Arc::clone(&self.adapter), hub });
         m.export::<Rooms>();
@@ -158,6 +163,25 @@ impl Module for WsModule {
             let prepared = adapter.prepare();
             async move { prepared }
         });
+    }
+}
+
+/// Bound beside the hand-off the module registers, so a gateway on the HTTP server's port can
+/// declare a read of it and `wire()` refuses one with no `WsModule` imported.
+pub(crate) struct HttpPortHandoff;
+
+/// The read a gateway on the HTTP server's port declares among its connect handler's
+/// dependencies: [`HttpPortHandoff`], reported as `WiringError::NotImported` naming
+/// `WsModule::for_root()` where no module binds it. The connect handler never reads it.
+pub(crate) struct ReadsHandoff;
+
+impl FromContainer for ReadsHandoff {
+    fn describe(req: &mut Requirement) {
+        req.dep_imported(Key::of::<HttpPortHandoff, ()>(), "ulo_ws::WsModule::for_root()");
+    }
+
+    async fn from_container(r: &Resolver<'_>) -> Result<Self, LookupError> {
+        r.dep::<HttpPortHandoff>().await.map(|_| ReadsHandoff)
     }
 }
 

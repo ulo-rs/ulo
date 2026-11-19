@@ -1147,6 +1147,8 @@ impl CallBody {
         let mut body =
             CallBody { inner, _holder: holder, exec, deadline, call_span, _permit: permit, ended, tracking: tracked, expired: false };
         if ended {
+            // A trailers-only reply: the head, which carries the status, is the final write.
+            body.exec.commit();
             body.report(false);
         }
         body
@@ -1160,9 +1162,11 @@ impl CallBody {
         }
     }
 
-    /// Ends the body with `status` in its trailers, the rest of the reply dropped unwritten.
+    /// Ends the body with `status` in its trailers, the rest of the reply dropped unwritten. The
+    /// trailers are the final write, so the answer commits here.
     fn end_with(&mut self, status: Status) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         self.ended = true;
+        self.exec.commit();
         self.deadline = None;
         self.report(status.code() == Code::Ok);
         record_status(&self.call_span, status.code());
@@ -1220,6 +1224,8 @@ impl http_body::Body for CallBody {
                     if let Some(code) = code {
                         record_status(&this.call_span, code);
                     }
+                    // The trailers are the reply's final write.
+                    this.exec.commit();
                     this.ended = true;
                     this.report(code == Some(Code::Ok));
                 } else if this.inner.is_end_stream() {
@@ -1272,6 +1278,83 @@ mod tests {
 
     /// The pushback is whole milliseconds, a part millisecond rounded up so a hint is never shorter
     /// than the setting, and clamped to the signed 32-bit range gRFC A6 gives the value.
+    /// A body yielding its frames from the back of the vector.
+    struct Frames(Vec<Frame<Bytes>>);
+
+    impl http_body::Body for Frames {
+        type Data = Bytes;
+        type Error = Infallible;
+
+        fn poll_frame(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+            Poll::Ready(self.get_mut().0.pop().map(Ok))
+        }
+    }
+
+    /// A body that panics as it is polled.
+    struct Panics;
+
+    impl http_body::Body for Panics {
+        type Data = Bytes;
+        type Error = Infallible;
+
+        fn poll_frame(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+            panic!("the reply body panics")
+        }
+    }
+
+    struct Root;
+
+    impl ulo::Module for Root {
+        fn identity(&self) -> ulo::ModuleIdentity {
+            ulo::ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, _m: &mut ulo::ModuleDef<'_>) {}
+    }
+
+    /// Replies held by the test past the drain's end: one read to its trailers, a trailers-only
+    /// one, whose head is its final write, and one whose panic ended it with `INTERNAL` trailers are
+    /// committed and not abandoned, and one read short of its trailers is abandoned. The drain window is zero, so the drain ends as it begins.
+    #[tokio::test]
+    async fn a_reply_written_to_its_trailers_is_not_abandoned_and_one_short_of_them_is() {
+        let app = ulo::App::builder(Root)
+            .runtime(ulo_runtime_tokio::Tokio::current())
+            .drain_timeout(Duration::ZERO)
+            .wire()
+            .expect("wires")
+            .connect()
+            .await
+            .expect("connects");
+        let handle = app.handle();
+        let admission = Admission::new(None);
+        let body = |exec: Execution, inner: HttpBody| {
+            let handle = exec.handle();
+            let permit = admission.try_admit().expect("an unlimited admission admits");
+            CallBody::new(inner, Arc::new(exec), handle, None, Span::none(), permit, false)
+        };
+        let open = || Execution::open(&handle.root(), ulo::ExecOptions::new()).expect("an execution opens");
+        let frames = || {
+            let mut trailers = HeaderMap::new();
+            trailers.insert(GRPC_STATUS, HeaderValue::from_static("0"));
+            HttpBody::new(Frames(vec![Frame::trailers(trailers), Frame::data(Bytes::from_static(b"message"))]))
+        };
+        let mut written = body(open(), frames());
+        let mut short = body(open(), frames());
+        let trailers_only = body(open(), HttpBody::empty());
+        let mut panicked = body(open(), HttpBody::new(Panics));
+        while poll_fn(|cx| Pin::new(&mut written).poll_frame(cx)).await.is_some() {}
+        let ended = poll_fn(|cx| Pin::new(&mut panicked).poll_frame(cx)).await;
+        assert!(ended.is_some_and(|frame| frame.is_ok_and(|frame| frame.is_trailers())), "the panic ends the reply with trailers");
+        assert!(poll_fn(|cx| Pin::new(&mut short).poll_frame(cx)).await.is_some(), "the message frame");
+
+        let report = handle.close(ulo::Signal::new("test")).await.expect("shutdown reported a failure");
+        assert_eq!(
+            report.abandoned, 1,
+            "the replies written to their trailers are not abandoned; the one short of its trailers is"
+        );
+        drop((written, short, trailers_only, panicked, app));
+    }
+
     #[test]
     fn the_pushback_rounds_up_to_a_millisecond_and_stops_at_i32_max() {
         let cases = [

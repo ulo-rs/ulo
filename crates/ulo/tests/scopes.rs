@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use common::*;
 use ulo::scope::{Auto, PerExecution};
-use ulo::{App, Connected, Dep, ExecOptions, Execution, Ext, HandlerSpec, LookupError, MountedHandler};
+use ulo::{App, Connected, Dep, ExecOptions, Execution, Ext, FailureReason, HandlerSpec, LookupError, MountedHandler};
 
 struct A;
 struct User;
@@ -131,6 +131,70 @@ async fn an_execution_scoped_binding_is_built_once_per_execution() {
     let second = app.execute(ExecOptions::new(), async |exec| exec.get::<Svc>().await.unwrap().into_arc()).await.unwrap();
     assert_eq!(built.get(), 2, "the second execution built its own");
     assert!(!Arc::ptr_eq(&first, &second));
+    close(app).await;
+}
+
+/// The failure of an execution-scoped build is kept for its execution as an instance is: five
+/// readers awaiting the build together run its body once, a reader after them in the same
+/// execution gets the same error without a build, and another execution builds again. The build
+/// waits at a gate until every reader has polled once, so all five are waiting on it when it fails.
+#[tokio::test]
+async fn a_failed_execution_scoped_build_runs_once_and_its_error_is_kept_for_the_execution() {
+    let built = Count::new();
+    let gate = Gate::new(false);
+    let (c, g) = (built.clone(), Arc::clone(&gate));
+    let app = connected(Mod::<A>::new(move |m| {
+        let (c, g) = (c.clone(), Arc::clone(&g));
+        m.try_execution(move || {
+            c.bump();
+            let g = Arc::clone(&g);
+            async move {
+                g.pass().await;
+                Err::<Svc, Boom>(Boom::new("the tenant is unknown"))
+            }
+        });
+    }))
+    .await;
+
+    app.execute(ExecOptions::new(), async |exec| {
+        let mut reads: Vec<_> = (0..5).map(|_| Box::pin(exec.get::<Svc>())).collect();
+        std::future::poll_fn(|cx| {
+            for read in reads.iter_mut() {
+                assert!(read.as_mut().poll(cx).is_pending(), "the build waits at the gate");
+            }
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert_eq!(built.get(), 1, "one build in flight for five readers");
+        gate.open();
+        let mut answers = Vec::new();
+        for read in reads {
+            answers.push(read.await);
+        }
+        assert_eq!(built.get(), 1, "the readers waiting on the failed build share it");
+        for answer in &answers {
+            let Err(LookupError::Construct { reason: FailureReason::Errored(source), .. }) = answer else {
+                panic!("each reader gets the build's failure, got: {:?}", answer.as_ref().err());
+            };
+            assert_eq!(source.downcast_ref::<Boom>().map(|boom| boom.0.as_str()), Some("the tenant is unknown"), "the original, by type");
+        }
+
+        let later = exec.get::<Svc>().await;
+        assert_eq!(built.get(), 1, "a later reader in the execution runs no build");
+        let Err(LookupError::Construct { reason: FailureReason::Errored(source), .. }) = later else {
+            panic!("a later reader gets the kept failure, got: {:?}", later.err());
+        };
+        assert!(source.downcast_ref::<Boom>().is_some(), "the kept failure still holds the original");
+    })
+    .await
+    .unwrap();
+
+    app.execute(ExecOptions::new(), async |exec| {
+        assert!(exec.get::<Svc>().await.is_err());
+    })
+    .await
+    .unwrap();
+    assert_eq!(built.get(), 2, "another execution builds again");
     close(app).await;
 }
 
