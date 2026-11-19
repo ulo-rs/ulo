@@ -63,6 +63,8 @@ pub struct Server<L: Link> {
     pub(crate) shed_retry_after: Duration,
     /// Set by `prepare`.
     pub(crate) shared: Option<Arc<Shared>>,
+    /// The log `shared`'s admission counts into, set by `prepare` and named by `bind`.
+    pub(crate) shed: Option<ShedLog>,
     /// Set by `bind`, taken by `serve`.
     pub(crate) inbound: Mutex<Option<Inbound>>,
     /// Raised by `close`; `serve` aborts its calls and returns.
@@ -79,6 +81,7 @@ impl<L: Link> Server<L> {
             timeout_grace: Bound::Default,
             shed_retry_after: DEFAULT_SHED_RETRY_AFTER,
             shared: None,
+            shed: None,
             inbound: Mutex::new(None),
             closing: Watch::new(false),
         }
@@ -291,6 +294,8 @@ impl<L: Link> ulo::Server for Server<L> {
             );
         }
         let limit = self.max_inflight.max_inflight();
+        let shed = ShedLog::new(<Rpc as Transport>::KEY, Arc::clone(mounted.timer()));
+        self.shed = Some(shed.clone());
         self.shared = Some(Arc::new(Shared {
             app: mounted.app().clone(),
             timer: Arc::clone(mounted.timer()),
@@ -301,7 +306,7 @@ impl<L: Link> ulo::Server for Server<L> {
             link: L::NAME,
             admission: Admission::new(limit)
                 .retry_after(self.shed_retry_after)
-                .logged(ShedLog::new(<Rpc as Transport>::KEY, Arc::clone(mounted.timer()))),
+                .logged(shed),
             grace: grace_of(self.timeout_grace),
             queued: queue::Limits::of(self.max_queued_items, self.max_queued_bytes),
             calls: Mutex::new(HashMap::new()),
@@ -319,6 +324,9 @@ impl<L: Link> ulo::Server for Server<L> {
         };
         let inbound = self.link.listen(&subscriptions(&shared.routes)).await?;
         *self.inbound.lock().unwrap_or_else(PoisonError::into_inner) = Some(inbound);
+        if let Some(shed) = &self.shed {
+            shed.set_server(server_name(L::NAME, &self.link.bound(), self.link.endpoint()));
+        }
         Ok(())
     }
 
@@ -391,6 +399,20 @@ impl<L: Link> ulo::Server for Server<L> {
     /// What the link reports, so a TCP or UDP server on port 0 shows its port.
     fn bound(&self) -> Vec<BoundAddr> {
         self.link.bound()
+    }
+}
+
+/// What an RPC server's shed lines name in `server`: the link's name, then the addresses it bound,
+/// or for a link binding none the endpoint it answers, which the link has redacted.
+fn server_name(link: &str, bound: &[BoundAddr], endpoint: Option<String>) -> String {
+    let at = if bound.is_empty() {
+        endpoint
+    } else {
+        Some(bound.iter().map(|bound| bound.addr.to_string()).collect::<Vec<_>>().join(", "))
+    };
+    match at {
+        Some(at) if !at.is_empty() => format!("{link} {at}"),
+        _ => link.to_owned(),
     }
 }
 
@@ -538,5 +560,30 @@ pub(crate) fn shape_name(shape: Shape) -> &'static str {
         Shape::ClientStreaming => "client-streaming",
         Shape::Bidi => "bidirectional-streaming",
         _ => "streaming",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ulo::BoundAddr;
+
+    use super::server_name;
+
+    #[test]
+    fn a_link_binding_addresses_is_named_by_them() {
+        let bound = [BoundAddr::new("rpc", "127.0.0.1:7000".parse().expect("an address")), BoundAddr::new("rpc", "[::1]:7000".parse().expect("an address"))];
+        assert_eq!(server_name("tcp", &bound, Some("tcp://ignored:1".to_owned())), "tcp 127.0.0.1:7000, [::1]:7000");
+    }
+
+    /// The link redacts its endpoint; the server writes it as answered, a comma inside included.
+    #[test]
+    fn a_link_binding_none_is_named_by_its_endpoint_as_answered() {
+        assert_eq!(server_name("rabbitmq", &[], Some("amqp://h/v,x".to_owned())), "rabbitmq amqp://h/v,x");
+    }
+
+    #[test]
+    fn a_link_with_neither_is_named_alone() {
+        assert_eq!(server_name("scripted", &[], None), "scripted");
+        assert_eq!(server_name("scripted", &[], Some(String::new())), "scripted");
     }
 }

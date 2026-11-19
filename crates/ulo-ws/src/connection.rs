@@ -642,10 +642,11 @@ pub(crate) async fn handshake(accept: Accept, head: Parts, peer: Option<SocketAd
         Ok(checked) => checked,
         Err(refusal) => return Handshake::Refuse(refusal),
     };
-    if let Err(refusal) = accept.gateway.origins.check(&head) {
+    let answers = ulo_http::__private::handshake_answers(&head.extensions);
+    let forwarded = answers.forwarded_host(&head.headers, peer);
+    if let Err(refusal) = accept.gateway.origins.check(&head, forwarded.as_deref()) {
         return Handshake::Refuse(refusal);
     }
-    let answers = ulo_http::__private::handshake_answers(&head.extensions);
     if accept.tracker.is_draining() {
         return Handshake::Refuse(refusal(ConnectRefused::shutting_down(), &answers));
     }

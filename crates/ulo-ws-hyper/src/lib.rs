@@ -306,6 +306,7 @@ impl<L: Listener> ulo::Server for ServerOn<L> {
         // The subscription is live before `bind` returns. A failure drops `serve` and its
         // listeners, so the server holds no socket.
         table.start().await?;
+        table.bound_at(&addrs);
         self.bound = addrs.into_iter().map(|addr| BoundAddr::new(<Ws as Transport>::KEY, addr).tls(secure)).collect();
         let mut http1 = http1::Builder::new();
         http1

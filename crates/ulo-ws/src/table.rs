@@ -10,6 +10,7 @@
 //! let table = GatewayTable::own_port("my_server::Server", &mounted, &defaults, &mut failures);
 //! // `bind`
 //! table.start().await?;
+//! table.bound_at(&addrs);
 //! // each upgrade request
 //! match table.handshake(head, peer).await {
 //!     Handshake::Switch(switch) => {
@@ -25,7 +26,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 #[cfg(feature = "conformance-probe")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -229,6 +230,45 @@ struct Inner {
     tracker: Arc<Tracker>,
     /// Counts the connections refused over a gateway's `max_connections`.
     shed: ShedLog,
+    /// On the HTTP server's port, the bound listeners of the HTTP servers sharing the hand-off,
+    /// each with its shed log; read on every upgrade, written once per server at its bind.
+    listeners: RwLock<Listeners>,
+}
+
+/// The listeners [`GatewayTable::listening`] recorded, as many as the HTTP servers bound, never
+/// more: a request is matched to one, and no address a request arrives on adds one.
+#[derive(Default)]
+struct Listeners(Vec<(SocketAddr, ShedLog)>);
+
+impl Listeners {
+    /// Adds each of `addrs` not recorded yet, its log from `log` named by the address.
+    fn register(&mut self, addrs: &[SocketAddr], log: impl Fn() -> ShedLog) {
+        for addr in addrs {
+            if !self.0.iter().any(|(recorded, _)| recorded == addr) {
+                let shed = log();
+                shed.set_server(addr.to_string());
+                self.0.push((*addr, shed));
+            }
+        }
+    }
+
+    fn log_for(&self, local: SocketAddr) -> Option<ShedLog> {
+        let listener = matched(self.0.iter().map(|(addr, _)| *addr), local)?;
+        self.0.iter().find(|(addr, _)| *addr == listener).map(|(_, shed)| shed.clone())
+    }
+}
+
+/// The listener among `listeners` a connection whose local address is `local` arrived on: one on
+/// `local`'s port whose address is `local`'s, else one on the port bound to the unspecified address
+/// of `local`'s family, else one bound to the other family's, as a dual-stack `[::]` listener
+/// accepts IPv4. An IPv4-mapped IPv6 address is read as the IPv4 address it maps.
+fn matched(listeners: impl Iterator<Item = SocketAddr> + Clone, local: SocketAddr) -> Option<SocketAddr> {
+    let ip = local.ip().to_canonical();
+    let on_port = listeners.filter(|listener| listener.port() == local.port());
+    let exact = on_port.clone().find(|listener| listener.ip().to_canonical() == ip);
+    let family = || on_port.clone().find(|listener| listener.ip().is_unspecified() && listener.is_ipv4() == ip.is_ipv4());
+    let any = || on_port.clone().find(|listener| listener.ip().is_unspecified());
+    exact.or_else(family).or_else(any)
 }
 
 impl GatewayTable {
@@ -278,7 +318,7 @@ impl GatewayTable {
         hub.record_gateways(&gateways);
         let tracker = Tracker::new(defaults.server_max_inflight.max_inflight(), defaults.messages_read.clone(), defaults.answer_hold.clone());
         let shed = ShedLog::new(<WsConnect as Transport>::KEY, Arc::clone(&runtime) as Arc<dyn Timer>);
-        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker, shed }) }
+        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker, shed, listeners: RwLock::default() }) }
     }
 
     /// Each gateway's path, its controller's prefix joined.
@@ -312,11 +352,49 @@ impl GatewayTable {
     /// port, and `Bearer` and one second, its defaults, on a standalone server's.
     ///
     /// `peer` is the client's address, which `ConnectionInfo::peer` reports.
+    ///
+    /// A connection refused over `max_connections` is counted into the table's shed log, whose
+    /// `server` field [`bound_at`](Self::bound_at) names.
     pub async fn handshake(&self, head: Parts, peer: Option<SocketAddr>) -> Handshake {
+        self.handshake_logged(head, peer, self.inner.shed.clone()).await
+    }
+
+    /// [`handshake`](Self::handshake) on the HTTP server's port, where the gateways are reached
+    /// through every listener of every HTTP server sharing the hand-off: a refusal is counted into
+    /// the shed log of the listener `local` arrived on, as [`matched`] finds it, or
+    /// into the table's own, named `http port`, when the host reported no local address or no
+    /// listener matches.
+    pub(crate) async fn handshake_on(&self, head: Parts, peer: Option<SocketAddr>, local: Option<SocketAddr>) -> Handshake {
+        let shed = local.and_then(|local| self.inner.listeners.read().unwrap_or_else(PoisonError::into_inner).log_for(local));
+        self.handshake_logged(head, peer, shed.unwrap_or_else(|| self.inner.shed.clone())).await
+    }
+
+    /// Records the addresses an HTTP server sharing the hand-off bound, each with a shed log
+    /// named by it, the name that server's own shed log carries for a single listener.
+    pub(crate) fn listening(&self, addrs: &[SocketAddr]) {
+        let runtime = Arc::clone(&self.inner.runtime) as Arc<dyn Timer>;
+        self.inner.listeners.write().unwrap_or_else(PoisonError::into_inner).register(addrs, || {
+            ShedLog::new(<WsConnect as Transport>::KEY, Arc::clone(&runtime))
+        });
+    }
+
+    async fn handshake_logged(&self, head: Parts, peer: Option<SocketAddr>, shed: ShedLog) -> Handshake {
         let Some(gateway) = self.gateway_for(head.uri.path()) else {
             return Handshake::Refuse(Refusal::new(StatusCode::NOT_FOUND, "no gateway at this path"));
         };
-        connection::handshake(self.accept(gateway), head, peer).await
+        connection::handshake(self.accept(gateway, shed), head, peer).await
+    }
+
+    /// Names the server in the `server` field of the lines the table's shed log writes, a
+    /// standalone server's call once bound: `addrs`, the addresses it bound, comma-separated.
+    /// Unnamed, the field is empty.
+    pub fn bound_at(&self, addrs: &[SocketAddr]) {
+        self.inner.shed.set_server(addrs.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "));
+    }
+
+    /// Names the server on the table's own shed log, where it binds no address.
+    pub(crate) fn shed_server(&self, server: &str) {
+        self.inner.shed.set_server(server);
     }
 
     /// Raises the drain on this table's connections: idle ones close with 1001 at once, busy ones
@@ -343,14 +421,89 @@ impl GatewayTable {
         self.inner.gateways.iter().find(|gateway| same_path(&gateway.path, path)).cloned()
     }
 
-    fn accept(&self, gateway: Arc<GatewayRuntime>) -> Accept {
+    fn accept(&self, gateway: Arc<GatewayRuntime>, shed: ShedLog) -> Accept {
         Accept {
             gateway,
             hub: Arc::clone(&self.inner.hub),
             app: self.inner.app.clone(),
             runtime: Arc::clone(&self.inner.runtime),
             tracker: Arc::clone(&self.inner.tracker),
-            shed: self.inner.shed.clone(),
+            shed,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use ulo::testing::ScriptedTimer;
+    use ulo_transport::ShedLog;
+
+    use super::{Listeners, matched};
+
+    fn addr(text: &str) -> SocketAddr {
+        text.parse().expect("a socket address")
+    }
+
+    /// The listeners `addrs` bound, and how many logs registering them built.
+    fn registered(addrs: &[&str]) -> (Listeners, usize) {
+        let clock = ScriptedTimer::new();
+        let built = std::cell::Cell::new(0);
+        let mut listeners = Listeners::default();
+        let addrs: Vec<SocketAddr> = addrs.iter().map(|text| addr(text)).collect();
+        listeners.register(&addrs, || {
+            built.set(built.get() + 1);
+            ShedLog::new("ws_connect", Arc::new(clock.clone()))
+        });
+        (listeners, built.get())
+    }
+
+    #[test]
+    fn a_connection_is_matched_to_the_listener_it_arrived_on() {
+        let listeners = [addr("0.0.0.0:8080"), addr("[::]:8080"), addr("127.0.0.1:9090"), addr("[::]:7070")];
+        let rows: &[(&str, Option<&str>)] = &[
+            ("127.0.0.1:8080", Some("0.0.0.0:8080")),
+            ("192.0.2.7:8080", Some("0.0.0.0:8080")),
+            ("[::ffff:192.0.2.7]:8080", Some("0.0.0.0:8080")),
+            ("[::1]:8080", Some("[::]:8080")),
+            ("[2001:db8::5]:8080", Some("[::]:8080")),
+            ("127.0.0.1:9090", Some("127.0.0.1:9090")),
+            ("[::ffff:127.0.0.1]:9090", Some("127.0.0.1:9090")),
+            ("10.0.0.1:9090", None),
+            ("10.0.0.1:7070", Some("[::]:7070")),
+            ("127.0.0.1:6060", None),
+        ];
+        for (local, expected) in rows {
+            assert_eq!(matched(listeners.iter().copied(), addr(local)), expected.map(addr), "a connection to {local}");
+        }
+    }
+
+    /// One wildcard listener reached through three destination addresses is one log, and a
+    /// request matching no listener adds none.
+    #[test]
+    fn the_logs_are_the_listeners_bound_whatever_addresses_requests_arrive_on() {
+        let (mut listeners, built) = registered(&["[::]:8080"]);
+        assert_eq!(built, 1);
+        for local in ["127.0.0.1:8080", "[::1]:8080", "[2001:db8::5]:8080"] {
+            assert!(listeners.log_for(addr(local)).is_some(), "a connection to {local} has the listener's log");
+        }
+        assert!(listeners.log_for(addr("127.0.0.1:1")).is_none(), "an unmatched address takes the shared fallback");
+        assert_eq!(listeners.0.len(), 1, "one log for one listener");
+        listeners.register(&[addr("[::]:8080")], || unreachable!("a listener recorded twice"));
+        assert_eq!(listeners.0.len(), 1);
+    }
+
+    /// A second HTTP server sharing the hand-off, an admin port beside the public one, adds its
+    /// listeners beside the first server's.
+    #[test]
+    fn a_second_server_s_listeners_join_the_first_s() {
+        let (mut listeners, _) = registered(&["0.0.0.0:8080"]);
+        let clock = ScriptedTimer::new();
+        listeners.register(&[addr("127.0.0.1:9000")], || ShedLog::new("ws_connect", Arc::new(clock.clone())));
+        assert!(listeners.log_for(addr("192.0.2.7:8080")).is_some(), "the first server's listener is still matched");
+        assert!(listeners.log_for(addr("127.0.0.1:9000")).is_some(), "the second server's listener is matched");
+        assert_eq!(listeners.0.len(), 2);
     }
 }

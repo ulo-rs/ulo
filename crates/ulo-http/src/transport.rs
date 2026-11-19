@@ -77,7 +77,8 @@ impl RequestHead {
     }
 }
 
-/// The peer's address, as an execution input. Behind a proxy it is the proxy's; a
-/// `Forwarded`-aware middleware writes the client's into the extensions.
+/// The peer's address, as an execution input. Behind a proxy it is the proxy's, and
+/// [`HttpCx::client_ip`](crate::HttpCx::client_ip) answers the client's under the server's
+/// `behind_proxy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClientAddr(pub SocketAddr);

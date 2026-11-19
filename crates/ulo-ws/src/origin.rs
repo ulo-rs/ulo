@@ -49,8 +49,14 @@ use crate::connection::Refusal;
 /// | `null`, sent by a sandboxed frame or a `file:` page | any | no |
 /// | not an `http` or `https` origin with a host | any | no |
 ///
-/// A forwarded host (`Forwarded`, `X-Forwarded-Host`) is not read. A deployment whose proxy
-/// rewrites `Host` lists its pages' origins with `origins([..])`.
+/// On the HTTP server's port, a server set `behind_proxy(header, ranges)` compares the host its
+/// proxy reports in place of `Host`, for a handshake whose peer is in `ranges`: with
+/// `ProxyHeader::XForwardedFor` the last value of `X-Forwarded-Host`, with
+/// `ProxyHeader::Forwarded` the `host=` of the header's rightmost element, each the nearest
+/// proxy's, and `Host` when that proxy reports none. Without the setting, from any other peer,
+/// and on a standalone server, a forwarded host is never read, so a client cannot choose the
+/// host it is compared with. A deployment whose proxy rewrites `Host` and reports no forwarded
+/// host lists its pages' origins with `origins([..])`.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Origins {
@@ -104,15 +110,17 @@ impl OriginCheck {
         }
     }
 
-    /// `Ok` for a handshake this admits; the 403 otherwise.
-    pub(crate) fn check(&self, head: &Parts) -> Result<(), Refusal> {
+    /// `Ok` for a handshake this admits; the 403 otherwise. `forwarded` is the host the server's
+    /// trusted proxy reports, `HandshakeAnswers::forwarded_host`, which same-origin compares in
+    /// place of the request's own.
+    pub(crate) fn check(&self, head: &Parts, forwarded: Option<&str>) -> Result<(), Refusal> {
         let mut sent = head.headers.get_all(ORIGIN).iter();
         let Some(origin) = sent.next() else { return Ok(()) };
         let origin = if sent.next().is_some() { None } else { origin.to_str().ok().and_then(WebOrigin::parse) };
         let admitted = match self {
             OriginCheck::Any => true,
             OriginCheck::List(list) => origin.is_some_and(|origin| list.contains(&origin)),
-            OriginCheck::SameOrigin => origin.is_some_and(|origin| same_origin(&origin, head)),
+            OriginCheck::SameOrigin => origin.is_some_and(|origin| same_origin(&origin, head, forwarded)),
         };
         if admitted {
             return Ok(());
@@ -121,7 +129,7 @@ impl OriginCheck {
             OriginCheck::List(_) => "is not one `origins([..])` lists",
             _ => "is not this server's own; `origins([..])` in the gateway defaults lists the origins of the pages it admits",
         };
-        tracing::debug!(origin = ?head.headers.get(ORIGIN), host = ?effective_host(head), path = head.uri.path(), "a WebSocket handshake's `Origin` was refused");
+        tracing::debug!(origin = ?head.headers.get(ORIGIN), host = ?effective_host(head, forwarded), path = head.uri.path(), "a WebSocket handshake's `Origin` was refused");
         Err(Refusal::new(StatusCode::FORBIDDEN, format!("{}: the handshake's `Origin` {why}", ErrorKind::Forbidden)))
     }
 }
@@ -171,14 +179,19 @@ impl WebOrigin {
 
 /// `origin` against the request's effective host, the scheme not compared: a port missing on
 /// either side is the default port of the `Origin`'s scheme.
-fn same_origin(origin: &WebOrigin, head: &Parts) -> bool {
-    let Some((host, port)) = effective_host(head).and_then(host_port) else { return false };
+fn same_origin(origin: &WebOrigin, head: &Parts, forwarded: Option<&str>) -> bool {
+    let Some((host, port)) = effective_host(head, forwarded).and_then(host_port) else { return false };
     host.eq_ignore_ascii_case(&origin.host) && port.unwrap_or(origin.scheme.default_port()) == origin.port
 }
 
-/// The host and port the client addressed, which same-origin compares an `Origin` with: an
-/// absolute-form target's authority, else the one `Host` header's. A forwarded host is not read.
-fn effective_host(head: &Parts) -> Option<&str> {
+/// The host and port the client addressed, which same-origin compares an `Origin` with:
+/// `forwarded`, the host the server's trusted proxy reports, when there is one, else an
+/// absolute-form target's authority, else the one `Host` header's. The caller reads `forwarded`
+/// under `behind_proxy` alone, so without it this reads only what the request itself carries.
+fn effective_host<'a>(head: &'a Parts, forwarded: Option<&'a str>) -> Option<&'a str> {
+    if forwarded.is_some() {
+        return forwarded;
+    }
     if let Some(authority) = head.uri.authority() {
         return Some(authority.as_str());
     }
@@ -237,7 +250,7 @@ mod tests {
     }
 
     fn admits(check: &OriginCheck, host: &str, origin: &str) -> bool {
-        check.check(&head(Some(host), Some(origin))).is_ok()
+        check.check(&head(Some(host), Some(origin)), None).is_ok()
     }
 
     /// The table on `Origins`, row by row.
@@ -287,8 +300,8 @@ mod tests {
         let mut refusals = Vec::new();
         for origins in [Origins::SameOrigin, Origins::from(["https://app.example"]), Origins::Any] {
             let check = OriginCheck::of(&origins, &mut refusals);
-            assert!(check.check(&head(Some("a.example"), None)).is_ok(), "{origins:?}");
-            assert!(check.check(&head(None, None)).is_ok(), "{origins:?} with no `Host` either");
+            assert!(check.check(&head(Some("a.example"), None), None).is_ok(), "{origins:?}");
+            assert!(check.check(&head(None, None), None).is_ok(), "{origins:?} with no `Host` either");
         }
         assert!(refusals.is_empty());
     }
@@ -296,20 +309,38 @@ mod tests {
     #[test]
     fn same_origin_refuses_without_an_authority_or_with_two_hosts_or_two_origins() {
         let check = OriginCheck::SameOrigin;
-        assert!(check.check(&head(None, Some("http://a.example"))).is_err());
+        assert!(check.check(&head(None, Some("http://a.example")), None).is_err());
         let mut two_hosts = head(Some("a.example"), Some("http://a.example"));
         two_hosts.headers.append("host", http::HeaderValue::from_static("a.example"));
-        assert!(check.check(&two_hosts).is_err());
+        assert!(check.check(&two_hosts, None).is_err());
         let mut two_origins = head(Some("a.example"), Some("http://a.example"));
         two_origins.headers.append("origin", http::HeaderValue::from_static("http://a.example"));
-        assert!(check.check(&two_origins).is_err());
+        assert!(check.check(&two_origins, None).is_err());
     }
 
     #[test]
     fn an_absolute_form_target_s_authority_takes_the_place_of_host() {
         let mut absolute = head(Some("other.example"), Some("http://a.example:8080"));
         absolute.uri = "http://a.example:8080/chat".parse().expect("a URI");
-        assert!(OriginCheck::SameOrigin.check(&absolute).is_ok());
+        assert!(OriginCheck::SameOrigin.check(&absolute, None).is_ok());
+    }
+
+    /// A host the trusted proxy reports takes the place of `Host` and of an absolute-form target;
+    /// one naming no host compares equal to no origin.
+    #[test]
+    fn a_forwarded_host_takes_the_place_of_the_request_s_own() {
+        let proxied = head(Some("backend:8080"), Some("https://app.example"));
+        assert!(OriginCheck::SameOrigin.check(&proxied, None).is_err(), "the backend's `Host` is compared without one");
+        assert!(OriginCheck::SameOrigin.check(&proxied, Some("app.example")).is_ok());
+        assert!(OriginCheck::SameOrigin.check(&proxied, Some("app.example:443")).is_ok());
+        assert!(OriginCheck::SameOrigin.check(&proxied, Some("other.example")).is_err());
+        assert!(OriginCheck::SameOrigin.check(&proxied, Some("")).is_err(), "a report naming no host");
+        let on_a_port = head(Some("backend:8080"), Some("https://app.example:8443"));
+        assert!(OriginCheck::SameOrigin.check(&on_a_port, Some("app.example:8443")).is_ok(), "a report keeping the port");
+        assert!(OriginCheck::SameOrigin.check(&on_a_port, Some("app.example")).is_err(), "a report dropping the port, as nginx's `$host` does");
+        let mut absolute = head(Some("backend:8080"), Some("https://app.example"));
+        absolute.uri = "http://backend:8080/chat".parse().expect("a URI");
+        assert!(OriginCheck::SameOrigin.check(&absolute, Some("app.example")).is_ok(), "over an absolute-form target");
     }
 
     #[test]
@@ -339,7 +370,7 @@ mod tests {
 
     #[test]
     fn a_refusal_is_403_with_the_kind_ahead_of_a_reason_naming_the_setting() {
-        let refused = OriginCheck::SameOrigin.check(&head(Some("a.example"), Some("https://evil.example"))).expect_err("a cross-origin page");
+        let refused = OriginCheck::SameOrigin.check(&head(Some("a.example"), Some("https://evil.example")), None).expect_err("a cross-origin page");
         assert_eq!(refused.status(), http::StatusCode::FORBIDDEN);
         assert!(refused.reason().starts_with("forbidden: "), "{}", refused.reason());
         assert!(refused.reason().contains("`origins([..])`"), "{}", refused.reason());
