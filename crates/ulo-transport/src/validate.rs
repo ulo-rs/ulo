@@ -1,7 +1,6 @@
 //! Declarative, opt-in validation through the parameter type (transports DESIGN §2.2).
 
 use std::any::type_name;
-use std::future::Future;
 use std::ops::Deref;
 
 use ulo::{Dependencies, Transport};
@@ -49,16 +48,14 @@ impl<T: Transport, P: FromCall<T> + Validate> FromCall<T> for Valid<P> {
         P::dependencies(d);
     }
 
-    fn from_call(cx: &T::Cx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let value = match P::from_call(cx).await {
-                Ok(value) => value,
-                Err(err) => return Err(err),
-            };
-            match value.validate() {
-                Ok(()) => Ok(Valid(value)),
-                Err(violations) => Err(ExtractError::Invalid { param: outer_name(type_name::<P>()), violations }),
-            }
+    async fn from_call(cx: &T::Cx) -> Result<Self, ExtractError> {
+        let value = match P::from_call(cx).await {
+            Ok(value) => value,
+            Err(err) => return Err(err),
+        };
+        match value.validate() {
+            Ok(()) => Ok(Valid(value)),
+            Err(violations) => Err(ExtractError::Invalid { param: outer_name(type_name::<P>()), violations }),
         }
     }
 }

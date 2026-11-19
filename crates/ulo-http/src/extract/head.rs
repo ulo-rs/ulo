@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::ops::Deref;
 
 use http::HeaderMap;
@@ -24,16 +23,14 @@ impl<H> Deref for Header<H> {
 }
 
 impl<H: headers::Header + Send + 'static> FromCall<Http> for Header<H> {
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let name = H::name();
-            let param = name.as_str();
-            let mut values = cx.headers().get_all(name).iter().peekable();
-            if values.peek().is_none() {
-                return Err(ExtractError::Missing { param });
-            }
-            H::decode(&mut values).map(Header).map_err(|error| ExtractError::Malformed { param, source: cx.app().redact(Box::new(error)) })
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let name = H::name();
+        let param = name.as_str();
+        let mut values = cx.headers().get_all(name).iter().peekable();
+        if values.peek().is_none() {
+            return Err(ExtractError::Missing { param });
         }
+        H::decode(&mut values).map(Header).map_err(|error| ExtractError::Malformed { param, source: cx.app().redact(Box::new(error)) })
     }
 }
 
@@ -51,15 +48,13 @@ impl FromCall<Http> for HeaderMap {
 pub struct LastEventId(pub Option<String>);
 
 impl FromCall<Http> for LastEventId {
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let Some(value) = cx.headers().get(LAST_EVENT_ID) else {
-                return Ok(LastEventId(None));
-            };
-            match std::str::from_utf8(value.as_bytes()) {
-                Ok(id) => Ok(LastEventId(Some(id.to_owned()))),
-                Err(error) => Err(ExtractError::Malformed { param: LAST_EVENT_ID, source: cx.app().redact(Box::new(error)) }),
-            }
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let Some(value) = cx.headers().get(LAST_EVENT_ID) else {
+            return Ok(LastEventId(None));
+        };
+        match std::str::from_utf8(value.as_bytes()) {
+            Ok(id) => Ok(LastEventId(Some(id.to_owned()))),
+            Err(error) => Err(ExtractError::Malformed { param: LAST_EVENT_ID, source: cx.app().redact(Box::new(error)) }),
         }
     }
 }
