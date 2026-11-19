@@ -619,8 +619,8 @@ impl WiringError {
                 f,
                 format!("execution input `{}` has two sources", show(key)),
                 vec![
-                    first.line(&show_module, &show_type),
-                    second.line(&show_module, &show_type),
+                    first.line(show_module, show_type),
+                    second.line(show_module, show_type),
                     "help: an input is seeded by the one transport that declares it, and no module binds it; remove the other source"
                         .to_owned(),
                 ],
