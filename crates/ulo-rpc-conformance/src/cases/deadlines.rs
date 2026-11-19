@@ -963,7 +963,7 @@ impl<L: Link> Link for SlowConnect<L> {
         self.link.bound()
     }
 
-    fn endpoint(&self) -> Option<&str> {
+    fn endpoint(&self) -> Option<String> {
         self.link.endpoint()
     }
 }
@@ -1047,7 +1047,7 @@ impl<L: Link> Link for Tapped<L> {
         self.link.bound()
     }
 
-    fn endpoint(&self) -> Option<&str> {
+    fn endpoint(&self) -> Option<String> {
         self.link.endpoint()
     }
 }
@@ -1117,7 +1117,7 @@ impl<L: Link> Link for Counted<L> {
         self.link.bound()
     }
 
-    fn endpoint(&self) -> Option<&str> {
+    fn endpoint(&self) -> Option<String> {
         self.link.endpoint()
     }
 }
@@ -1175,7 +1175,7 @@ impl<L: Link> Link for MutedCancel<L> {
         self.0.bound()
     }
 
-    fn endpoint(&self) -> Option<&str> {
+    fn endpoint(&self) -> Option<String> {
         self.0.endpoint()
     }
 }
@@ -1245,7 +1245,7 @@ impl<L: Link> Link for Stamped<L> {
         self.link.bound()
     }
 
-    fn endpoint(&self) -> Option<&str> {
+    fn endpoint(&self) -> Option<String> {
         self.link.endpoint()
     }
 }

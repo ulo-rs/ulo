@@ -132,13 +132,15 @@ pub trait Link: Send + Sync + 'static {
         Vec::new()
     }
 
-    /// The broker the link was configured with, as given: a URL, or a comma-separated list of
-    /// URLs or `host:port`. A server binding no address names itself by it in its shed log's
-    /// `server` field, after [`NAME`](Self::NAME), each element written through
-    /// `ulo::secrets::setting_url`, so neither a password nor a query reaches the log. `None`
-    /// leaves the field at `NAME` alone, so a link wrapping another forwards it as it forwards
-    /// `bound`; a link answering [`bound`](Self::bound) is named by its addresses instead.
-    fn endpoint(&self) -> Option<&str> {
+    /// The broker the link was configured with, already redacted: its URL written through
+    /// `ulo::secrets::setting_url`, so no userinfo, query or fragment is in it, or, for a link
+    /// whose setting is a list (NATS servers, Kafka brokers), each element written so and joined
+    /// with `,`. A link whose setting is one URL redacts it whole, since a comma may sit inside
+    /// its password. A server binding no address names itself by it in its shed log's `server`
+    /// field, after [`NAME`](Self::NAME), as it is answered. `None` leaves the field at `NAME`
+    /// alone, so a link wrapping another forwards it as it forwards `bound`; a link answering
+    /// [`bound`](Self::bound) is named by its addresses instead.
+    fn endpoint(&self) -> Option<String> {
         None
     }
 }

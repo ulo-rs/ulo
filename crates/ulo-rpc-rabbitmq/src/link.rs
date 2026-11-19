@@ -555,8 +555,8 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for RabbitMq {
     const NAME: &'static str = "rabbitmq";
 
-    fn endpoint(&self) -> Option<&str> {
-        Some(&self.url)
+    fn endpoint(&self) -> Option<String> {
+        Some(ulo::secrets::setting_url(&self.url))
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -1624,11 +1624,15 @@ mod tests {
 
     use super::*;
 
-    /// The server's shed log names the link by it, redacted there.
+    /// One URL, redacted whole: a comma inside the password does not split it.
     #[test]
-    fn the_endpoint_is_the_url_as_given() {
-        let url = "amqp://user:pw@broker:5672/%2f?heartbeat=10";
-        assert_eq!(Link::endpoint(&RabbitMq::url(url)), Some(url));
+    fn the_endpoint_is_the_url_without_its_credentials() {
+        let rows = [("amqp://user:pw@broker:5672/%2f?heartbeat=10", "amqp://broker:5672/%2f"), ("amqp://u:123,456@h/v", "amqp://h/v")];
+        for (url, expected) in rows {
+            let endpoint = Link::endpoint(&RabbitMq::url(url)).expect("an endpoint");
+            assert_eq!(endpoint, expected, "{url}");
+            assert!(!endpoint.contains("123") && !endpoint.contains("u:"), "a credential reached the endpoint: {endpoint}");
+        }
     }
 
     /// The server's writer stopped before it publishes a reply to a named queue, for a test to

@@ -2,6 +2,7 @@
 //! part of the public API: names and shapes here change with their users.
 
 use std::marker::PhantomData;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
@@ -51,6 +52,16 @@ impl HandshakeAnswers {
             Some(config) => render::retry_after(config.shed_retry_after),
             None => render::retry_after(HttpConfig::default().shed_retry_after),
         }
+    }
+
+    /// The host a handshake from `peer` carrying `headers` addressed as the server's trusted
+    /// proxy reports it, which the `Origin` check compares in place of `Host`: read only under the
+    /// server's `behind_proxy`, from a peer in its ranges, and from the header it names
+    /// (`X-Forwarded-Host` with `XForwardedFor`, `host=` in `Forwarded`). `None` otherwise, and
+    /// always for a standalone WebSocket server, which has no such setting.
+    pub fn forwarded_host(&self, headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<String> {
+        let config = self.0.as_ref()?;
+        crate::client_ip::forwarded_host(peer, headers, config.behind_proxy.as_ref())
     }
 }
 

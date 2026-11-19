@@ -167,23 +167,44 @@ impl<B: Backend> Server<B> {
     /// List only the proxies in front of this server: a client inside a trusted range can name
     /// any address it likes. Each proxy listed must write `header` on every request it forwards,
     /// appending the address it saw or replacing the header with it, since a copy the client sent
-    /// and the proxy passes through is read as the proxies' own. For nginx, with
-    /// [`ProxyHeader::XForwardedFor`], which appends:
+    /// and the proxy passes through is read as the proxies' own. The same setting decides the
+    /// host a WebSocket handshake's `Origin` is compared with on this server's port: the host the
+    /// trusted proxy reports in `X-Forwarded-Host`, or in the `host=` of its `Forwarded` element,
+    /// when it reports one. Each proxy listed replaces that host on every request as it does the
+    /// address: one a client sent and the proxy passes through is compared as the proxy's. For
+    /// nginx, with [`ProxyHeader::XForwardedFor`], which appends:
     ///
     /// ```nginx
-    /// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    /// proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;
+    /// proxy_set_header X-Forwarded-Host $http_host;
     /// ```
     ///
-    /// and with [`ProxyHeader::Forwarded`], which replaces, bracketing and quoting an IPv6
-    /// address as RFC 7239 §6 requires:
+    /// and with [`ProxyHeader::Forwarded`], which replaces, the `map`s in the `http` block, the
+    /// first bracketing and quoting an IPv6 address as RFC 7239 §6 requires and writing a client
+    /// on a unix socket as `unknown`, as nginx's own recipe does, the second admitting only the
+    /// characters of a host and port:
     ///
     /// ```nginx
     /// map $remote_addr $forwarded_for {
-    ///     ~:      "for=\"[$remote_addr]\"";
-    ///     default "for=$remote_addr";
+    ///     ~^unix:  "for=unknown";
+    ///     ~:       "for=\"[$remote_addr]\"";
+    ///     default  "for=$remote_addr";
     /// }
-    /// proxy_set_header Forwarded $forwarded_for;
+    /// map $http_host $forwarded_host {
+    ///     "~^[A-Za-z0-9.:\[\]-]+$"  $http_host;
+    ///     default                  "";
+    /// }
+    /// # in the `location`
+    /// proxy_set_header Forwarded "$forwarded_for;host=\"$forwarded_host\"";
     /// ```
+    ///
+    /// nginx accepts `"`, `,` and `;` in a `Host`, so a `Host` written into `Forwarded` without
+    /// the second `map` lets a client close the quoted string and append an element naming any
+    /// address, which `client_ip()` answers. `$http_host` keeps the port the browser addressed,
+    /// which an `Origin` on a port other than its scheme's default carries; `$host` drops it. A
+    /// `location` that sets any `proxy_set_header`, as a WebSocket one setting `Upgrade` and
+    /// `Connection` does, inherits none from the enclosing block, so it repeats these lines. With
+    /// `unknown` the walk ends there and `client_ip()` answers the proxy's own address.
     pub fn behind_proxy<R>(mut self, header: ProxyHeader, ranges: impl IntoIterator<Item = R>) -> Self
     where
         R: TryInto<Cidr>,
@@ -523,6 +544,9 @@ impl<B: Backend> ulo::Server for Server<B> {
         shed.set_server(addrs.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "));
         let secure = tls.is_some();
         self.backend.bind(listeners, tls, service, &self.config).await?;
+        for handler in &self.upgrades {
+            handler.listening(&addrs);
+        }
         self.bound = addrs.into_iter().map(|addr| BoundAddr::new(<Http as Transport>::KEY, addr).tls(secure)).collect();
         if let Err(error) = upgrades_bound(&self.upgrades, mounted.app()).await {
             // `listen()` closes the servers that bound before this one, not this one: its

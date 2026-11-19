@@ -303,8 +303,9 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for Kafka {
     const NAME: &'static str = "kafka";
 
-    fn endpoint(&self) -> Option<&str> {
-        Some(&self.brokers)
+    /// Each comma-separated broker, as the setting is read.
+    fn endpoint(&self) -> Option<String> {
+        Some(self.brokers.split(',').map(|broker| ulo::secrets::setting_url(broker.trim())).collect::<Vec<_>>().join(","))
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -1831,11 +1832,13 @@ mod tests {
 
     use super::*;
 
-    /// The server's shed log names the link by it, redacted there.
+    /// The server's shed log names the link by it as answered.
     #[test]
-    fn the_endpoint_is_the_broker_list_as_given() {
-        let brokers = "broker1:9092,ssl://broker2:9093";
-        assert_eq!(Link::endpoint(&Kafka::brokers(brokers)), Some(brokers));
+    fn the_endpoint_is_each_broker_without_its_credentials() {
+        let brokers = "user:pass@broker1:9092, ssl://u:pass@broker2:9093?x=pass,broker3:9094";
+        let endpoint = Link::endpoint(&Kafka::brokers(brokers)).expect("an endpoint");
+        assert_eq!(endpoint, "broker1:9092,ssl://broker2:9093,broker3:9094");
+        assert!(!endpoint.contains("pass") && !endpoint.contains("user"), "a credential reached the endpoint: {endpoint}");
     }
 
     /// A clock that `sleep` advances, starting at `start`, or, `refusing`, one whose runtime has

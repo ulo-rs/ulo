@@ -403,11 +403,10 @@ impl<L: Link> ulo::Server for Server<L> {
 }
 
 /// What an RPC server's shed lines name in `server`: the link's name, then the addresses it bound,
-/// or for a link binding none the endpoint it was configured with, each comma-separated element
-/// through `setting_url`.
-fn server_name(link: &str, bound: &[BoundAddr], endpoint: Option<&str>) -> String {
+/// or for a link binding none the endpoint it answers, which the link has redacted.
+fn server_name(link: &str, bound: &[BoundAddr], endpoint: Option<String>) -> String {
     let at = if bound.is_empty() {
-        endpoint.map(|endpoint| endpoint.split(',').map(ulo::secrets::setting_url).collect::<Vec<_>>().join(","))
+        endpoint
     } else {
         Some(bound.iter().map(|bound| bound.addr.to_string()).collect::<Vec<_>>().join(", "))
     };
@@ -573,26 +572,18 @@ mod tests {
     #[test]
     fn a_link_binding_addresses_is_named_by_them() {
         let bound = [BoundAddr::new("rpc", "127.0.0.1:7000".parse().expect("an address")), BoundAddr::new("rpc", "[::1]:7000".parse().expect("an address"))];
-        assert_eq!(server_name("tcp", &bound, Some("tcp://user:pw@ignored:1")), "tcp 127.0.0.1:7000, [::1]:7000");
+        assert_eq!(server_name("tcp", &bound, Some("tcp://ignored:1".to_owned())), "tcp 127.0.0.1:7000, [::1]:7000");
     }
 
+    /// The link redacts its endpoint; the server writes it as answered, a comma inside included.
     #[test]
-    fn a_broker_endpoint_is_written_without_userinfo_query_or_fragment() {
-        let rows: &[(&str, &str)] = &[
-            ("nats://user:pw-in-userinfo@broker:4222/x?token=pw-in-query#frag", "nats nats://broker:4222/x"),
-            ("nats://a:pw-one@n1:4222, nats://n2:4222?auth=pw-two", "nats nats://n1:4222,nats://n2:4222"),
-            ("key-in-userinfo@broker1:9092,broker2:9092", "nats broker1:9092,broker2:9092"),
-        ];
-        for (endpoint, expected) in rows {
-            let named = server_name("nats", &[], Some(endpoint));
-            assert_eq!(named, *expected, "{endpoint}");
-            assert!(!named.contains("pw") && !named.contains("key"), "a credential reached the name: {named}");
-        }
+    fn a_link_binding_none_is_named_by_its_endpoint_as_answered() {
+        assert_eq!(server_name("rabbitmq", &[], Some("amqp://h/v,x".to_owned())), "rabbitmq amqp://h/v,x");
     }
 
     #[test]
     fn a_link_with_neither_is_named_alone() {
         assert_eq!(server_name("scripted", &[], None), "scripted");
-        assert_eq!(server_name("scripted", &[], Some("")), "scripted");
+        assert_eq!(server_name("scripted", &[], Some(String::new())), "scripted");
     }
 }

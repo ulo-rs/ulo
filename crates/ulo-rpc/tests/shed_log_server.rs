@@ -1,7 +1,7 @@
 //! An RPC server over a link binding no address names itself in its shed lines' `server` field by
-//! the link's name and the endpoint the link was configured with, written without its userinfo
-//! or query (transports DESIGN §2.8). The link is scripted, so a broker's URL reaches the server
-//! with no broker behind it.
+//! the link's name and the endpoint the link answers, which a broker link redacts as the five
+//! broker crates' unit tests pin (transports DESIGN §2.8). The link is scripted, redacting its
+//! URL as they do, so a broker's URL reaches the server with no broker behind it.
 //!
 //! One test in this binary: a `tracing` callsite first reached on a thread with no subscriber,
 //! while another thread installs one, can keep the interest it computed without it.
@@ -79,8 +79,8 @@ impl Link for Scripted {
         Capabilities::new(DeliveryMode::Addressed).codec(Codec::Json)
     }
 
-    fn endpoint(&self) -> Option<&str> {
-        Some(ENDPOINT)
+    fn endpoint(&self) -> Option<String> {
+        Some(ulo::secrets::setting_url(ENDPOINT))
     }
 
     async fn listen(&self, _patterns: &[Subscription]) -> Result<Inbound, BoxError> {

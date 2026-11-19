@@ -347,8 +347,8 @@ const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separ
 impl Link for Mqtt {
     const NAME: &'static str = "mqtt";
 
-    fn endpoint(&self) -> Option<&str> {
-        Some(&self.url)
+    fn endpoint(&self) -> Option<String> {
+        Some(ulo::secrets::setting_url(&self.url))
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -1988,11 +1988,12 @@ mod tests {
 
     use super::*;
 
-    /// The server's shed log names the link by it, redacted there.
+    /// The server's shed log names the link by it as answered.
     #[test]
-    fn the_endpoint_is_the_url_as_given() {
-        let url = "mqtt://user:pw@broker:1883?client_id=x";
-        assert_eq!(Link::endpoint(&Mqtt::url(url)), Some(url));
+    fn the_endpoint_is_the_url_without_its_credentials() {
+        for (url, expected) in [("mqtt://user:pw@broker:1883?client_id=x", "mqtt://broker:1883"), ("mqtts://u:p,w@[::1]:8883", "mqtts://[::1]:8883")] {
+            assert_eq!(Link::endpoint(&Mqtt::url(url)).as_deref(), Some(expected), "{url}");
+        }
     }
 
     #[test]

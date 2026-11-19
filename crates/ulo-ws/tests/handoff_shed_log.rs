@@ -1,6 +1,8 @@
 //! A connection refused over a gateway's `max_connections` on the HTTP server's port is counted
-//! into a `ShedLog` (transports DESIGN §2.8, §4.2) whose `server` field is the address the upgrade
-//! arrived on, the HTTP server's bound address.
+//! into a `ShedLog` (transports DESIGN §2.8, §4.2) whose `server` field is the bound address of
+//! the HTTP listener the upgrade arrived on: a wildcard `0.0.0.0` listener reached through
+//! 127.0.0.1 is named `0.0.0.0:port`, as the HTTP server's own shed log is, not by the address
+//! the connection was made to.
 //!
 //! One test in this binary: a `tracing` callsite first reached on a thread with no subscriber,
 //! while another thread installs one, can keep the interest it computed without it.
@@ -101,8 +103,9 @@ impl tracing::Subscriber for ShedLines {
 async fn a_connection_refused_on_the_http_port_names_the_http_servers_address() {
     let lines = ShedLines::default();
     let _logged = tracing::subscriber::set_default(lines.clone());
-    let app = Running::start_configured(Root, ulo_http_hyper::Server::new("127.0.0.1:0"), ulo_runtime_tokio::Tokio::current(), AppBuilder::unserved::<Ws>)
+    let app = Running::start_configured(Root, ulo_http_hyper::Server::new("0.0.0.0:0"), ulo_runtime_tokio::Tokio::current(), AppBuilder::unserved::<Ws>)
         .await;
+    assert!(app.addr.ip().is_unspecified(), "the listener is a wildcard bind: {}", app.addr);
     let line = |shed| ("ws_connect".to_owned(), app.addr.to_string(), shed);
     let admitted = app.connect("/one", &[]).await;
     for _ in 0..2 {
