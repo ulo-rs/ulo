@@ -25,6 +25,7 @@ use crate::module::handle::ModuleRef;
 /// A load that fails to connect leaves the app as it found it: the graph it extended is put
 /// back and the singletons it built are dropped, so a later load of the same module wires
 /// again from the start.
+#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
 pub(crate) async fn load(
     shared: &Arc<AppShared>,
     module: Box<dyn Module>,

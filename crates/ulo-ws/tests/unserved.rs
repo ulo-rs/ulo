@@ -51,6 +51,7 @@ fn http_port(m: &mut ModuleDef<'_>) {
     m.controller::<Hall>();
 }
 
+#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
 async fn listen(builder: ulo::AppBuilder) -> Result<(), StartupError> {
     let app = builder.runtime(Tokio::current()).wire()?.connect().await?;
     let bound = app.bind(ulo_http_hyper::Server::new("127.0.0.1:0")).listen().await?;

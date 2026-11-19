@@ -301,10 +301,12 @@ impl<S> TestApp<S> {
         TestApp { builder: self.builder.trace(mode), _s: PhantomData }
     }
 
+    #[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
     pub fn wire(self) -> Result<App<Wired>, StartupError> {
         self.builder.wire()
     }
 
+    #[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
     pub async fn connect(self) -> Result<App<Connected>, StartupError> {
         self.builder.wire()?.connect().await
     }

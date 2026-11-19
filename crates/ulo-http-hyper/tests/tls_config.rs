@@ -52,6 +52,7 @@ struct Served {
     serving: JoinHandle<()>,
 }
 
+#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
 async fn start(config: Arc<ServerConfig>) -> Result<Served, StartupError> {
     let server = ulo_http_hyper::Server::new("127.0.0.1:0").tls(Tls::from_config(config));
     let app = ulo_http_conformance::app(ulo_runtime_tokio::Tokio::current()).await.bind(server).listen().await?;

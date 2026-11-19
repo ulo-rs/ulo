@@ -254,6 +254,7 @@ fn max_body(cx: &HttpCx) -> u64 {
 /// The body for extractor `E`. One taken before `E` ran is `BodyTaken`, logged at `warn` naming
 /// `E`: the request carried a body and the server consumed it, so the fault is the server's. A
 /// context built with no body slot, as the error handlers' are, is `Missing`.
+#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
 fn take<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
     match cx.take_unread() {
         Ok(body) => Ok(body),
@@ -273,6 +274,7 @@ fn take<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
 /// The body for an extractor `E` that requires one, as [`take`] answers it, and `Missing` when the
 /// request carries none, so an `Option` of the extractor is `None` then. A request carries none
 /// when its body has ended before it was read or it declares `Content-Length: 0`.
+#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
 fn take_present<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
     let body = take::<E>(cx)?;
     if body.is_end_stream() || declared_length(cx) == Some(0) {
@@ -314,6 +316,7 @@ fn declared_length(cx: &HttpCx) -> Option<u64> {
 }
 
 /// 413 from `Content-Length` alone, before any of the body is read.
+#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
 fn refuse_declared_excess(cx: &HttpCx, limit: u64) -> Result<(), ExtractError> {
     match declared_length(cx) {
         Some(length) if length > limit => Err(ExtractError::TooLarge { param: BODY, limit }),
@@ -323,6 +326,7 @@ fn refuse_declared_excess(cx: &HttpCx, limit: u64) -> Result<(), ExtractError> {
 
 /// The whole body, counted against the route's limit as it arrives: `TooLarge` the moment it
 /// passes, whatever `Content-Length` claimed. A failed read is `Malformed`.
+#[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
 async fn collect(cx: &HttpCx, mut body: HttpBody) -> Result<Bytes, ExtractError> {
     let limit = max_body(cx);
     refuse_declared_excess(cx, limit)?;

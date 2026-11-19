@@ -81,6 +81,7 @@ impl AppHandle {
     /// settings differ, its second site naming this call. Refused from Stopping on with
     /// `LoadError::Closed` (§8.6).
     #[track_caller]
+    #[allow(clippy::result_large_err, reason = "the error's size is decided by the pre-0.1.0 API-surface audit, which boxes large payloads inside the variants that carry them")]
     pub fn load(&self, module: impl Module) -> impl Future<Output = Result<ModuleRef, LoadError>> {
         let at = Location::caller();
         async move { load::load(&self.shared, Box::new(module), at).await }
