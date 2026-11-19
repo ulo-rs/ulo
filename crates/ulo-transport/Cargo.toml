@@ -29,5 +29,9 @@ serde_json.workspace = true
 tracing.workspace = true
 validator = { workspace = true, optional = true }
 
+[dev-dependencies]
+# `block_on` for `tests/trace_id.rs`, which connects an app with no runtime.
+futures-executor.workspace = true
+
 [lints]
 workspace = true

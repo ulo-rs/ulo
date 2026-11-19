@@ -7,9 +7,10 @@ use futures_util::future::join_all;
 use ulo::{AppHandle, Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport, Unreached};
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::prepare::{Failure, Failures, zero_bound, zero_count};
-use ulo_transport::{Admission, Count};
+use ulo_transport::{Admission, Count, ShedLog};
 
 use crate::backend::{Backend, BackendLimits, HttpConfig};
+use crate::client_ip::{Cidr, CidrError};
 use crate::pre_dispatch::{PreDispatch, Stage};
 use crate::router::Router;
 use crate::router::pattern::{Pattern, unreachable};
@@ -150,6 +151,24 @@ impl<B: Backend> Server<B> {
     /// open until the drain's deadline. `Bound::After(Duration::ZERO)` is refused in `prepare`.
     pub fn handshake_timeout(mut self, timeout: Bound) -> Self {
         self.config.handshake_timeout = timeout;
+        self
+    }
+
+    /// The reverse proxies trusted to report the client, as CIDR ranges: each a [`Cidr`] or text
+    /// that parses as one, `["10.0.0.0/8", "fd00::/8"]`; a text that does not is refused in
+    /// `prepare`, naming it. Unset, nothing is trusted, and
+    /// [`HttpCx::client_ip`](crate::HttpCx::client_ip) answers the peer whatever a request's
+    /// `Forwarded` or `X-Forwarded-For` says. List only the proxies in front of this server: a
+    /// client inside a trusted range can name any address it likes. Each proxy listed must also
+    /// remove or overwrite the forwarding header it does not write, `Forwarded` behind one that
+    /// writes `X-Forwarded-For`: a request carrying `Forwarded` is read by that header alone. A
+    /// second call replaces the list.
+    pub fn trusted_proxies<R>(mut self, ranges: impl IntoIterator<Item = R>) -> Self
+    where
+        R: TryInto<Cidr>,
+        CidrError: From<R::Error>,
+    {
+        self.config.set_trusted_proxies(ranges);
         self
     }
 }
@@ -343,6 +362,9 @@ pub(crate) fn prepare_app(
     };
     check_zero_timeouts(config, failures);
     check_zero_counts(config, failures);
+    for refused in &config.refused_proxies {
+        failures.push(Failure::plain(format!("`trusted_proxies`: {refused}")).about("trusted_proxies"));
+    }
     upgrades.clear();
     for handler in upgrade_handlers(mounted) {
         upgrades.push(Arc::clone(&handler));
@@ -359,7 +381,9 @@ pub(crate) fn prepare_app(
             router,
             stage,
             upgrades,
-            admission: Admission::new(config.inflight_limit()).retry_after(config.shed_retry_after),
+            admission: Admission::new(config.inflight_limit())
+                .retry_after(config.shed_retry_after)
+                .logged(ShedLog::new(<Http as Transport>::KEY, Arc::clone(mounted.timer()))),
             config,
             timer: Arc::clone(mounted.timer()),
             runtime: Arc::clone(mounted.runtime()),

@@ -9922,6 +9922,7 @@ dependencies = [
  "async-lock",
  "event-listener 5.4.1",
  "futures-core",
+ "futures-executor",
  "futures-util",
  "pin-project-lite",
  "serde",

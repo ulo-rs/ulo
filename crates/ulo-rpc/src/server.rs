@@ -9,9 +9,9 @@ use std::time::Duration;
 
 use futures_util::future::{Either, select};
 use futures_util::{FutureExt, StreamExt};
-use ulo::{Bound, BoundAddr, BoxError, DrainToken, MountedHandler, Mounted, Shape, Spawn, TypeName};
+use ulo::{Bound, BoundAddr, BoxError, DrainToken, MountedHandler, Mounted, Shape, Spawn, Transport, TypeName};
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
-use ulo_transport::{Admission, Count, TaskSet, Turns};
+use ulo_transport::{Admission, Count, ShedLog, TaskSet, Turns};
 use ulo_transport::sync::Watch;
 
 use crate::handler::{Kind, RpcHandler};
@@ -299,7 +299,9 @@ impl<L: Link> ulo::Server for Server<L> {
             codec: Codec::of(&capabilities),
             capabilities,
             link: L::NAME,
-            admission: Admission::new(limit).retry_after(self.shed_retry_after),
+            admission: Admission::new(limit)
+                .retry_after(self.shed_retry_after)
+                .logged(ShedLog::new(<Rpc as Transport>::KEY, Arc::clone(mounted.timer()))),
             grace: grace_of(self.timeout_grace),
             queued: queue::Limits::of(self.max_queued_items, self.max_queued_bytes),
             calls: Mutex::new(HashMap::new()),

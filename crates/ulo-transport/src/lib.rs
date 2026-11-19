@@ -36,7 +36,7 @@ pub mod __derive {
     pub use crate::__private::{classify, validate};
 }
 
-pub use admission::{Admission, ConnectionAdmission, Permit};
+pub use admission::{Admission, ConnectionAdmission, Permit, SHED_LOG_INTERVAL, ShedLog};
 pub use count::Count;
 pub use details::{Detail, Details, FieldViolation, Link};
 pub use error::{CallError, Classify, ErrorKind, SHUTDOWN_MESSAGE};

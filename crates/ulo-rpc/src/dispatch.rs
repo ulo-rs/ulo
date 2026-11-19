@@ -235,8 +235,10 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
                 let error = refusal("the server is over its in-flight limit").with(Detail::RetryAfter(shared.admission.shed_retry_after()));
                 refuse(shared, tasks, reply, id, error);
             }
-            // Left unsettled, so a broker redelivers it rather than dropping it.
-            None => tracing::warn!(pattern = incoming.pattern.as_str(), link = shared.link, "an event over the in-flight limit was left unacknowledged"),
+            // Left unsettled, so a broker redelivers it rather than dropping it. `try_admit`
+            // counted the refusal into the server's `ShedLog`, whose rate-limited `warn` reports
+            // it beside the requests'.
+            None => tracing::debug!(pattern = incoming.pattern.as_str(), link = shared.link, "an event over the in-flight limit was left unacknowledged"),
         }
         return;
     };
