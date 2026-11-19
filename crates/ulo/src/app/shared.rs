@@ -335,11 +335,11 @@ async fn cancel_at<Fut: Future>(exec: &ExecShared, sleep: BoxFuture<'static, ()>
     let mut sleep = Some(sleep);
     let mut fut = pin!(fut);
     poll_fn(move |cx| {
-        if let Some(pending) = sleep.as_mut() {
-            if pending.as_mut().poll(cx).is_ready() {
-                sleep = None;
-                exec.cancel_with(CancelReason::Deadline);
-            }
+        if let Some(pending) = sleep.as_mut()
+            && pending.as_mut().poll(cx).is_ready()
+        {
+            sleep = None;
+            exec.cancel_with(CancelReason::Deadline);
         }
         fut.as_mut().poll(cx)
     })

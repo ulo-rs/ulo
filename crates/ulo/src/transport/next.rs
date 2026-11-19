@@ -6,6 +6,8 @@ use crate::timer::{BoxError, BoxFuture};
 use crate::transport::pipeline::caught;
 use crate::transport::{AnyInterceptor, ErasedInterceptor, Transport};
 
+pub(crate) type HandlerFn<'a, T> = Box<dyn FnOnce(&'a <T as Transport>::Cx) -> BoxFuture<'a, Result<<T as Transport>::Reply, BoxError>> + Send + 'a>;
+
 /// The rest of the interceptor chain and the handler, handed to [`Interceptor::intercept`](crate::Interceptor).
 ///
 /// [`run`](Next::run) consumes it, so the rest of the chain runs at most once; an interceptor
@@ -14,7 +16,7 @@ pub struct Next<'a, T: Transport> {
     pub(crate) cx: &'a T::Cx,
     /// The interceptors after the current one, already built.
     pub(crate) rest: &'a [Arc<AnyInterceptor<T>>],
-    pub(crate) handler: Box<dyn FnOnce(&'a T::Cx) -> BoxFuture<'a, Result<T::Reply, BoxError>> + Send + 'a>,
+    pub(crate) handler: HandlerFn<'a, T>,
     /// Redacts the message of a panic caught in the chain.
     pub(crate) secrets: &'a SecretRegistry,
 }

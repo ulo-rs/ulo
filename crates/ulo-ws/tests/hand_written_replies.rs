@@ -6,7 +6,7 @@
 mod support;
 
 use futures_util::stream::{self, Stream};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::SinkExt;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 use ulo::scope::Auto;
@@ -168,7 +168,6 @@ async fn a_hand_written_reply_answers_as_a_returned_value_does() {
     let Message::Binary(bytes) = next_message(&mut socket).await else { panic!("a MessagePack gateway answers in binary frames") };
     let answer: Value = rmp_serde::from_slice(&bytes).expect("a MessagePack answer");
     assert_eq!(answer, json!({ "id": 1, "data": "echo:hi" }));
-    let _ = socket.next();
     hang_up(socket).await;
     app.stop().await;
 }

@@ -311,9 +311,11 @@ async fn a_dropped_link_aborts_its_connect() {
     until("the dropped link's connect bound dropped", || clock.live(WITHIN) == 0).await;
 }
 
+type Gate = Arc<(Mutex<bool>, Condvar)>;
+
 /// A loopback socket that accepts every connection, counting each, holds it unanswered until
 /// the returned gate opens, then closes it.
-fn held() -> (SocketAddr, Arc<AtomicUsize>, Arc<(Mutex<bool>, Condvar)>) {
+fn held() -> (SocketAddr, Arc<AtomicUsize>, Gate) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
     let addr = listener.local_addr().expect("the port's address");
     let (accepted, gate) = (Arc::new(AtomicUsize::new(0)), Arc::new((Mutex::new(false), Condvar::new())));

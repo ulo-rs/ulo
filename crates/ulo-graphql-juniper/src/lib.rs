@@ -31,6 +31,8 @@ use ulo_graphql::{BoxStream, Engine, GqlError, GqlRequest, GqlResponse, RequestF
 /// The root node the engine reads.
 type Root<Q, M, Sub> = RootNode<'static, Q, M, Sub>;
 
+type SchemaMarker<Q, M, Sub> = PhantomData<fn() -> (Q, M, Sub)>;
+
 /// The engine over the root node `RootNode<'static, Q, M, Sub>`, read as a `Dep`.
 ///
 /// `Q::Context` is resolved with the visibility of the module that binds the engine, inside the
@@ -41,7 +43,7 @@ type Root<Q, M, Sub> = RootNode<'static, Q, M, Sub>;
 /// A subscription answers one response per event of its root field; a query or mutation sent to
 /// `subscribe` answers one response.
 pub struct Juniper<Q, M, Sub> {
-    pub(crate) _schema: PhantomData<fn() -> (Q, M, Sub)>,
+    pub(crate) _schema: SchemaMarker<Q, M, Sub>,
     /// The `Arc<RootNode<'static, Q, M, Sub>>`, erased: a field naming `RootNode<'static, Q, M, Sub>`
     /// would need juniper's bounds on the struct itself.
     root: Arc<dyn Any + Send + Sync>,
@@ -218,6 +220,7 @@ async fn drive<Q, M, Sub>(
 
 /// The context, resolved in `exec` with the engine module's visibility. A context that cannot be
 /// built is answered `Failed`: nothing executed, and the fault is the server's.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn context<C: Send + Sync + 'static>(module: &ModuleRef, exec: &ExecutionRef) -> Result<Dep<C>, GqlResponse> {
     module.with_execution(exec).get::<C>().await.map_err(|error| {
         tracing::error!(%error, "the GraphQL context could not be built");
@@ -226,6 +229,7 @@ async fn context<C: Send + Sync + 'static>(module: &ModuleRef, exec: &ExecutionR
 }
 
 /// juniper's request for `req`. juniper reads no request extensions, and they are dropped.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn request_of(req: GqlRequest) -> Result<GraphQLRequest<DefaultScalarValue>, GqlResponse> {
     let variables = match req.variables {
         Some(variables) => match serde_json::from_value::<InputValue<DefaultScalarValue>>(Value::Object(variables)) {

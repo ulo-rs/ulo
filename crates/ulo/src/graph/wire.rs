@@ -455,22 +455,22 @@ fn freeze(
             for decl in &decls {
                 declare_transport_inputs(graph, decl, &mut transports_seen, &mut declared.transport_inputs);
             }
-            if let Some((prefix, at)) = &controller.prefix {
-                if !decls.iter().any(|decl| decl.reads_prefix) {
-                    let mut transports: Vec<TypeName> = Vec::new();
-                    for decl in &decls {
-                        if !transports.contains(&decl.transport) {
-                            transports.push(decl.transport);
-                        }
+            if let Some((prefix, at)) = &controller.prefix
+                && !decls.iter().any(|decl| decl.reads_prefix)
+            {
+                let mut transports: Vec<TypeName> = Vec::new();
+                for decl in &decls {
+                    if !transports.contains(&decl.transport) {
+                        transports.push(decl.transport);
                     }
-                    steps.bindings.push(WiringError::UnreadPrefix {
-                        controller: controller_key,
-                        module: names[index].clone(),
-                        prefix: prefix.to_string(),
-                        transports,
-                        at,
-                    });
                 }
+                steps.bindings.push(WiringError::UnreadPrefix {
+                    controller: controller_key,
+                    module: names[index].clone(),
+                    prefix: prefix.to_string(),
+                    transports,
+                    at,
+                });
             }
             let prefix = controller.prefix.as_ref().map(|(prefix, _)| prefix.clone());
             graph.handlers.extend(
@@ -557,12 +557,12 @@ fn apply_overrides(registry: &mut Registry, names: &[ModuleName], overrides: Vec
         }
         let modules: Vec<usize> = match &ov.target {
             OverrideTarget::Unscoped | OverrideTarget::Everywhere => registry.post_order.clone(),
-            OverrideTarget::ModuleType { ty, name } => match one_instance(registry, names, *ty, None, *name, &ov, errors) {
+            OverrideTarget::ModuleType { ty, name } => match one_instance(registry, names, *ty, None, name, &ov, errors) {
                 Some(module) => vec![module],
                 None => continue,
             },
             OverrideTarget::ModuleKeyed { ty, name, qualifier } => {
-                match one_instance(registry, names, *ty, Some(*qualifier), *name, &ov, errors) {
+                match one_instance(registry, names, *ty, Some(*qualifier), name, &ov, errors) {
                     Some(module) => vec![module],
                     None => continue,
                 }
@@ -919,15 +919,15 @@ fn check_bindings(graph: &Graph, declared: &Declared, errors: &mut Vec<WiringErr
             let Some(contributions) = graph.collections.get(&key) else { continue };
             let new = binding.id.0 as usize >= declared.first_binding
                 || contributions.iter().any(|id| id.0 as usize >= declared.first_binding);
-            if new && mixed.insert(key) {
-                if let Some(&first) = contributions.first() {
-                    errors.push(WiringError::KindMix {
-                        key: key.name(BindingKind::Single),
-                        module: graph.module_name(binding.origin),
-                        single: binding.record.location,
-                        collection: graph.binding(first).record.location,
-                    });
-                }
+            if new && mixed.insert(key)
+                && let Some(&first) = contributions.first()
+            {
+                errors.push(WiringError::KindMix {
+                    key: key.name(BindingKind::Single),
+                    module: graph.module_name(binding.origin),
+                    single: binding.record.location,
+                    collection: graph.binding(first).record.location,
+                });
             }
         }
     }
@@ -1179,11 +1179,11 @@ fn refusal(base: &Graph, registry: &Registry) -> Option<LoadRefusal> {
         if let Some(input) = node.inputs.first() {
             return Some(LoadRefusal::Input { module: module(), key: input.key.name(BindingKind::Single) });
         }
-        if node.global {
-            if let Some(export) = node.exports.first() {
-                let key = boundary_key(node.keyed, export.key).name(BindingKind::Single);
-                return Some(LoadRefusal::GlobalExport { module: module(), key });
-            }
+        if node.global
+            && let Some(export) = node.exports.first()
+        {
+            let key = boundary_key(node.keyed, export.key).name(BindingKind::Single);
+            return Some(LoadRefusal::GlobalExport { module: module(), key });
         }
         for record in node.bindings.iter().filter(|record| record.kind == BindingKind::Collection) {
             let key = record_key(record);

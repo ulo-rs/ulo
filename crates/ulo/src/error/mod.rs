@@ -486,7 +486,7 @@ impl fmt::Display for LookupError {
             },
             LookupError::NotReady { key } => write!(f, "`{key}` is a singleton the connect walk has not built yet"),
             LookupError::WrongType { key, requested } => {
-                write!(f, "`{key}` does not hold a `{}`", short_type_name(*requested))
+                write!(f, "`{key}` does not hold a `{}`", short_type_name(requested))
             }
             LookupError::WrongKind { key, expected, found } => {
                 write!(f, "`{key}` is {}, read as {}", kind_text(*found), kind_text(*expected))
@@ -498,7 +498,7 @@ impl fmt::Display for LookupError {
                 write_list(f, sources)
             }
             LookupError::AmbiguousModule { module, candidates } => {
-                write!(f, "`{}` is ambiguous between ", short_type_name(*module))?;
+                write!(f, "`{}` is ambiguous between ", short_type_name(module))?;
                 write_list(f, candidates)
             }
             LookupError::Construct { key, reason } => write!(f, "building `{key}` inside the call failed: {reason}"),
@@ -989,7 +989,7 @@ impl<'e> ByType<'e> for &'e (dyn Error + 'static) {
 
 impl<'e> ByType<'e> for &'e Redacted {
     fn get<E: Error + 'static>(&self) -> Option<&'e E> {
-        let redacted: &'e Redacted = *self;
+        let redacted: &'e Redacted = self;
         redacted.downcast_ref::<E>()
     }
 }

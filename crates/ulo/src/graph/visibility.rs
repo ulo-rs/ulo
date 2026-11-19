@@ -167,7 +167,7 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
         }
     }
     for (module, name, dependencies) in &declared.meta {
-        let owner = format!("metadata `{}` of {}", short_type_name(*name), graph.module_name(*module));
+        let owner = format!("metadata `{}` of {}", short_type_name(name), graph.module_name(*module));
         check_dependencies(graph, *module, dependencies, &owner, errors, &mut reported);
     }
     for handler in graph.handlers.iter().skip(declared.first_handler) {
@@ -175,15 +175,15 @@ pub(crate) fn resolve_dependencies(graph: &mut Graph, declared: &Declared, error
         // The pipeline finds the controller by its key in its own module, which an import
         // exporting the same type would make ambiguous; nothing else reads that key.
         let controller = record_key(&graph.binding(handler.controller).record);
-        if let Some(Visible::Ambiguous(list)) = graph.lookup(handler.module, controller) {
-            if reported.insert((handler.module, controller)) {
-                errors.push(WiringError::Ambiguous {
-                    key: controller.name(BindingKind::Single),
-                    consumer: format!("{name} (its controller)"),
-                    module: graph.module_name(handler.module),
-                    sources: ambiguous_sources(graph, list),
-                });
-            }
+        if let Some(Visible::Ambiguous(list)) = graph.lookup(handler.module, controller)
+            && reported.insert((handler.module, controller))
+        {
+            errors.push(WiringError::Ambiguous {
+                key: controller.name(BindingKind::Single),
+                consumer: format!("{name} (its controller)"),
+                module: graph.module_name(handler.module),
+                sources: ambiguous_sources(graph, list),
+            });
         }
         check_dependencies(graph, handler.module, &handler.decl.dependencies, &name, errors, &mut reported);
         for dep in &handler.decl.enhancer_deps {
@@ -395,7 +395,7 @@ pub(crate) fn near_spelling(graph: &Graph, module: ModuleId, missing: Key) -> Op
     let mut visible: Vec<(Key, ModuleId)> = graph.visibility[module.0 as usize]
         .entries
         .iter()
-        .filter(|(key, _)| near(*key))
+        .filter(|(key, _)| near(key))
         .filter_map(|(key, visible)| match visible {
             Visible::Binding(id) => Some((*key, graph.binding(*id).origin)),
             Visible::Ambiguous(list) => list.first().map(|&(source, _)| (*key, source)),

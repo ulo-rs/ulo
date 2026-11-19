@@ -449,7 +449,7 @@ impl SecretRegistry {
         if secrets.is_empty() {
             return text.to_owned();
         }
-        secrets.sort_by(|a, b| b.len().cmp(&a.len()));
+        secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
 
         let mut out = String::with_capacity(text.len());
         let mut rest = text;

@@ -1,5 +1,4 @@
 use std::any::type_name;
-use std::future::Future;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
@@ -82,15 +81,13 @@ impl<T> Deref for Json<T> {
 impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Json<T> {
     const CONSUMES_BODY: bool = true;
 
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let body = take_present::<Self>(cx)?;
-            if !media_type(cx).is_some_and(is_json) {
-                return Err(ExtractError::UnsupportedMediaType { param: BODY, expected: "application/json" });
-            }
-            let bytes = collect(cx, body).await?;
-            serde_json::from_slice(&bytes).map(Json).map_err(|error| decode_failure(cx, &bytes, error))
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let body = take_present::<Self>(cx)?;
+        if !media_type(cx).is_some_and(is_json) {
+            return Err(ExtractError::UnsupportedMediaType { param: BODY, expected: "application/json" });
         }
+        let bytes = collect(cx, body).await?;
+        serde_json::from_slice(&bytes).map(Json).map_err(|error| decode_failure(cx, &bytes, error))
     }
 }
 
@@ -133,17 +130,15 @@ impl<T> Deref for Form<T> {
 impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Form<T> {
     const CONSUMES_BODY: bool = true;
 
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let body = take_present::<Self>(cx)?;
-            if media_type(cx).as_deref() != Some("application/x-www-form-urlencoded") {
-                return Err(ExtractError::UnsupportedMediaType { param: BODY, expected: "application/x-www-form-urlencoded" });
-            }
-            let bytes = collect(cx, body).await?;
-            let decoded = parse_form(&bytes);
-            let pairs: Vec<(&str, &str)> = decoded.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
-            from_pairs::<T>(&pairs, Source::Form).map(Form).map_err(|error| error.into_mismatch(BODY, cx))
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let body = take_present::<Self>(cx)?;
+        if media_type(cx).as_deref() != Some("application/x-www-form-urlencoded") {
+            return Err(ExtractError::UnsupportedMediaType { param: BODY, expected: "application/x-www-form-urlencoded" });
         }
+        let bytes = collect(cx, body).await?;
+        let decoded = parse_form(&bytes);
+        let pairs: Vec<(&str, &str)> = decoded.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
+        from_pairs::<T>(&pairs, Source::Form).map(Form).map_err(|error| error.into_mismatch(BODY, cx))
     }
 }
 
@@ -158,11 +153,9 @@ impl<T: Validate> Validate for Form<T> {
 impl FromCall<Http> for Bytes {
     const CONSUMES_BODY: bool = true;
 
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let body = take::<Self>(cx)?;
-            collect(cx, body).await
-        }
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let body = take::<Self>(cx)?;
+        collect(cx, body).await
     }
 }
 
@@ -209,13 +202,11 @@ impl Stream for BodyStream {
 impl FromCall<Http> for BodyStream {
     const CONSUMES_BODY: bool = true;
 
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let body = take::<Self>(cx)?;
-            let limit = max_body(cx);
-            refuse_declared_excess(cx, limit)?;
-            Ok(BodyStream { body, limit, read: 0 })
-        }
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let body = take::<Self>(cx)?;
+        let limit = max_body(cx);
+        refuse_declared_excess(cx, limit)?;
+        Ok(BodyStream { body, limit, read: 0 })
     }
 }
 
@@ -241,19 +232,17 @@ impl Multipart {
 impl FromCall<Http> for Multipart {
     const CONSUMES_BODY: bool = true;
 
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let body = take_present::<Self>(cx)?;
-            let boundary = cx
-                .headers()
-                .get(CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| multer::parse_boundary(value).ok())
-                .ok_or(ExtractError::UnsupportedMediaType { param: BODY, expected: "multipart/form-data" })?;
-            let limit = max_body(cx);
-            refuse_declared_excess(cx, limit)?;
-            Ok(Multipart { inner: multer::Multipart::new(BodyStream { body, limit, read: 0 }, boundary) })
-        }
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let body = take_present::<Self>(cx)?;
+        let boundary = cx
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| multer::parse_boundary(value).ok())
+            .ok_or(ExtractError::UnsupportedMediaType { param: BODY, expected: "multipart/form-data" })?;
+        let limit = max_body(cx);
+        refuse_declared_excess(cx, limit)?;
+        Ok(Multipart { inner: multer::Multipart::new(BodyStream { body, limit, read: 0 }, boundary) })
     }
 }
 
@@ -265,6 +254,7 @@ fn max_body(cx: &HttpCx) -> u64 {
 /// The body for extractor `E`. One taken before `E` ran is `BodyTaken`, logged at `warn` naming
 /// `E`: the request carried a body and the server consumed it, so the fault is the server's. A
 /// context built with no body slot, as the error handlers' are, is `Missing`.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn take<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
     match cx.take_unread() {
         Ok(body) => Ok(body),
@@ -284,6 +274,7 @@ fn take<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
 /// The body for an extractor `E` that requires one, as [`take`] answers it, and `Missing` when the
 /// request carries none, so an `Option` of the extractor is `None` then. A request carries none
 /// when its body has ended before it was read or it declares `Content-Length: 0`.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn take_present<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
     let body = take::<E>(cx)?;
     if body.is_end_stream() || declared_length(cx) == Some(0) {
@@ -325,6 +316,7 @@ fn declared_length(cx: &HttpCx) -> Option<u64> {
 }
 
 /// 413 from `Content-Length` alone, before any of the body is read.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn refuse_declared_excess(cx: &HttpCx, limit: u64) -> Result<(), ExtractError> {
     match declared_length(cx) {
         Some(length) if length > limit => Err(ExtractError::TooLarge { param: BODY, limit }),
@@ -334,6 +326,7 @@ fn refuse_declared_excess(cx: &HttpCx, limit: u64) -> Result<(), ExtractError> {
 
 /// The whole body, counted against the route's limit as it arrives: `TooLarge` the moment it
 /// passes, whatever `Content-Length` claimed. A failed read is `Malformed`.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn collect(cx: &HttpCx, mut body: HttpBody) -> Result<Bytes, ExtractError> {
     let limit = max_body(cx);
     refuse_declared_excess(cx, limit)?;

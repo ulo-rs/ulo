@@ -114,6 +114,8 @@ impl fmt::Display for ConfigureError {
 
 impl Error for ConfigureError {}
 
+type TextFn = Box<dyn Fn(&HashSet<TypeName>) -> String + Send + Sync>;
+
 /// A `prepare` error whose text names types: what a server answers, boxed, so the startup report
 /// decides how each name prints. The report runs [`TypeName::colliding`] over the names of every
 /// server's `PrepareError` and every failing transport, and calls `text` with the result, so a
@@ -137,7 +139,7 @@ impl Error for ConfigureError {}
 pub struct PrepareError {
     names: Vec<TypeName>,
     entries: Vec<PrepareEntry>,
-    text: Box<dyn Fn(&HashSet<TypeName>) -> String + Send + Sync>,
+    text: TextFn,
     permanent: bool,
 }
 

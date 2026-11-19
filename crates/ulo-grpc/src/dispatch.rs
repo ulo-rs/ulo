@@ -708,7 +708,7 @@ fn shed(after: Duration) -> Response {
 /// the value a signed 32-bit integer, and a client takes one it cannot parse as a request not to
 /// retry at all.
 fn pushback_ms(after: Duration) -> i32 {
-    let millis = after.as_millis() + u128::from(after.subsec_nanos() % 1_000_000 > 0);
+    let millis = after.as_millis() + u128::from(!after.subsec_nanos().is_multiple_of(1_000_000));
     i32::try_from(millis).unwrap_or(i32::MAX)
 }
 

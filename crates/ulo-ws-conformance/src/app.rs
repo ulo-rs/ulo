@@ -294,6 +294,7 @@ impl Guard<WsConnect> for RefusedByError {
 }
 
 /// `/strict`'s connection phase: no [`USER`] header is `Unauthorized`.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn strict(cx: &ConnectCx) -> Result<(), ConnectRefused> {
     match cx.head().headers().get(USER) {
         Some(_) => Ok(()),
@@ -302,6 +303,7 @@ fn strict(cx: &ConnectCx) -> Result<(), ConnectRefused> {
 }
 
 /// `/refused`'s connection phase, by its [`REFUSE`] header.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn refused(cx: &ConnectCx) -> Result<(), ConnectRefused> {
     let how = cx.head().headers().get(REFUSE).and_then(|how| how.to_str().ok()).unwrap_or_default();
     match how {

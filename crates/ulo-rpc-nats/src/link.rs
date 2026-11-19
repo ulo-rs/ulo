@@ -3446,7 +3446,7 @@ mod tests {
     async fn a_tls_prepare_on_a_shut_down_runtime_raises_a_permanent_refusal() {
         let app = app().await;
         let mut serving = link("tls://localhost:1", test_root::<34>, std::env::temp_dir).with_handle(stopped());
-        let failed = serving.prepare(&app.handle()).await.err().expect("a `prepare` on a runtime that had shut down answered");
+        let failed = serving.prepare(&app.handle()).await.expect_err("a `prepare` on a runtime that had shut down answered");
         let permanent = failed.downcast_ref::<Permanent>().unwrap_or_else(|| panic!("the refusal is not `Permanent`: {failed:?}"));
         let inner = std::error::Error::source(permanent).expect("the `Permanent` wraps the refusal");
         assert!(inner.is::<RuntimeShutDown>(), "the `Permanent` does not hold a `RuntimeShutDown`: {failed:?}");
