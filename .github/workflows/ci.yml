@@ -258,6 +258,20 @@ jobs:
       # are compiled, not linted.
       - run: cargo clippy -p ulo-macro-lints --all-targets --no-deps --locked -- -D warnings
 
+  workspace-lints:
+    name: workspace lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The pin `generated code lints` holds, for the same reason and bumped in the same commit:
+      # the set of lints a release fires differs between releases.
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # Every member, tests and examples included; --no-deps keeps upstream crates out of it.
+      - run: cargo clippy --workspace --all-features --all-targets --no-deps --locked -- -D warnings
+
   editor-resolution:
     name: editor resolution
     runs-on: ubuntu-latest
