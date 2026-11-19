@@ -2,6 +2,7 @@
   "name": "ulo",
   "image": "mcr.microsoft.com/devcontainers/rust:1",
   "postCreateCommand": "cargo install ulo-cli --version 0.1.0-alpha.3",
+  "workspaceFolder": "/workspaces",
   "forwardPorts": [3000],
   "customizations": {
     "vscode": {
