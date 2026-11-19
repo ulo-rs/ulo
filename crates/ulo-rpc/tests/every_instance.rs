@@ -152,6 +152,7 @@ impl Link for Recording {
 }
 
 /// Binds `link` under `root`, answering the startup error or closing the app at once.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn bind<L: Link>(root: impl Module, link: L) -> Result<(), StartupError> {
     let app = App::builder(root).runtime(Tokio::current()).wire()?.connect().await?.bind(ulo_rpc::Server::new(link)).listen().await?;
     app.serve(async { Signal::new("test") }).await.expect("the app shuts down");

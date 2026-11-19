@@ -175,6 +175,7 @@ impl Module for AdminBehindAnExclusion {
     }
 }
 
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn listen_admin(health_route: bool) -> Result<ulo::App<ulo::app::Bound>, StartupError> {
     let app = App::builder(AdminBehindAnExclusion { health_route })
         .runtime(Tokio::current())

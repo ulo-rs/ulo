@@ -147,8 +147,8 @@ fn cycle_through(successors: &[Vec<usize>], component: &[usize]) -> Vec<usize> {
                 path.push(start);
                 return path;
             }
-            if !parent.contains_key(&successor) {
-                parent.insert(successor, node);
+            if let std::collections::hash_map::Entry::Vacant(e) = parent.entry(successor) {
+                e.insert(node);
                 queue.push_back(successor);
             }
         }

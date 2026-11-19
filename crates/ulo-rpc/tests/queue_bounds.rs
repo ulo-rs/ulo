@@ -269,10 +269,12 @@ impl Module for Root {
 }
 
 /// A server over `link` whose streamed requests queue up to `queued` items.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn listening<L: Link>(link: L, queued: Count, seen: Seen) -> Result<App<Listening>, StartupError> {
     serving(ulo_rpc::Server::new(link).max_queued_items(queued), seen).await
 }
 
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn serving<L: Link>(server: ulo_rpc::Server<L>, seen: Seen) -> Result<App<Listening>, StartupError> {
     App::builder(Root(seen)).runtime(Tokio::current()).wire()?.connect().await?.bind(server).listen().await
 }

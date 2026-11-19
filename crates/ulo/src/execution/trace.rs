@@ -336,8 +336,8 @@ fn hex<const N: usize>(digits: &[u8]) -> Option<[u8; N]> {
         return None;
     }
     let mut out = [0u8; N];
-    for (i, pair) in digits.chunks_exact(2).enumerate() {
-        out[i] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
+    for (i, [high, low]) in digits.as_chunks::<2>().0.iter().enumerate() {
+        out[i] = (nibble(*high)? << 4) | nibble(*low)?;
     }
     Some(out)
 }

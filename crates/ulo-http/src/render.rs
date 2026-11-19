@@ -253,10 +253,10 @@ pub(crate) fn status_headers(error: &CallError, status: StatusCode, default_chal
     {
         headers.insert(WWW_AUTHENTICATE, challenge_value(challenge));
     }
-    if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
-        if let Some(after) = error.details().retry_after() {
-            headers.insert(RETRY_AFTER, retry_after(after));
-        }
+    if (status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE)
+        && let Some(after) = error.details().retry_after()
+    {
+        headers.insert(RETRY_AFTER, retry_after(after));
     }
 }
 

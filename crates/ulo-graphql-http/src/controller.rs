@@ -239,10 +239,10 @@ pub(crate) fn accept_ranges(headers: &HeaderMap) -> Vec<Range> {
             let Some((kind, subtype)) = parts.next().and_then(|range| range.trim().split_once('/')) else { continue };
             let mut q = 1000;
             for parameter in parts {
-                if let Some((name, value)) = parameter.split_once('=') {
-                    if name.trim().eq_ignore_ascii_case("q") {
-                        q = parse_quality(value.trim());
-                    }
+                if let Some((name, value)) = parameter.split_once('=')
+                    && name.trim().eq_ignore_ascii_case("q")
+                {
+                    q = parse_quality(value.trim());
                 }
             }
             ranges.push(Range { kind: kind.trim().to_ascii_lowercase(), subtype: subtype.trim().to_ascii_lowercase(), q });
@@ -295,6 +295,7 @@ fn is_json(headers: &HeaderMap) -> bool {
 /// A query parameter holding JSON text, as an object; absent and `null` alike are `None`. Text
 /// that is not a JSON object is a request that is not well-formed: the draft asks for `variables`
 /// and `extensions` as maps, and a GET carries no body whose JSON could fail to parse.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn json_object(text: Option<&str>, name: &str) -> Result<Option<Map<String, Value>>, GqlResponse> {
     let Some(text) = text else { return Ok(None) };
     serde_json::from_str::<Option<Map<String, Value>>>(text)

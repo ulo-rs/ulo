@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt;
-use std::future::Future;
 use std::ops::Deref;
 
 use serde::de::{self, DeserializeOwned, Deserializer, Visitor};
@@ -61,14 +60,12 @@ impl<T> Deref for Path<T> {
 }
 
 impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Path<T> {
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let Some(route) = cx.matched() else {
-                return Err(ExtractError::Missing { param: "path" });
-            };
-            let pairs: Vec<(&str, &str)> = route.params.pairs.iter().map(|(name, value)| (&**name, value.as_str())).collect();
-            from_pairs::<T>(&pairs, Source::Path).map(Path).map_err(|error| error.into_extract("path", cx))
-        }
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let Some(route) = cx.matched() else {
+            return Err(ExtractError::Missing { param: "path" });
+        };
+        let pairs: Vec<(&str, &str)> = route.params.pairs.iter().map(|(name, value)| (&**name, value.as_str())).collect();
+        from_pairs::<T>(&pairs, Source::Path).map(Path).map_err(|error| error.into_extract("path", cx))
     }
 }
 

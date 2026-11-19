@@ -196,6 +196,8 @@ impl fmt::Debug for ReplyPath {
     }
 }
 
+type Settle = Box<dyn FnOnce(bool) + Send>;
+
 /// How one delivery is settled: acknowledged, or rejected without requeue (an unhandled event, so
 /// it cannot loop on redelivery). A request or event is settled once its handler completes, and an
 /// `in`, `in_end` or `cancel` once the server has handed it to the call it names, a `cancel` after
@@ -204,7 +206,7 @@ impl fmt::Debug for ReplyPath {
 /// unsettled it sends nothing, and a broker redelivers the message once the consumer's channel
 /// closes.
 pub struct Ack {
-    settle: Mutex<Option<Box<dyn FnOnce(bool) + Send>>>,
+    settle: Mutex<Option<Settle>>,
 }
 
 impl Ack {
@@ -242,6 +244,8 @@ impl fmt::Debug for Ack {
     }
 }
 
+pub(crate) type SendFrame = Box<dyn Fn(Pattern, Frame, Option<ReplyTo>) -> BoxFuture<'static, Result<(), BoxError>> + Send + Sync>;
+
 /// A link's client side, from [`Link::connect`]: `send` publishes a frame on `pattern`, with the
 /// reply's correlation when one is expected, and `replies` yields every reply-lane frame for this
 /// client. A link with a miss signal fails `send` with [`NoDestination`]; one refusing a frame over
@@ -256,7 +260,7 @@ impl fmt::Debug for Ack {
 /// `open` and then sent in their own order, a `cancel` alone. The same holds for a server's
 /// [`ReplyPath`]s.
 pub struct Outbound {
-    pub send: Box<dyn Fn(Pattern, Frame, Option<ReplyTo>) -> BoxFuture<'static, Result<(), BoxError>> + Send + Sync>,
+    pub send: SendFrame,
     pub replies: BoxStream<'static, Frame>,
 }
 
@@ -1382,9 +1386,11 @@ mod tests {
             .await;
         assert_eq!(*ended.lock().unwrap_or_else(PoisonError::into_inner), Some(false), "the unwinding feeder's dropped sender ended the stream");
         let mut stream = guarded.lock().unwrap_or_else(PoisonError::into_inner).take().expect("the guarded stream");
-        let raised = AssertUnwindSafe(stream.next()).catch_unwind().await.err().expect("the stream raised the feeder's panic");
+        let raised = AssertUnwindSafe(stream.next()).catch_unwind().await.expect_err("the stream raised the feeder's panic");
         assert_eq!(raised.downcast_ref::<String>().map(String::as_str), Some("the Test link's lane panicked: the lane failed"));
     }
+
+    type Explained = Arc<Mutex<Option<(BoxFuture<'static, BoxError>, bool)>>>;
 
     /// Drops a send's answer while the writer holding it unwinds, then starts the send's
     /// [`TaskPanics::explain`] there, as a caller on another thread could at that moment, keeping
@@ -1393,7 +1399,7 @@ mod tests {
         answer: Option<futures_channel::oneshot::Sender<()>>,
         panics: TaskPanics,
         /// The wait, and whether its first poll, inside the unwinding, was still waiting.
-        explained: Arc<Mutex<Option<(BoxFuture<'static, BoxError>, bool)>>>,
+        explained: Explained,
     }
 
     impl Drop for Answer {

@@ -906,7 +906,7 @@ mod tests {
         CallError::new(kind, "later").with_details(Details::new().with(Detail::RetryAfter(Duration::from_millis(1500))))
     }
 
-    fn header<'a>(refused: &'a ConnectRefused, name: http::HeaderName) -> Option<&'a str> {
+    fn header(refused: &ConnectRefused, name: http::HeaderName) -> Option<&str> {
         refused.headers.get(name).map(|value| value.to_str().expect("an ASCII header"))
     }
 

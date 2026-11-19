@@ -332,12 +332,12 @@ impl ProviderEntry {
             ProviderEntry::TryValue { expr, qualifier } => {
                 let expr = unbraced(expr);
                 let qualified = qualified(qualifier);
-                refuse_controller_value(&expr, quote_spanned! {expr.span()=> #m.try_value(#expr)#qualified })
+                refuse_controller_value(expr, quote_spanned! {expr.span()=> #m.try_value(#expr)#qualified })
             }
             ProviderEntry::Value { expr, qualifier } => {
                 let expr = unbraced(expr);
                 let qualified = qualified(qualifier);
-                refuse_controller_value(&expr, quote_spanned! {expr.span()=> #m.value(#expr)#qualified })
+                refuse_controller_value(expr, quote_spanned! {expr.span()=> #m.value(#expr)#qualified })
             }
             ProviderEntry::With { key, scope, closure } => {
                 let closure = wrap_async(closure);

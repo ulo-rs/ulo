@@ -47,7 +47,7 @@ use crate::resolver::Resolver;
 use crate::timer::{BoxError, BoxFuture};
 use crate::transport::controller::MountedHandler;
 use crate::transport::enhancer::{ClosureDecl, Decl};
-use crate::transport::next::Next;
+use crate::transport::next::{HandlerFn, Next};
 use crate::transport::{AnyErrorHandler, AnyGuard, AnyInterceptor, ErasedErrorHandler, ErasedGuard, Transport};
 
 /// Runs `handler`'s enhancer stack around `call` for one call. `exec` is the call's execution,
@@ -225,10 +225,10 @@ async fn build_interceptors<T: Transport>(handler: &MountedHandler<T>, at: &Look
 /// lookup reads the stored singleton or the execution's cached instance. A transient
 /// controller is left to that lookup: building one here would build a second.
 async fn build_controller<T: Transport>(handler: &MountedHandler<T>, at: &Lookup<'_>) -> Result<(), LookupError> {
-    if let Some(&Visible::Binding(id)) = at.graph.lookup(at.module, handler.controller.key()) {
-        if at.graph.binding(id).effective != Effective::Transient {
-            at.resolver.instance(id).await?;
-        }
+    if let Some(&Visible::Binding(id)) = at.graph.lookup(at.module, handler.controller.key())
+        && at.graph.binding(id).effective != Effective::Transient
+    {
+        at.resolver.instance(id).await?;
     }
     Ok(())
 }
@@ -244,7 +244,7 @@ where
     F: FnOnce(T::Cx) -> Fut + Send + 'a,
     Fut: Future<Output = Result<T::Reply, BoxError>> + Send + 'a,
 {
-    let handler: Box<dyn FnOnce(&'a T::Cx) -> BoxFuture<'a, Result<T::Reply, BoxError>> + Send + 'a> =
+    let handler: HandlerFn<'a, T> =
         Box::new(move |cx: &'a T::Cx| -> BoxFuture<'a, Result<T::Reply, BoxError>> { Box::pin(call(cx.clone())) });
     Next { cx, rest: interceptors, handler, secrets }.run()
 }

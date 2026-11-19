@@ -135,11 +135,11 @@ fn push_last_segment(out: &mut String, path: &str) {
     };
     let mut segments = path.rsplit("::");
     let last = segments.next().unwrap_or("");
-    if last.starts_with('{') {
-        if let Some(enclosing) = segments.next() {
-            out.push_str(enclosing);
-            out.push_str("::");
-        }
+    if last.starts_with('{')
+        && let Some(enclosing) = segments.next()
+    {
+        out.push_str(enclosing);
+        out.push_str("::");
     }
     out.push_str(last);
 }

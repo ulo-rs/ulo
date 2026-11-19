@@ -779,6 +779,7 @@ impl Settings {
     }
 }
 
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn bound<B: Broker, L: Link>(link: L, probe: Probe, mounts: Mounts, settings: Settings) -> Result<App<Serving>, StartupError> {
     let Settings { max_inflight, max_queued_items, cap } = settings;
     let mut builder = App::builder(ServerRoot { probe, mounts }).runtime(<B::Harness as Harness>::runtime()).drain_timeout(DRAIN);

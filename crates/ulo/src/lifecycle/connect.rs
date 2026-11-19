@@ -25,6 +25,7 @@ use crate::timer::{BoxError, BoundKind, Resolved, RuntimeShutDown, resolve_bound
 /// `App::connect` passes the whole graph; `load` passes what the lazy module brought, after
 /// swapping the extended graph in, since every step reads `shared.graph()`. The phase is the
 /// caller's: `App::connect` moves it around this call, and `load` runs while the app is Running.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], modules: &[ModuleId]) -> Result<(), ConnectError> {
     for &id in singletons {
         if shared.singletons.get(id).is_none() {
@@ -45,6 +46,7 @@ pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], m
 ///
 /// The store holds the instance as the recipe built it; a contribution's `into_primary` and the
 /// `also_as` coercions are applied by whoever reads it under another key.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> Result<(), ConnectError> {
     let graph = shared.graph();
     let binding = graph.binding(id);
@@ -84,6 +86,7 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
 /// `RuntimeShutDown`, its source the last attempt's error, unless the whole-check bound had passed
 /// on the clock by then, which ends it as that bound's `TimedOut`.
 /// `Readiness { key, module, attempts, reason }` on failure, the reason by the rules of §9.3.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
     let graph = shared.graph();
     let binding = graph.binding(id);
@@ -164,6 +167,7 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
 
 /// Every hook of `kind` on `singletons` and `modules`, in connect order with each module's own
 /// hooks after its providers'. `Hook { hook, key, reason }` on the first failure.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn run_startup_hooks(
     shared: &Arc<AppShared>,
     kind: HookKind,

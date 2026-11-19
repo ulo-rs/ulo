@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::ops::Deref;
 
 use serde::de::DeserializeOwned;
@@ -27,12 +26,10 @@ impl<T> Deref for Query<T> {
 }
 
 impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Query<T> {
-    fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
-        async move {
-            let decoded = parse_form(cx.uri().query().unwrap_or("").as_bytes());
-            let pairs: Vec<(&str, &str)> = decoded.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
-            from_pairs::<T>(&pairs, Source::Form).map(Query).map_err(|error| error.into_extract("query", cx))
-        }
+    async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
+        let decoded = parse_form(cx.uri().query().unwrap_or("").as_bytes());
+        let pairs: Vec<(&str, &str)> = decoded.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
+        from_pairs::<T>(&pairs, Source::Form).map(Query).map_err(|error| error.into_extract("query", cx))
     }
 }
 

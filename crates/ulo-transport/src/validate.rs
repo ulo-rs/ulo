@@ -49,6 +49,11 @@ impl<T: Transport, P: FromCall<T> + Validate> FromCall<T> for Valid<P> {
         P::dependencies(d);
     }
 
+    // `+ Send` in the signature rather than an `async fn`, for the reason `Param::extract` gives
+    // (transports DESIGN decision 107): an `async fn` declares no `Send`, so a caller naming
+    // `Valid<Json<Name<'static>>>` reads through to `P::from_call`'s future with its lifetimes
+    // generic and fails with "implementation of `Deserialize` is not general enough".
+    #[allow(clippy::manual_async_fn)]
     fn from_call(cx: &T::Cx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
         async move {
             let value = match P::from_call(cx).await {

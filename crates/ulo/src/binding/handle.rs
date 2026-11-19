@@ -203,12 +203,14 @@ pub trait HookHost: sealed::State {}
 impl<S: HookCapable, B> HookHost for Binding<S, B> {}
 impl<S: HookCapable, B> HookHost for Contribution<S, B> {}
 
+type HandleMarker<T, K, C> = PhantomData<fn() -> (PhantomData<T>, K, C)>;
+
 /// What `provide`, `value`, the factory methods and the `contribute` builder return: a handle on
 /// the binding registered by that call, through which its second keys, qualifier, construction bound,
 /// readiness check and closure hooks are written.
 pub struct Handle<'m, T: ?Sized, K, C = K> {
     record: &'m mut BindingRecord,
-    _s: PhantomData<fn() -> (PhantomData<T>, K, C)>,
+    _s: HandleMarker<T, K, C>,
 }
 
 impl<'m, T: ?Sized, K, C> Handle<'m, T, K, C> {

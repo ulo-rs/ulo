@@ -269,13 +269,15 @@ impl<R: ?Sized + Send + Sync + 'static> Decl<R> {
     }
 }
 
+type BuildFn<R> = Arc<dyn for<'a> Fn(&'a Resolver<'a>) -> BoxFuture<'a, Result<Arc<R>, LookupError>> + Send + Sync>;
+
 pub(crate) struct ClosureDecl<R: ?Sized> {
     pub(crate) id: ClosureId,
     /// As declared; `Graph::closures` holds the scope the wiring pass decided from it.
     pub(crate) scope: ScopeKind,
     /// Shared with the handler record the wiring pass reads.
     pub(crate) dependencies: Arc<Dependencies>,
-    pub(crate) build: Arc<dyn for<'a> Fn(&'a Resolver<'a>) -> BoxFuture<'a, Result<Arc<R>, LookupError>> + Send + Sync>,
+    pub(crate) build: BuildFn<R>,
     pub(crate) location: &'static Location<'static>,
 }
 
@@ -293,7 +295,7 @@ impl ClosureId {
 
 /// Gives a closure the higher-ranked signature of `ClosureDecl::build`: a closure passed where
 /// this bound is expected has its signature deduced from it, which one boxed in place does not.
-fn erase_build<R, F>(f: F) -> Arc<dyn for<'a> Fn(&'a Resolver<'a>) -> BoxFuture<'a, Result<Arc<R>, LookupError>> + Send + Sync>
+fn erase_build<R, F>(f: F) -> BuildFn<R>
 where
     R: ?Sized + 'static,
     F: for<'a> Fn(&'a Resolver<'a>) -> BoxFuture<'a, Result<Arc<R>, LookupError>> + Send + Sync + 'static,

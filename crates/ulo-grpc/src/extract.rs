@@ -102,6 +102,7 @@ fn decoder<T: prost::Message + Default>() -> ProstDecoder<T> {
 /// The first message of the request body. A body another extractor took, or one ending before a
 /// whole message, is `Missing`; one over [`MESSAGE_LIMIT`] is `TooLarge`; one that does not decode
 /// as `T` is `Malformed`, the decoder's status redacted through the app.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn first_message<T>(cx: &GrpcCx, param: &'static str) -> Result<T, ExtractError>
 where
     T: prost::Message + Default + Send + 'static,

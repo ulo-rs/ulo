@@ -235,12 +235,14 @@ pub(crate) trait ErasedServer: Send + Sync + 'static {
     fn bound(&self) -> Vec<BoundAddr>;
 }
 
+pub(crate) type MountedParts<T> = (Vec<MountedHandler<T>>, Arc<dyn Runtime>);
+
 /// The graph's handlers for `T`, typed again, and the app's `Runtime`. `listen()` refuses a
 /// transport on an app with no `Runtime` before preparing it; this answers the same refusal rather
 /// than handing a server a runtime it does not have.
 pub(crate) fn mounted_parts<T: Transport>(
     app: &AppHandle,
-) -> Result<(Vec<MountedHandler<T>>, Arc<dyn Runtime>), RuntimeMissing> {
+) -> Result<MountedParts<T>, RuntimeMissing> {
     let Some(runtime) = app.shared.config.runtime.clone() else {
         return Err(RuntimeMissing { transport: TypeName::of::<T>() });
     };

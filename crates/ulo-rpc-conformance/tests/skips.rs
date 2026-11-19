@@ -6,7 +6,6 @@
 //! here fails every call that starts it, so a run shows as a panic and a skip, or a refusal
 //! asserted, as a return.
 
-use std::future::Future;
 use std::sync::Arc;
 
 use ulo::{BoxError, Runtime};
@@ -48,20 +47,18 @@ impl Link for Refusing {
         }
     }
 
-    fn listen(&self, _: &[Subscription]) -> impl Future<Output = Result<Inbound, BoxError>> + Send {
-        async { Err(BoxError::from("the scenario started a server on the link")) }
+    async fn listen(&self, _: &[Subscription]) -> Result<Inbound, BoxError> {
+        Err(BoxError::from("the scenario started a server on the link"))
     }
 
-    fn connect(&self, _: &Arc<dyn Runtime>) -> impl Future<Output = Result<Outbound, BoxError>> + Send {
-        async { Err(BoxError::from("the scenario started a client on the link")) }
+    async fn connect(&self, _: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+        Err(BoxError::from("the scenario started a client on the link"))
     }
 
-    fn drain(&self) -> impl Future<Output = ()> + Send {
-        async {}
-    }
+    async fn drain(&self) {}
 
-    fn close(&self) -> impl Future<Output = Result<(), BoxError>> + Send {
-        async { Ok(()) }
+    async fn close(&self) -> Result<(), BoxError> {
+        Ok(())
     }
 }
 

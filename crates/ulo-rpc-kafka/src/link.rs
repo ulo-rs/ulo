@@ -1793,7 +1793,7 @@ impl<T: Send + 'static> Deref for Detached<T> {
 impl<T: Send + 'static> Drop for Detached<T> {
     fn drop(&mut self) {
         if let Some(value) = self.0.take() {
-            let _ = drop_detached(value);
+            drop(drop_detached(value));
         }
     }
 }

@@ -619,8 +619,8 @@ impl WiringError {
                 f,
                 format!("execution input `{}` has two sources", show(key)),
                 vec![
-                    first.line(&show_module, &show_type),
-                    second.line(&show_module, &show_type),
+                    first.line(show_module, show_type),
+                    second.line(show_module, show_type),
                     "help: an input is seeded by the one transport that declares it, and no module binds it; remove the other source"
                         .to_owned(),
                 ],
@@ -643,7 +643,7 @@ impl WiringError {
                 tree(f, format!("override of `{}` matches several bindings", show(key)), items)
             }
             WiringError::OverrideModuleAmbiguous { module, candidates, at } => {
-                let module = short_type_name(*module);
+                let module = short_type_name(module);
                 let mut items: Vec<String> = candidates.iter().map(|c| format!("instance {}", show_module(c))).collect();
                 items.push(format!("declared at {}", place(at)));
                 items.push(format!("help: name one with `.in_module_keyed::<{module}, Q>()` or `.in_module_of(&config)`"));
@@ -741,10 +741,10 @@ impl WiringError {
             }
             WiringError::Cycle { path } => {
                 let mut steps: &[(KeyName, ModuleName)] = path;
-                if let [first, .., last] = steps {
-                    if first.0 == last.0 {
-                        steps = &steps[..steps.len() - 1];
-                    }
+                if let [first, .., last] = steps
+                    && first.0 == last.0
+                {
+                    steps = &steps[..steps.len() - 1];
                 }
                 let head = format!("dependency cycle: {}", closed_loop(steps.iter().map(|(k, _)| show(k)).collect()));
                 let mut items: Vec<String> = steps.iter().map(|(k, m)| format!("`{}` in {}", show(k), show_module(m))).collect();
@@ -1127,10 +1127,10 @@ fn tree(f: &mut fmt::Formatter<'_>, head: String, items: Vec<String>) -> fmt::Re
 /// `A → B → C → A`: the steps with the first repeated at the end unless it already is.
 fn closed_loop(mut steps: Vec<String>) -> String {
     let closed = steps.len() > 1 && steps.first() == steps.last();
-    if !closed {
-        if let Some(first) = steps.first().cloned() {
-            steps.push(first);
-        }
+    if !closed
+        && let Some(first) = steps.first().cloned()
+    {
+        steps.push(first);
     }
     steps.join(" → ")
 }

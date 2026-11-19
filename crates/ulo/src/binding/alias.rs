@@ -9,13 +9,15 @@ use crate::scope::ScopeKind;
 use crate::transport::Transport;
 use crate::type_name::TypeName;
 
+type KeyMarker<T, Q> = PhantomData<fn() -> (PhantomData<T>, Q)>;
+
 /// `alias::<T, Q>()`: the new key `T @ Q`, waiting for the existing one in [`Alias::of`].
 ///
 /// An alias keeps the type and changes the qualifier; both keys reach the same object. A second
 /// key under another type is a coercion, written with `also_as`.
 pub struct Alias<'m, T: ?Sized, Q> {
     node: &'m mut ModuleNode,
-    _k: PhantomData<fn() -> (PhantomData<T>, Q)>,
+    _k: KeyMarker<T, Q>,
 }
 
 impl<'m, T: ?Sized + Send + Sync + 'static, Q: 'static> Alias<'m, T, Q> {

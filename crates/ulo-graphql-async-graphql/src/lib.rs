@@ -123,6 +123,7 @@ pub async fn dep<T: ?Sized + Send + Sync + 'static>(ctx: &async_graphql::Context
 /// The async-graphql request for `req`, carrying the call's context and its execution, and the
 /// fault a request error the schema answers for it would be. A context that cannot be built is
 /// answered `Failed`: nothing executed, and the fault is the server's.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn request<C: Send + Sync + 'static>(
     module: &ModuleRef,
     req: GqlRequest,
