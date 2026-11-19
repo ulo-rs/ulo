@@ -59,6 +59,7 @@ use ulo_transport::prepare::{Failure, Failures};
 use crate::handler::HttpHandler;
 use crate::backend::{Absent, HttpConfig};
 use crate::body::HttpBody;
+use crate::client_ip::{Cidr, CidrError};
 use crate::pre_dispatch::{Entry, PreDispatch, Step, Supply};
 use crate::render;
 use crate::request::{ConnInfo, OnUpgrade, Request};
@@ -550,6 +551,19 @@ impl<A: Embed> Embedded<A> {
             }),
         });
         self
+    }
+
+    /// The reverse proxies trusted to report the client; see
+    /// [`Server::trusted_proxies`](crate::Server::trusted_proxies). The peer they are matched
+    /// against is the address the adapter supplies, so on a host declared without `peer_addr`
+    /// and not given [`peer_addr(true)`](Self::peer_addr) there is none, and
+    /// [`HttpCx::client_ip`](crate::HttpCx::client_ip) answers `None`.
+    pub fn trusted_proxies<R>(self, ranges: impl IntoIterator<Item = R>) -> Self
+    where
+        R: TryInto<Cidr>,
+        CidrError: From<R::Error>,
+    {
+        self.configure(|config| config.set_trusted_proxies(ranges))
     }
 
     /// What the app does with a request no route matches; `Miss::Final` unset.

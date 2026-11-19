@@ -20,7 +20,7 @@ use ulo_listener_tokio::TokioListener;
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
-use ulo_transport::{Admission, Count};
+use ulo_transport::{Admission, Count, ShedLog};
 
 use crate::handler::GrpcHandler;
 use crate::dispatch::{Dispatcher, Route, builtin};
@@ -437,7 +437,9 @@ impl ulo::Server for Server {
             health: vec![builtin(health.service())],
             reflection,
             stage,
-            admission: Admission::new(self.max_inflight.max_inflight()).retry_after(self.shed_retry_after),
+            admission: Admission::new(self.max_inflight.max_inflight())
+                .retry_after(self.shed_retry_after)
+                .logged(ShedLog::new(<Grpc as Transport>::KEY, Arc::clone(mounted.timer()))),
             per_connection: limit(self.max_per_connection),
             grace: match self.timeout_grace {
                 Bound::Default => Some(DEFAULT_TIMEOUT_GRACE),

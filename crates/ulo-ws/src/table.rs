@@ -34,8 +34,8 @@ use futures_core::future::BoxFuture;
 
 use http::StatusCode;
 use http::request::Parts;
-use ulo::{AppHandle, Bound, BoxError, DrainToken, Mounted, Runtime};
-use ulo_transport::Count;
+use ulo::{AppHandle, Bound, BoxError, DrainToken, Mounted, Runtime, Timer, Transport};
+use ulo_transport::{Count, ShedLog};
 use ulo_transport::prepare::Failures;
 
 use crate::broadcast::InMemory;
@@ -215,6 +215,8 @@ struct Inner {
     app: AppHandle,
     runtime: Arc<dyn Runtime>,
     tracker: Arc<Tracker>,
+    /// Counts the connections refused over a gateway's `max_connections`.
+    shed: ShedLog,
 }
 
 impl GatewayTable {
@@ -263,7 +265,8 @@ impl GatewayTable {
     ) -> Self {
         hub.record_gateways(&gateways);
         let tracker = Tracker::new(defaults.server_max_inflight.max_inflight(), defaults.messages_read.clone(), defaults.answer_hold.clone());
-        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker }) }
+        let shed = ShedLog::new(<WsConnect as Transport>::KEY, Arc::clone(&runtime) as Arc<dyn Timer>);
+        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker, shed }) }
     }
 
     /// Each gateway's path, its controller's prefix joined.
@@ -334,6 +337,7 @@ impl GatewayTable {
             app: self.inner.app.clone(),
             runtime: Arc::clone(&self.inner.runtime),
             tracker: Arc::clone(&self.inner.tracker),
+            shed: self.inner.shed.clone(),
         }
     }
 }
