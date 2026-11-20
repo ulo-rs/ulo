@@ -21,6 +21,10 @@ tracing = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
+# Placing descriptors from 3 on in the children `tests/activation.rs` starts.
+[target.'cfg(unix)'.dev-dependencies]
+command-fds = { workspace = true }
+
 [dev-dependencies]
 # The certificate `tests/tls.rs` serves, made when the tests run.
 ulo-test-certs = { path = "../ulo-test-certs" }

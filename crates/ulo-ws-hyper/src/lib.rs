@@ -33,7 +33,7 @@ use ulo_http::Upgraded;
 use ulo_server_hyper::{Accepted, FuturesIo, Listener, RuntimeTimer, Serve, ServeConfig};
 pub use ulo_server_hyper::ReadCount;
 use ulo_net::rustls::ServerConfig;
-use ulo_net::{Activation, ActivationError, Endpoint, EndpointSpec, ListenerName, Tls};
+use ulo_net::{Activation, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::Count;
 use ulo_transport::prepare::{Failures, zero_bound};
 #[cfg(feature = "conformance-probe")]
@@ -250,7 +250,7 @@ fn check_inherited(endpoints: &[Endpoint], failures: &mut Failures) {
     };
     for (name, listed) in names {
         match activation.count(name) {
-            0 => failures.push(ActivationError::Missing(name.clone()).to_string()),
+            0 => failures.push(activation.unavailable(name).to_string()),
             inherited if listed > inherited => failures.push(format!(
                 "{} is listed {listed} times, and {inherited} inherited sockets answer to it",
                 Endpoint::Inherited(name.clone())
