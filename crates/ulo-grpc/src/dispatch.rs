@@ -67,7 +67,6 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt;
 use std::future::{Future, poll_fn};
-use std::net::SocketAddr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -100,7 +99,7 @@ use crate::metadata;
 use crate::pre_dispatch::StageCx;
 use crate::status::{self, code_for_http};
 use crate::trace;
-use crate::transport::{CxInner, Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, PeerAddr, Reply};
+use crate::transport::{Caller, CxInner, Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, PeerAddr, Reply};
 
 const GRPC_STATUS: HeaderName = HeaderName::from_static("grpc-status");
 const GRPC_ENCODING: HeaderName = HeaderName::from_static("grpc-encoding");
@@ -185,7 +184,7 @@ impl Dispatcher {
             exec.seed(PeerAddr(peer));
         }
         let path: Arc<str> = Arc::from(head.uri.path());
-        let peer = conn.peer;
+        let caller = Caller::of(&conn);
         let call_span = call_span(&self.app, &exec, head.uri.path());
         let handle = exec.handle();
         let mut conn = conn;
@@ -204,7 +203,7 @@ impl Dispatcher {
                 Raced::Done(response, deadline) => (screened(response, Writer::PreDispatch), deadline),
                 Raced::Expired => {
                     let handler = matched.get().cloned();
-                    let expired = self.expired(&handle, path, metadata, peer, handler).instrument(call_span.clone()).await;
+                    let expired = self.expired(&handle, path, metadata, caller, handler).instrument(call_span.clone()).await;
                     (expired, None)
                 }
             },
@@ -229,10 +228,10 @@ impl Dispatcher {
         exec: &ExecutionRef,
         path: Arc<str>,
         metadata: GrpcMetadata,
-        peer: Option<SocketAddr>,
+        caller: Caller,
         handler: Option<MountedHandler<Grpc>>,
     ) -> Response {
-        let cx = self.context(exec, Arc::clone(&path), metadata, peer, handler.clone(), None);
+        let cx = self.context(exec, Arc::clone(&path), metadata, caller, handler.clone(), None);
         let recovering = ulo::recover(handler.as_ref(), exec, &cx, BoxError::from(status::timed_out()));
         let mut grace = self.grace.map(|grace| self.timer.sleep(grace));
         let Some(outcome) = within(recovering, grace.as_mut()).await else {
@@ -349,7 +348,7 @@ impl Dispatcher {
                 &exec,
                 Arc::from(head.uri.path()),
                 GrpcMetadata::from_headers(&head.headers),
-                conn.peer,
+                Caller::of(&conn),
                 Some(route.handler.clone()),
                 Some(body),
             );
@@ -368,7 +367,7 @@ impl Dispatcher {
         exec: &ExecutionRef,
         path: Arc<str>,
         metadata: GrpcMetadata,
-        peer: Option<SocketAddr>,
+        caller: Caller,
         handler: Option<MountedHandler<Grpc>>,
         body: Option<HttpBody>,
     ) -> GrpcCx {
@@ -378,7 +377,8 @@ impl Dispatcher {
             timer: Arc::clone(&self.timer),
             path,
             metadata,
-            peer,
+            peer: caller.peer,
+            tls: caller.tls,
             handler,
             body: Mutex::new(body),
         })

@@ -270,7 +270,7 @@ pub(crate) fn unserved_controllers(graph: &Graph, servers: &[TypeName], unserved
             let module = graph.module(binding.origin).name.clone();
             let location = binding.record.location;
             let controller = binding.record.built;
-            let Served { transport, server } = served;
+            let Served { transport, server, hint } = served;
             let entry = PrepareEntry::new([controller, transport, server]).at(location).about("controller");
             let error = PrepareError::new([controller, transport, server], move |full| {
                 let name = |ty: TypeName| if full.contains(&ty) { format!("{ty:#}") } else { ty.to_string() };
@@ -280,9 +280,10 @@ pub(crate) fn unserved_controllers(graph: &Graph, servers: &[TypeName], unserved
                 } else {
                     format!("has `{transport}` handlers that a server of `{server}` serves, and the app binds none")
                 };
+                let advice = hint.unwrap_or("bind one");
                 format!(
                     "the controller `{controller}` of module {module}, registered at {location}, {handlers}, so they would never \
-                     run: bind one, or write `AppBuilder::unserved::<{transport}>()` for a binary that serves no `{transport}`"
+                     run: {advice}, or write `AppBuilder::unserved::<{transport}>()` for a binary that serves no `{transport}`"
                 )
             })
             .with_entries(vec![entry]);

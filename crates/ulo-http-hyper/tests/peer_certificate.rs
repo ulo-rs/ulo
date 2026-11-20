@@ -45,7 +45,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// The leaf the TLS session verified, or `None`.
 fn verified_leaf(cx: &HttpCx) -> Option<&[u8]> {
-    cx.conn().tls.as_ref()?.peer_certificates.as_deref()?.first().map(Vec::as_slice)
+    cx.conn().tls.as_ref()?.peer_certificates.as_ref()?.leaf()
 }
 
 /// Admits a request whose connection presented a verified client certificate.

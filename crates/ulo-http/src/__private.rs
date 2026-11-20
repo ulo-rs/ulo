@@ -32,6 +32,12 @@ pub fn error_head(error: &CallError) -> (StatusCode, HeaderMap) {
     (status, headers)
 }
 
+/// The 500 problem document an unclaimed internal error renders as, `detail` `internal error`:
+/// what an embedding answers in place of an app response its host cannot carry as written.
+pub fn internal_error() -> crate::Response {
+    render::problem(&CallError::new(ulo_transport::ErrorKind::Internal, "internal error"), &HttpConfig::default())
+}
+
 /// What the server answering a WebSocket handshake adds to its refusals, as it adds them to its
 /// own errors and refusals. Each header is built when a refusal asks for it, so a handshake that
 /// is not refused builds none and logs nothing for a challenge that is not a valid header value.

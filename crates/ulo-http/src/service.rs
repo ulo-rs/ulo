@@ -9,8 +9,8 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
-use http::header::{ALLOW, CONTENT_LENGTH, HeaderName, HeaderValue, UPGRADE};
-use http::{HeaderMap, Method, StatusCode};
+use http::header::{ALLOW, CONNECTION, CONTENT_LENGTH, HOST, HeaderName, HeaderValue, TRANSFER_ENCODING, UPGRADE};
+use http::{HeaderMap, Method, StatusCode, Version};
 use http_body::{Body as _, Frame, SizeHint};
 use tracing::{Instrument, Span, field};
 use ulo::{
@@ -42,13 +42,19 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 ///
 /// Per request, in order:
 /// 1. Over the server's in-flight bound: 503 with `Retry-After`.
-/// 2. `Execution::open` at the root module. Refused during the drain: 503 with `Retry-After` and
+/// 2. An HTTP/1.x request carrying two `Host` lines, or `Content-Length` beside
+///    `Transfer-Encoding`: 400 as a problem document with `Connection: close`, answered directly,
+///    no execution opened (RFC 9112 §3.2, §6.3). hyper drops the `Content-Length` of a request
+///    carrying both as it parses the head, so on hyper and the hosts built on it such a request
+///    arrives with its `Transfer-Encoding` alone, its body read by it, and hyper closes the
+///    connection after the answer.
+/// 3. `Execution::open` at the root module. Refused during the drain: 503 with `Retry-After` and
 ///    `Connection: close`, answered directly, no pre-dispatch stage.
-/// 3. The inputs `RequestHead` and `ClientAddr` seeded, as the client sent them; the
+/// 4. The inputs `RequestHead` and `ClientAddr` seeded, as the client sent them; the
 ///    `ulo_transport::span::call` span entered, its `url.path` the request's
 ///    [`OriginalPath`](crate::embed::OriginalPath) when an embedding's adapter supplied one, and
 ///    the path received otherwise.
-/// 4. A path holding a `.` or `..` segment, each dot raw, `%2E` or `%2e`, or a `\`, raw, `%5C` or
+/// 5. A path holding a `.` or `..` segment, each dot raw, `%2E` or `%2e`, or a `\`, raw, `%5C` or
 ///    `%5c`, answers 400 as a problem document, offered to no error handler and seen by no
 ///    pre-dispatch entry, with the headers each unscoped `Cors` entry adds to a response it passes
 ///    and `Routing::Unrouted`. Under an embedding's `Miss::Forward`, such a path that no route or
@@ -56,14 +62,14 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 ///    instead, before any entry, so the host routes it as the client sent it. A path an unscoped
 ///    entry rewrites to a refused one is answered 400 at routing, logged at `warn`. Otherwise the
 ///    unscoped pre-dispatch entries, in order, inside `AppHandle::catch_panic`.
-/// 5. An `Upgrade` request on an upgrade path, inside an embedding's prefix, goes to its
+/// 6. An `Upgrade` request on an upgrade path, inside an embedding's prefix, goes to its
 ///    `UpgradeHandler`, after the scoped entries whose scope matches its path. Otherwise routing: a miss runs the scoped entries
 ///    whose scope matches its path, then is offered to the global error handlers through
 ///    `ulo::recover(None, ..)` as a `CallError` whose source is [`NoRoute`],
 ///    [`MethodNotAllowed`] or [`MethodNotImplemented`], rendered 404, 405 with `Allow`, or 501,
 ///    when none claims it; `OPTIONS` with no handler answers 204 with `Allow`. A request outside an embedding's prefix runs no
 ///    scoped entry.
-/// 6. `Execution::route_to` the controller's module, the route's timeout armed on the app's
+/// 7. `Execution::route_to` the controller's module, the route's timeout armed on the app's
 ///    `Timer`, the scoped entries whose scope matches the path run. When the timeout passes
 ///    before an answer, the pipeline is dropped, the execution cancelled with
 ///    `CancelReason::Deadline`, and the error handlers, the
@@ -71,20 +77,30 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 ///    `HttpConfig::timeout_grace`, which bounds their answer's body as well: unclaimed, not
 ///    answered within the grace, or answered with a body still open when it runs out or, one the
 ///    server waits on, past 1 MiB within it, it renders 504.
-/// 7. The `HttpCx` built from the request as the stage leaves it, and `ulo::dispatch` with the
+/// 8. The `HttpCx` built from the request as the stage leaves it, and `ulo::dispatch` with the
 ///    route's call; an error no handler claims rendered as problem details, `Timeout` (504) when
 ///    the execution's cancel reason is `Deadline`.
-/// 8. The response's headers merged with `HttpCx::response_headers`, a `HEAD` answered by a `GET`
-///    handler stripped of its body, [`Routing`] in its extensions (`Routing::Unrouted` when the
-///    request was answered before routing decided), a body of unknown length wrapped in
-///    `ulo_transport::Tracked` unless it already is, so `on_stream_end` learns how every stream
-///    ended whoever built the response, and the body wrapped so that a drop before its end fires
-///    `CancelReason::Disconnected`. The request counts against the in-flight bound, and its
-///    execution stays open, until the backend drops that body. A stream the backend never writes,
-///    on a `HEAD` answer or a 1xx, 204 or 304, reports `Completed` instead, when the service
-///    answers: the outcome concerns the body, and such a response owes the client none. A 1xx,
-///    204 or 304 reaches the backend with an empty body whatever body the handler gave it, and
-///    one carrying a stream is logged at `warn`.
+/// 9. A final 1xx is passed to the backend only as an [`UpgradeHandler`]'s 101: a backend writes a
+///    101 as a protocol switch that hands the connection away, and any other 1xx as an interim
+///    answer after which the client reads the next response as this one's. A handler, a
+///    pre-dispatch entry or an error handler answering one, or an upgrade handler answering a 1xx
+///    other than 101, gets the internal-error 500 problem document in its place, logged at
+///    `error` with the route and the handler routing matched. `100 Continue` is the backend's
+///    answer to `Expect`, never a handler's. The request's upgrade future, whoever takes it,
+///    yields the connection only when the response handed to the backend is that 101; after any
+///    other answer the connection a backend hands over is dropped, which closes it.
+/// 10. The response's headers merged with `HttpCx::response_headers`, a `HEAD` answered by a `GET`
+///     handler stripped of its body, [`Routing`] in its extensions (`Routing::Unrouted` when the
+///     request was answered before routing decided), a body of unknown length wrapped in
+///     `ulo_transport::Tracked` unless it already is, so `on_stream_end` learns how every stream
+///     ended whoever built the response, and the body wrapped so that a drop before its end fires
+///     `CancelReason::Disconnected`. The request counts against the in-flight bound, and its
+///     execution stays open, until the backend drops that body. A stream the backend never writes,
+///     on a `HEAD` answer or a 1xx, 204, 205 or 304, reports `Completed` instead, when the service
+///     answers: the outcome concerns the body, and such a response owes the client none. A 1xx,
+///     204, 205 or 304 reaches the backend with an empty body whatever body the handler gave it,
+///     one carrying a stream is logged at `warn`, and a 205 loses any `Content-Length` or
+///     `Transfer-Encoding` it was given, so the backend writes `Content-Length: 0`.
 ///
 /// The future [`call`](AppService::call) answers cancels the execution with
 /// `CancelReason::Disconnected` when it is dropped before it answers: a backend drops it when the
@@ -96,7 +112,7 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 ///
 /// A call still running when the end of the drain cancels its execution with
 /// `CancelReason::Drain` is abandoned. Before the response is produced, the pipeline is dropped
-/// and the answer is the 503 of step 2, `Connection: close` included, with the `Routing` the call
+/// and the answer is the 503 of step 3, `Connection: close` included, with the `Routing` the call
 /// had decided. The pipeline is polled before the cancellation, so a response ready in the poll
 /// the cancellation wakes is the answer; when that response's body has no known length, the drain
 /// is checked once more as the service returns it and the answer is the 503 instead, the body
@@ -157,6 +173,12 @@ struct Tracking {
     routing: OnceLock<Routing>,
     /// Kept under `Miss::Forward` only.
     forward: Option<Untouched>,
+    /// Set when an `UpgradeHandler` answered 101: the one 1xx the service passes to the backend.
+    switched: AtomicBool,
+    /// Set when the response handed to the backend is that 101, which alone lets the request's
+    /// upgrade future yield the connection: hyper hands the connection to whoever holds the
+    /// future once the connection's last exchange ends, whatever status the request was answered.
+    handed: AtomicBool,
 }
 
 /// What a request must still be for its miss to be forwarded: its body never polled and its path
@@ -190,6 +212,9 @@ impl ServiceInner {
         let Some(permit) = self.admission.try_admit() else {
             return render::shed(&self.config);
         };
+        if let Some(refused) = ambiguous(&req.head, &self.config) {
+            return refused;
+        }
         let mut opts = ExecOptions::new();
         // A `tracestate` with no `traceparent` is discarded (W3C Trace Context §4.2), so a request
         // without one carries no context to extract.
@@ -213,7 +238,10 @@ impl ServiceInner {
             req.body = HttpBody::new(Watched { inner: body, polled: Arc::clone(&polled) });
             Untouched { polled, path: req.path().to_owned() }
         });
-        let tracking = Arc::new(Tracking { routing: OnceLock::new(), forward });
+        let tracking = Arc::new(Tracking { routing: OnceLock::new(), forward, switched: AtomicBool::new(false), handed: AtomicBool::new(false) });
+        if let Some(pending) = req.upgrade.take() {
+            req.upgrade = Some(gated(pending, Arc::clone(&tracking)));
+        }
         let method = req.head.method.clone();
         let call_span = span::call(&self.app, &exec, span::Kind::Server, <Http as Transport>::KEY, method.as_str(), None);
         call_span.record(span::HTTP_REQUEST_METHOD, method.as_str());
@@ -248,6 +276,11 @@ impl ServiceInner {
                 refused
             }
         };
+        if response.status().is_informational() && !(response.status() == StatusCode::SWITCHING_PROTOCOLS && tracking.switched.load(Ordering::Acquire)) {
+            response = interim_refused(response.status(), &tracking, &self.config);
+        } else if response.status() == StatusCode::SWITCHING_PROTOCOLS {
+            tracking.handed.store(true, Ordering::Release);
+        }
         // Set here rather than where routing decides, so a pre-dispatch entry that rebuilt the
         // response does not drop it.
         if response.extensions().get::<Routing>().is_none() {
@@ -257,14 +290,18 @@ impl ServiceInner {
         call_span.record(span::HTTP_RESPONSE_STATUS_CODE, status.as_u16());
         trace::record_status(&call_span, status);
         // A body the backend never writes is dropped unread, which is not the peer leaving.
-        let unwritten = method == Method::HEAD || forbids_body(status);
+        let unwritten = method == Method::HEAD || carries_none(status);
+        if status == StatusCode::RESET_CONTENT {
+            response.headers_mut().remove(CONTENT_LENGTH);
+            response.headers_mut().remove(TRANSFER_ENCODING);
+        }
         let app = self.app.clone();
         response.map(|body| {
             let body = if unwritten {
                 call_span.in_scope(|| owes_nothing(&body, status, &handle));
                 // A backend that writes what it is handed would put this body on the wire after the
                 // head, where a client reads it as the start of the next response.
-                if forbids_body(status) { HttpBody::empty() } else { body }
+                if carries_none(status) { HttpBody::empty() } else { body }
             } else {
                 body.tracked(handle.clone())
             };
@@ -325,9 +362,17 @@ impl ServiceInner {
                 let taker = self.upgrades.iter().find(|(path, _)| path.matches(req.path()).is_some()).map(|(_, taker)| Arc::clone(taker));
                 if let Some(taker) = taker {
                     let serving = ServingConfig(Arc::clone(&self.config));
+                    let marks = Arc::clone(&tracking);
                     let end: Rest = Box::new(move |mut req| {
                         req.head.extensions.insert(serving);
-                        taker.upgrade(req)
+                        let answer = taker.upgrade(req);
+                        Box::pin(async move {
+                            let response = answer.await;
+                            if response.status() == StatusCode::SWITCHING_PROTOCOLS {
+                                marks.switched.store(true, Ordering::Release);
+                            }
+                            response
+                        })
                     });
                     return self.unrouted(&exec.handle(), req, end).await;
                 }
@@ -610,6 +655,43 @@ pub(crate) fn merge_headers(cx: &HttpCx, mut response: Response) -> Response {
     response
 }
 
+/// The 500 that replaces a final 1xx no `UpgradeHandler` answered, logged at `error` naming what
+/// routing decided. A backend writes a 101 as a protocol switch and hands the connection to
+/// whoever holds its upgrade future, and a 100, 102 or 103 as an interim answer after which the
+/// client reads the next response on the connection as this request's, so a route reflecting a
+/// status would let a client take over the connection or desynchronise it. `100 Continue` is the
+/// backend's answer to `Expect`, never a handler's.
+fn interim_refused(status: StatusCode, tracking: &Tracking, config: &HttpConfig) -> Response {
+    match tracking.routing.get() {
+        Some(Routing::Matched { route, handler }) => tracing::error!(
+            status = status.as_u16(),
+            route = &**route,
+            handler = %format_args!("{}::{}", handler.controller(), handler.name()),
+            "a handler answered with a 1xx status, which only an upgrade handler's 101 may be; answered 500"
+        ),
+        routing => tracing::error!(
+            status = status.as_u16(),
+            routing = ?routing.unwrap_or(&Routing::Unrouted),
+            "a pre-dispatch entry or an error handler answered with a 1xx status, which only an upgrade handler's 101 may be; answered 500"
+        ),
+    }
+    render::problem(&CallError::new(ErrorKind::Internal, "internal error"), config)
+}
+
+/// `pending`, yielding the connection only when the response handed to the backend is an
+/// `UpgradeHandler`'s 101; otherwise the connection the backend hands over is dropped, which
+/// closes it.
+fn gated(pending: OnUpgrade, tracking: Arc<Tracking>) -> OnUpgrade {
+    OnUpgrade::new(async move {
+        let upgraded = pending.await?;
+        if tracking.handed.load(Ordering::Acquire) {
+            Ok(upgraded)
+        } else {
+            Err("the request was not answered with an upgrade handler's 101, so its connection is not handed over".into())
+        }
+    })
+}
+
 /// The 400 a path refused before routing answers: one holding a `.` or `..` segment, or a `\`
 /// raw or as `%5C`.
 fn malformed(path: &str, config: &HttpConfig) -> Option<Response> {
@@ -631,12 +713,46 @@ fn options(allow: HeaderValue) -> Response {
 /// a body of no known length that the backend writes, so not a `HEAD` answer's or one its status
 /// forbids.
 fn cut_at_first_poll(response: &Response, method: &Method) -> bool {
-    response.body().size_hint().exact().is_none() && *method != Method::HEAD && !forbids_body(response.status())
+    response.body().size_hint().exact().is_none() && *method != Method::HEAD && !carries_none(response.status())
 }
 
 /// Whether `status` forbids content: 1xx, 204 and 304 (RFC 9110 §6.4.1).
 fn forbids_body(status: StatusCode) -> bool {
     status.is_informational() || status == StatusCode::NO_CONTENT || status == StatusCode::NOT_MODIFIED
+}
+
+/// Whether a response of `status` reaches the backend with an empty body: one [`forbids_body`]
+/// covers, and 205, which RFC 9110 §15.3.6 forbids to generate content and which, unlike a 204,
+/// may say `Content-Length: 0`.
+fn carries_none(status: StatusCode) -> bool {
+    forbids_body(status) || status == StatusCode::RESET_CONTENT
+}
+
+/// 400 with `Connection: close` for an HTTP/1.x request two readers can read differently, answered
+/// before an execution opens, offered to no error handler and seen by no pre-dispatch entry, with
+/// `Routing::Unrouted`: one with more than one `Host` line, and one carrying `Content-Length`
+/// beside `Transfer-Encoding` (RFC 9112 §3.2, §6.3). The close is what §6.3 requires of the last:
+/// whatever the backend read of the body, the connection is not read again. hyper drops the
+/// `Content-Length` of such a request as it parses the head and closes the connection after the
+/// answer, so on hyper and the hosts built on it the request arrives here with its
+/// `Transfer-Encoding` alone and is read by it. HTTP/2 carries the authority in `:authority`, and an h2 server
+/// refuses `Transfer-Encoding` before the service sees the request.
+fn ambiguous(head: &http::request::Parts, config: &HttpConfig) -> Option<Response> {
+    if head.version > Version::HTTP_11 {
+        return None;
+    }
+    let why = if head.headers.get_all(HOST).iter().nth(1).is_some() {
+        "the request carries more than one `Host` line"
+    } else if head.headers.contains_key(CONTENT_LENGTH) && head.headers.contains_key(TRANSFER_ENCODING) {
+        "the request carries `Content-Length` beside `Transfer-Encoding`"
+    } else {
+        return None;
+    };
+    tracing::debug!(reason = why, "a request was refused before routing: answered 400 and the connection closed");
+    let mut refused = render::problem(&CallError::new(ErrorKind::BadRequest, why), config);
+    refused.headers_mut().insert(CONNECTION, HeaderValue::from_static("close"));
+    refused.extensions_mut().insert(Routing::Unrouted);
+    Some(refused)
 }
 
 /// Reports `Completed` for a stream the backend never writes, on a `HEAD` answer or a status that
@@ -648,7 +764,7 @@ fn owes_nothing(body: &HttpBody, status: StatusCode, exec: &ExecutionRef) {
     if !body.streams() {
         return;
     }
-    if forbids_body(status) {
+    if carries_none(status) {
         tracing::warn!(status = status.as_u16(), "a response carried a streaming body its status forbids; the body was discarded");
     }
     exec.report_stream_end(StreamOutcome::Completed);

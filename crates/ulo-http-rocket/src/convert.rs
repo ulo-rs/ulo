@@ -29,16 +29,10 @@ pub(crate) fn head(request: &rocket::Request<'_>) -> Result<http::request::Parts
     Ok(builder.body(())?.into_parts().0)
 }
 
-/// `value` as the `str` rocket 0.5 carries a header value as, or `None` for a value holding
-/// obs-text bytes that are no UTF-8, which RFC 9110 §5.5 admits and a `str` cannot hold: that
-/// header is left out of the response and logged at `warn`, never written with U+FFFD in place of
-/// a byte.
-fn as_text<'v>(name: &http::HeaderName, value: &'v http::HeaderValue) -> Option<&'v str> {
-    let text = std::str::from_utf8(value.as_bytes()).ok();
-    if text.is_none() {
-        tracing::warn!(header = name.as_str(), "a response header value holds bytes that are no UTF-8, which rocket cannot carry; the header is left out");
-    }
-    text
+/// The name of the first header in `headers` whose value holds obs-text bytes that are no UTF-8,
+/// which RFC 9110 §5.5 admits and rocket 0.5, carrying a header value as a `str`, cannot hold.
+fn not_text(headers: &http::HeaderMap) -> Option<&http::HeaderName> {
+    headers.iter().find(|(_, value)| std::str::from_utf8(value.as_bytes()).is_err()).map(|(name, _)| name)
 }
 
 /// The app's response as rocket's. A body of known length is collected and handed over sized, so
@@ -50,7 +44,22 @@ fn as_text<'v>(name: &http::HeaderName, value: &'v http::HeaderValue) -> Option<
 /// carrying two. For a `HEAD` request the app's `Content-Length` is the length of the body it
 /// omitted, handed over as the size of an empty sized body, which rocket keeps when it strips
 /// the body of a `HEAD` answer.
+///
+/// A response carrying a header value that is no UTF-8 is answered with the app's 500 problem
+/// document in its place, logged at `error` naming the header, as a value holding CR or LF is
+/// refused where the reply is built: left out, a `Set-Cookie` or a `Content-Security-Policy`
+/// would weaken the response unseen, and written lossily it would carry U+FFFD in place of a byte.
 pub(crate) async fn response<'r>(response: ulo_http::Response, handoff: Option<Handoff>, head: bool) -> rocket::Response<'r> {
+    let response = match not_text(response.headers()) {
+        Some(name) => {
+            tracing::error!(
+                header = name.as_str(),
+                "a response header value holds bytes that are no UTF-8, which rocket cannot carry; answered 500 in its place"
+            );
+            ulo_http::__private::internal_error()
+        }
+        None => response,
+    };
     let (parts, body) = response.into_parts();
     let mut builder = rocket::Response::build();
     builder.status(Status::new(parts.status.as_u16()));
@@ -58,7 +67,8 @@ pub(crate) async fn response<'r>(response: ulo_http::Response, handoff: Option<H
         if name == CONTENT_LENGTH {
             continue;
         }
-        if let Some(value) = as_text(name, value) {
+        // Every value is UTF-8 once `not_text` has found none that is not.
+        if let Ok(value) = std::str::from_utf8(value.as_bytes()) {
             builder.raw_header_adjoin(name.as_str().to_owned(), value.to_owned());
         }
     }
@@ -131,20 +141,85 @@ impl AsyncRead for BodyReader {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex, PoisonError};
+
     use http::HeaderValue;
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Level, Metadata};
     use ulo_http::HttpBody;
 
-    /// A UTF-8 value crosses unchanged and one holding a byte that is no UTF-8 is left out, rather
-    /// than crossing with U+FFFD in its place.
+    /// A UTF-8 value beyond ASCII crosses byte for byte.
     #[tokio::test]
-    async fn a_header_value_crosses_unchanged_or_not_at_all() {
+    async fn a_utf8_header_value_crosses_unchanged() {
         let mut app = ulo_http::Response::new(HttpBody::from("obs-text"));
         app.headers_mut().insert("x-utf8", HeaderValue::from_bytes("café".as_bytes()).expect("a valid value"));
-        app.headers_mut().insert("x-latin1", HeaderValue::from_bytes(b"caf\xe9").expect("obs-text is a valid value"));
-        app.headers_mut().append("x-latin1", HeaderValue::from_static("plain"));
+        app.headers_mut().append("x-utf8", HeaderValue::from_static("plain"));
 
         let rocket = super::response(app, None, false).await;
-        assert_eq!(rocket.headers().get("x-utf8").collect::<Vec<_>>(), ["café"]);
-        assert_eq!(rocket.headers().get("x-latin1").collect::<Vec<_>>(), ["plain"], "the value that is no UTF-8 is left out, the other kept");
+        assert_eq!(rocket.status().code, 200);
+        assert_eq!(rocket.headers().get("x-utf8").collect::<Vec<_>>(), ["café", "plain"]);
+    }
+
+    /// A value holding a byte that is no UTF-8 refuses the whole response: the app's 500 problem
+    /// document goes out in its place, none of the refused response's headers or body with it, and
+    /// one `error` names the header.
+    #[tokio::test]
+    async fn a_header_value_that_is_no_utf8_answers_500_logged_at_error_naming_it() {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let _default = tracing::subscriber::set_default(Errors(Arc::clone(&lines)));
+        let mut app = ulo_http::Response::new(HttpBody::from("obs-text"));
+        app.headers_mut().insert("set-cookie", HeaderValue::from_static("session=1; Secure"));
+        app.headers_mut().insert("x-latin1", HeaderValue::from_bytes(b"caf\xe9").expect("obs-text is a valid value"));
+
+        let mut rocket = super::response(app, None, false).await;
+        assert_eq!(rocket.status().code, 500);
+        assert_eq!(rocket.headers().get_one("content-type"), Some("application/problem+json"));
+        assert_eq!(rocket.headers().get("set-cookie").count() + rocket.headers().get("x-latin1").count(), 0, "a header of the refused response crossed");
+        let body = rocket.body_mut().to_string().await.expect("the document reads");
+        assert!(body.contains("\"status\":500") && !body.contains("obs-text"), "{body}");
+        let logged = lines.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert!(logged[0].starts_with("ERROR ") && logged[0].contains("header=x-latin1"), "{logged:?}");
+    }
+
+    /// Every `error` event on the thread it is the default subscriber of, as its level, its
+    /// message, then `name=value` for each other field.
+    struct Errors(Arc<Mutex<Vec<String>>>);
+
+    impl tracing::Subscriber for Errors {
+        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+            *metadata.level() <= Level::ERROR
+        }
+
+        fn new_span(&self, _span: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+        fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            let mut line = format!("{} ", event.metadata().level());
+            event.record(&mut Fields(&mut line));
+            self.0.lock().unwrap_or_else(PoisonError::into_inner).push(line);
+        }
+
+        fn enter(&self, _span: &Id) {}
+
+        fn exit(&self, _span: &Id) {}
+    }
+
+    struct Fields<'a>(&'a mut String);
+
+    impl Visit for Fields<'_> {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.0.push_str(&format!(" {}={value:?}", field.name()));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0.push_str(&format!(" {}={value}", field.name()));
+        }
     }
 }

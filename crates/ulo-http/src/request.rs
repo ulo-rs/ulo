@@ -21,7 +21,9 @@ pub struct Request {
     pub head: Parts,
     pub body: HttpBody,
     pub conn: ConnInfo,
-    /// Resolves to the connection's I/O once the response with status 101 has been written.
+    /// Resolves to the connection's I/O once the response with status 101 has been written, and
+    /// to an error when the request is answered with any other status: the service passes a 101
+    /// only from an [`UpgradeHandler`](crate::UpgradeHandler).
     /// `None` when the request asks for no upgrade, and on every request to a backend or an
     /// embedding whose limits are declared without `upgrades`.
     pub upgrade: Option<OnUpgrade>,
@@ -93,15 +95,15 @@ impl ConnInfo {
 pub struct TlsInfo {
     pub alpn: Option<Vec<u8>>,
     pub server_name: Option<String>,
-    /// The certificate chain the client presented, DER, leaf first, as the TLS session holds it
-    /// once the server's client verifier accepted it: `None` when the client presented none or the
-    /// server verifies no client, a rustls configuration given to `Tls::from_config` with
+    /// The certificate chain the client presented, as the TLS session holds it once the server's
+    /// client verifier accepted it: `None` when the client presented none or the server verifies
+    /// no client, a rustls configuration given to `Tls::from_config` with
     /// `with_client_cert_verifier` being what verifies one. A guard reading a client's identity
-    /// reads it here, `cx.conn().tls`, never from a request header, which any client can write.
-    /// Behind a proxy that terminates TLS it is `None`: the proxy holds the session, and a
-    /// certificate header it forwards is trustworthy only where the proxy overwrites the client's
-    /// own copy and nothing reaches the app around the proxy.
-    pub peer_certificates: Option<Arc<[Vec<u8>]>>,
+    /// reads it here, `cx.conn().tls` on HTTP and `cx.tls()` on gRPC, never from a request header
+    /// or metadata, which any client can write. Behind a proxy that terminates TLS it is `None`:
+    /// the proxy holds the session, and a certificate header it forwards is trustworthy only where
+    /// the proxy overwrites the client's own copy and nothing reaches the app around the proxy.
+    pub peer_certificates: Option<PeerCertificates>,
 }
 
 impl TlsInfo {
@@ -117,8 +119,57 @@ impl TlsInfo {
         TlsInfo { server_name: Some(name.into()), ..self }
     }
 
-    pub fn peer_certificates(self, chain: impl Into<Arc<[Vec<u8>]>>) -> Self {
+    pub fn peer_certificates(self, chain: impl Into<PeerCertificates>) -> Self {
         TlsInfo { peer_certificates: Some(chain.into()), ..self }
+    }
+}
+
+/// A client's certificate chain, each certificate DER-encoded, the leaf, the client's own
+/// certificate, first and the certificates that issued it after. Cheap to clone: every clone shares
+/// one chain. Its `Debug` writes the count and each certificate's length, never the bytes, so a
+/// logged `TlsInfo` carries no certificate.
+///
+/// ```
+/// use ulo_http::PeerCertificates;
+///
+/// let chain = PeerCertificates::from(vec![vec![0x30, 0x82, 0x01], vec![0x30, 0x82]]);
+/// assert_eq!(chain.leaf(), Some(&[0x30, 0x82, 0x01][..]));
+/// assert_eq!(chain.len(), 2);
+/// assert_eq!(format!("{chain:?}"), "PeerCertificates { count: 2, lengths: [3, 2] }");
+/// ```
+#[derive(Clone, PartialEq, Eq)]
+pub struct PeerCertificates(Arc<[Vec<u8>]>);
+
+impl PeerCertificates {
+    /// The client's own certificate; `None` only for an empty chain, which no TLS session reports.
+    pub fn leaf(&self) -> Option<&[u8]> {
+        self.0.first().map(Vec::as_slice)
+    }
+
+    /// Every certificate, the leaf first.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &[u8]> {
+        self.0.iter().map(Vec::as_slice)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<Vec<Vec<u8>>> for PeerCertificates {
+    fn from(chain: Vec<Vec<u8>>) -> Self {
+        PeerCertificates(chain.into())
+    }
+}
+
+impl fmt::Debug for PeerCertificates {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let lengths: Vec<usize> = self.0.iter().map(Vec::len).collect();
+        f.debug_struct("PeerCertificates").field("count", &self.0.len()).field("lengths", &lengths).finish()
     }
 }
 

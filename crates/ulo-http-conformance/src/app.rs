@@ -248,6 +248,20 @@ impl Suite {
         response
     }
 
+    /// A 205 whose handler sets the framing headers itself: `Content-Length: 5` beside a 5-byte
+    /// body, or `Transfer-Encoding: chunked`.
+    #[ulo_http::get("/reset/{framing}")]
+    fn reset(&self, framing: Path<String>) -> Response {
+        let mut response = Response::new(HttpBody::from(LEAK));
+        *response.status_mut() = StatusCode::RESET_CONTENT;
+        let (name, value) = match framing.0.as_str() {
+            "length" => (http::header::CONTENT_LENGTH, http::HeaderValue::from(LEAK.len())),
+            _ => (http::header::TRANSFER_ENCODING, http::HeaderValue::from_static("chunked")),
+        };
+        response.headers_mut().insert(name, value);
+        response
+    }
+
     /// The status `code` names, with the text `status`.
     #[ulo_http::get("/status/{code}")]
     fn status(&self, code: Path<u16>) -> Result<(StatusCode, &'static str), SuiteError> {

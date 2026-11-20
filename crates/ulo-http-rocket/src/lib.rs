@@ -48,6 +48,16 @@
 //! for the signal, since a watcher needs one to watch for. The adapter declares
 //! `without_pending_close` and `without_pending_reset` with that reason.
 //!
+//! rocket 0.5 carries a header value as a `str`. A response holding a value that is no UTF-8,
+//! obs-text RFC 9110 §5.5 admits, is answered with the app's 500 problem document in its place
+//! and logged at `error` naming the header: left out, a `Set-Cookie` or a
+//! `Content-Security-Policy` would weaken the response unseen. rocket also writes
+//! `content-length: 0` on every 204 and 304, which RFC 9110 §8.6 forbids on a 204; the app hands
+//! it both with an empty body and no length. rocket's hyper 0.14 drops a request's
+//! `Content-Length` written after `Transfer-Encoding` and keeps the connection, which RFC 9112
+//! §6.3 has a server close, so the adapter answers every request carrying `Transfer-Encoding`
+//! with `Connection: close`.
+//!
 //! The upgrade carries one limit no declaration states. WebSocket requires HTTP/1.1 (RFC 6455
 //! §4.2.1), and rocket 0.5 keeps no request's protocol version, so the adapter hands the app every
 //! request as HTTP/1.1: a gateway on the HTTP port answers an HTTP/1.0 upgrade request with 101,

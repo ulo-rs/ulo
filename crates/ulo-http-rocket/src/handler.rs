@@ -66,7 +66,14 @@ impl Handler for RocketHandler {
         let (body, demand, fill) = BufferedBody::new();
         let app_req = ulo_http::Request { head, body: HttpBody::new(body), conn, upgrade };
         let answer = self.handle.service().respond(request, app_req);
-        let (response, data) = answer_reading(answer, data, demand, fill, self.handle.max_body()).await;
+        let (mut response, data) = answer_reading(answer, data, demand, fill, self.handle.max_body()).await;
+        // hyper 0.14 drops a `Content-Length` written after `Transfer-Encoding` and keeps the
+        // connection open, so the app never sees the pair it refuses. RFC 9112 §6.3 has the server
+        // close the connection after answering such a request; closing after every request
+        // carrying `Transfer-Encoding` covers the pair rocket hides.
+        if request.headers().contains("Transfer-Encoding") {
+            response.headers_mut().insert(http::header::CONNECTION, http::HeaderValue::from_static("close"));
+        }
         if response.extensions().get::<Forwardable>().is_some()
             && let Some(data) = data
         {
