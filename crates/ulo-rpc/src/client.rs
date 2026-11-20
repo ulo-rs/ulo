@@ -43,7 +43,7 @@ use ulo_transport::{Classify, Count, Detail, Details, ErrorKind};
 use crate::codec::Codec;
 use crate::dispatch::{SHAPE_UNSUPPORTED, quote, reason};
 use crate::frame::{Data, ErrorBody, Frame};
-use crate::link::{ConnectTimedOut, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NameTooLong, NoDestination, Outbound, Pattern, ReplyTo, SendFrame};
+use crate::link::{ConnectTimedOut, FrameTooLarge, FrameUnencodable, Link, Misconfigured, NameInvalid, NameTooLong, NoDestination, Outbound, Pattern, ReplyTo, SendFrame};
 use crate::queue::{self, Drain, Feed, Overflow};
 use crate::server::shape_name;
 use crate::trace;
@@ -1182,6 +1182,8 @@ fn send_error(err: BoxError) -> RpcError {
         RpcError::new(ErrorKind::BadRequest, err.to_string()).with_reason("payload_too_large")
     } else if err.is::<NameTooLong>() {
         RpcError::new(ErrorKind::BadRequest, err.to_string()).with_reason("name_too_long")
+    } else if err.is::<NameInvalid>() {
+        RpcError::new(ErrorKind::BadRequest, err.to_string()).with_reason("name_invalid")
     } else if err.is::<FrameUnencodable>() {
         RpcError::new(ErrorKind::Internal, err.to_string())
     } else if ulo::is_panic(&err) {
@@ -1602,8 +1604,9 @@ impl<Res> Stream for RpcStream<Res> {
 /// an oversized payload, or a reply item over the client's `max_queued_bytes` on its own,
 /// `BadRequest` with `reason: "payload_too_large"`, as is a streamed request item over the
 /// server's, from the server; a pattern or a header name the link cannot carry, a RabbitMQ
-/// event's pattern over 241 bytes among them, `BadRequest` with `reason: "name_too_long"`, before
-/// it is sent; a binary payload on a JSON link `BadRequest`
+/// event's pattern over 241 bytes among them, `BadRequest` with `reason: "name_too_long"`, and a
+/// pattern holding what the link cannot carry, a Kafka pattern holding `/` among them,
+/// `BadRequest` with `reason: "name_invalid"`, each before it is sent; a binary payload on a JSON link `BadRequest`
 /// with `reason: "binary_unsupported"`, before any I/O; a call of a shape the link's
 /// `Capabilities::shapes` leave out `Unimplemented` with `reason: "shape_unsupported"`, before any
 /// I/O, and a streamed reply a server on such a link cannot write the same; a stream whose caller
@@ -1661,7 +1664,8 @@ impl RpcError {
 
     /// The `ErrorInfo` detail's `reason`, when one is present: `"no_destination"`,
     /// `"pattern_unhandled"`, `"payload_too_large"`, `"name_too_long"` for a pattern or a header
-    /// name the link cannot carry, `"binary_unsupported"`, `"shape_unsupported"`
+    /// name too long for the link, `"name_invalid"` for a pattern holding what the link cannot
+    /// carry, `"binary_unsupported"`, `"shape_unsupported"`
     /// for a call of a shape the link does not carry, `"zero_timeout"`,
     /// `"reserved_header"` for a `deadline-ms` the caller set, `"overflow"` for a call whose reply
     /// items, or whose streamed request's items on its server, waited unread past the
@@ -2302,6 +2306,8 @@ mod tests {
         Send,
         /// Refuses to send it, as a frame whose pattern the link cannot carry.
         Name,
+        /// Refuses to send it, as a frame whose pattern holds what the link cannot carry.
+        Invalid,
     }
 
     /// A link counting its connects and every frame it is asked to send, whose server refuses
@@ -2352,6 +2358,9 @@ mod tests {
                         (Frame::Req { pattern, .. }, Refuses::Name) => {
                             Err(BoxError::from(NameTooLong { what: "request pattern", name: pattern.clone(), limit: 8 }))
                         }
+                        (Frame::Req { pattern, .. }, Refuses::Invalid) => {
+                            Err(BoxError::from(NameInvalid { what: "request pattern", name: pattern.clone(), allowed: "letters alone" }))
+                        }
                         _ => Ok(()),
                     };
                     Box::pin(async move { refused })
@@ -2371,7 +2380,8 @@ mod tests {
     /// it. A zero bound is refused before the client connects, a request the server answers
     /// `bad_request` is sent once, and one the link refuses as too large, or as carrying a name it
     /// cannot, is offered to the link once; an hour of the paused clock later nothing more has been
-    /// sent. Planted break: `NameTooLong` left to the generic `Unavailable` arm.
+    /// sent. Planted breaks: `NameTooLong` left to the generic `Unavailable` arm; `NameInvalid`
+    /// left to it.
     #[tokio::test(start_paused = true)]
     async fn a_bad_request_is_attempted_once() {
         let runtime = || -> Arc<dyn Runtime> { Arc::new(ulo_runtime_tokio::Tokio::current()) };
@@ -2409,6 +2419,14 @@ mod tests {
         assert!(named.message().contains("request pattern `refusing.request` is 16 bytes"), "the refusal names the pattern and its length: {named:?}");
         tokio::time::sleep(HOUR).await;
         assert_eq!(link.counts(), (1, vec!["req"]), "the connects and frames of a request whose pattern the link cannot carry");
+
+        let link = Refusing::new(Refuses::Invalid);
+        let client = RpcClient::of_module(Arc::new(link.clone()), Bound::Default, idle, runtime());
+        let invalid = client.request::<_, u32>("refusing.request", &()).await.expect_err("the link refuses the request's pattern");
+        assert_eq!((invalid.kind(), invalid.reason()), (ErrorKind::BadRequest, Some("name_invalid")), "the link's refusal: {invalid:?}");
+        assert!(invalid.message().contains("request pattern `refusing.request` is not a name"), "the refusal names the pattern: {invalid:?}");
+        tokio::time::sleep(HOUR).await;
+        assert_eq!(link.counts(), (1, vec!["req"]), "the connects and frames of a request whose pattern the link refuses for its characters");
     }
 
     /// The `deadline-ms` values a caller might set: the four the server cannot read, then two it

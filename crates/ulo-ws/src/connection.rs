@@ -130,8 +130,9 @@ impl Connection {
     }
 
     /// Closes the connection with `code` and `reason`, which `on_disconnect` receives as
-    /// `DisconnectReason::ServerClose`. Refused, with nothing queued: a reason over 123 bytes of
-    /// UTF-8 (RFC 6455 §5.5.1), as `ConnectRefused::code` refuses it.
+    /// `DisconnectReason::ServerClose`. The reason is written as given, never prefixed with a
+    /// kind, whatever the code. Refused, with nothing queued: a reason over 123 bytes of UTF-8
+    /// (RFC 6455 §5.5.1), as `ConnectRefused::code` refuses it.
     ///
     /// The Close frame is written after the messages already queued; the call returns once it is
     /// queued. A close requested after another is not sent: the first stands.
@@ -637,12 +638,11 @@ impl Drop for Switch {
 /// for its answer. A server that drops the decision while `OnConnect` runs, as hyper drops a
 /// request whose client has gone, leaves the phase to finish; the `Switch` nobody receives then
 /// ends the connection it admitted through its `Drop`.
-pub(crate) async fn handshake(accept: Accept, head: Parts, peer: Option<SocketAddr>) -> Handshake {
+pub(crate) async fn handshake(accept: Accept, head: Parts, peer: Option<SocketAddr>, answers: HandshakeAnswers) -> Handshake {
     let checked = match check_handshake(&head, accept.gateway.settings()) {
         Ok(checked) => checked,
         Err(refusal) => return Handshake::Refuse(refusal),
     };
-    let answers = ulo_http::__private::handshake_answers(&head.extensions);
     let forwarded = answers.forwarded_host(&head.headers, peer);
     if let Err(refusal) = accept.gateway.origins.check(&head, forwarded.as_deref()) {
         return Handshake::Refuse(refusal);

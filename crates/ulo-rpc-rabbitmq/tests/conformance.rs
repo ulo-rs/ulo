@@ -511,7 +511,7 @@ async fn a_client_frame_on_a_pattern_amqp_cannot_name_fails_alone() {
     assert_eq!(too_long(&request), ("request pattern", 256, 255), "the refusal of a request on a 256-byte pattern");
     let open = Frame::Open { id: 2, pattern: pattern.clone(), headers: CallHeaders::new() };
     let open = (outbound.send)(Pattern::from(pattern.as_str()), open, Some(ReplyTo { id: 2 })).await.expect_err("a stream's open on a 256-byte routing key was published");
-    assert_eq!(too_long(&open), ("request pattern", 256, 255), "the refusal of a stream's open on a 256-byte pattern");
+    assert_eq!(too_long(&open), ("stream pattern", 256, 255), "the refusal of a stream's open on a 256-byte pattern");
     let mut headers = CallHeaders::new();
     headers.insert("h".repeat(256), "v");
     let named = Frame::Evt { pattern: served.to_owned(), headers, data: Data::new(b"1".as_slice()) };

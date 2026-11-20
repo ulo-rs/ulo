@@ -4,7 +4,7 @@
 //! with no event is refused naming its gateway, and one mounted beside a gateway that reads every
 //! message raw is refused with the reason `Unreached::RawGateway`. A raw gateway's `on_message`
 //! panic closes the connection with 1011 and the kind ahead of the reason, as an `Internal`
-//! refusal reads.
+//! refusal reads, and a close the gateway asks for carries its own reason alone.
 
 mod support;
 
@@ -420,6 +420,65 @@ async fn a_raw_gateways_on_message_panic_closes_1011_with_the_kind_ahead_of_the_
     let mut socket = app.connect("/panicking", &[]).await;
     send_json(&mut socket, &json!({ "any": "frame" })).await;
     assert_eq!(close_frame(&mut socket).await, Some((1011, String::from("internal: internal error"))));
+    hang_up(socket).await;
+    app.stop().await;
+}
+
+/// A gateway reading every message raw that closes the connection with a code more than one kind
+/// shares and a reason of its own.
+struct Closing;
+
+impl Construct for Closing {
+    type Scope = Auto;
+
+    fn dependencies(d: &mut Dependencies) {
+        d.mark::<Self>();
+    }
+
+    async fn construct(_: &Resolver<'_>) -> Result<Self, ConstructError> {
+        Ok(Closing)
+    }
+}
+
+impl GatewayConfig for Closing {
+    fn settings() -> GatewaySettings {
+        GatewaySettings::at("/closing")
+    }
+
+    fn mount_gateway(m: &mut Mount<'_>) {
+        <Self as Gateway>::mount(m);
+    }
+}
+
+impl Gateway for Closing {
+    async fn on_message(&self, conn: &Connection, _frame: Frame) {
+        conn.close(ulo_ws::CloseCode::INTERNAL_ERROR, "down for maintenance").await.expect("the reason fits a Close frame");
+    }
+}
+
+impl Controller for Closing {}
+
+impl Handlers for Closing {
+    fn mount(m: &mut Mount<'_>) {
+        <Self as Gateway>::mount(m);
+    }
+}
+
+/// Q31-13: a close the handler asks for is derived from no kind, so its reason is written as
+/// given on 1011 too, which `Internal` and `Unimplemented` share and a close by kind prefixes.
+/// Planted break: `Connection::close` reasons on a shared code prefixed as a close by kind's.
+#[tokio::test]
+async fn a_handler_s_close_on_a_shared_code_carries_its_reason_alone() {
+    let app = Running::start(
+        Root(|m| {
+            m.controller::<Closing>();
+        }),
+        ulo_http_hyper::Server::new("127.0.0.1:0"),
+    )
+    .await;
+    let mut socket = app.connect("/closing", &[]).await;
+    send_json(&mut socket, &json!({ "any": "frame" })).await;
+    assert_eq!(close_frame(&mut socket).await, Some((1011, String::from("down for maintenance"))));
     hang_up(socket).await;
     app.stop().await;
 }

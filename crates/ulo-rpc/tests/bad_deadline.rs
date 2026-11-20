@@ -1,7 +1,8 @@
 //! A `deadline-ms` the server cannot read is refused before any handler runs: a request or a
 //! streamed request is answered `err` of kind `bad_request` with the reason `bad_deadline` and
 //! settled, and an event is rejected. One a server can read still sets the execution's deadline,
-//! zero included, which is a deadline already passed rather than an unreadable one.
+//! except zero, a budget already spent, which is answered `timeout` with no handler run and no
+//! error handler offered it, as gRPC answers a zero `grpc-timeout` DEADLINE_EXCEEDED.
 //!
 //! The frames are written by hand and fed to the server through a scripted link, so no client
 //! stands between the test and the header the server reads.
@@ -13,12 +14,13 @@ use std::time::{Duration, Instant};
 use futures_util::{StreamExt, stream};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use ulo::{App, AppHandle, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, controller, handlers};
+use ulo::{AnyErrorHandler, App, AppHandle, BoxError, Dep, ErrorHandler, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, Timer, controller, handlers};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Subscription, Payload, ReplyPath,
+    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, Link, Outbound, Reply, Rpc, RpcCx, Subscription,
+    Payload, ReplyPath,
 };
-use ulo_transport::{Classify, Detail, ErrorKind};
+use ulo_transport::{Classify, Count, Detail, ErrorKind};
 
 const UNARY: &str = "bad_deadline.unary";
 const STREAMED: &str = "bad_deadline.streamed";
@@ -46,12 +48,13 @@ impl Classify for Never {
     }
 }
 
-/// What one server's handlers record: how many ran, and the time left to the deadline each run
-/// found, `None` for an execution with none.
+/// What one server's handlers record: how many ran, the time left to the deadline each run
+/// found, `None` for an execution with none, and how many errors the error handler was offered.
 #[derive(Clone, Default)]
 struct Runs {
     count: Arc<AtomicUsize>,
     left: Arc<Mutex<Vec<Option<Duration>>>>,
+    offered: Arc<AtomicUsize>,
 }
 
 impl Runs {
@@ -67,6 +70,20 @@ impl Runs {
 
     fn left(&self) -> Vec<Option<Duration>> {
         self.left.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn offered(&self) -> usize {
+        self.offered.load(Ordering::SeqCst)
+    }
+}
+
+/// Counts every error it is offered and claims none.
+struct Counting(Runs);
+
+impl ErrorHandler<Rpc> for Counting {
+    async fn handle(&self, err: BoxError, _cx: &RpcCx) -> Result<Reply, BoxError> {
+        self.0.offered.fetch_add(1, Ordering::SeqCst);
+        Err(err)
     }
 }
 
@@ -116,6 +133,8 @@ impl Module for Root {
     fn register(&self, m: &mut ModuleDef<'_>) {
         m.value(self.runs.clone());
         m.controller::<Handlers>();
+        let counting: Arc<AnyErrorHandler<Rpc>> = Arc::new(Counting(self.runs.clone()));
+        m.enhancer::<AnyErrorHandler<Rpc>>().value(counting);
     }
 }
 
@@ -161,6 +180,10 @@ struct Running {
 
 impl Running {
     async fn start() -> Running {
+        Running::start_with(Count::Default).await
+    }
+
+    async fn start_with(max_inflight: Count) -> Running {
         let (deliveries, mut receiver) = mpsc::unbounded_channel::<Delivery>();
         let inbound: Inbound = Box::pin(stream::poll_fn(move |cx| receiver.poll_recv(cx)));
         let runs = Runs::default();
@@ -171,7 +194,7 @@ impl Running {
             .connect()
             .await
             .expect("the app connects")
-            .bind(ulo_rpc::Server::new(Scripted(Mutex::new(Some(inbound)))))
+            .bind(ulo_rpc::Server::new(Scripted(Mutex::new(Some(inbound)))).max_inflight(max_inflight))
             .listen()
             .await
             .expect("the server binds");
@@ -332,17 +355,93 @@ async fn a_readable_deadline_still_sets_the_execution_s() {
     running.stop().await;
 }
 
-/// A zero `deadline-ms` is readable: a deadline already passed when the call arrives, not a value
-/// the server refuses. The execution carries it, so a handler that waits is ended by it and
-/// answered `timeout`; a handler is polled once before the deadline is, as at any deadline.
+/// A zero `deadline-ms` is a budget already spent: a request and a streamed request are answered
+/// `err` of kind `timeout` and acknowledged, and an event rejected, with no handler run and the
+/// error handler offered nothing, whatever spaces or leading zeros spell the zero. Planted
+/// break: the zero opening its execution as any deadline does, which runs the handler once.
 #[tokio::test(flavor = "current_thread")]
-async fn a_zero_deadline_is_one_already_passed() {
+async fn a_spent_deadline_is_answered_timeout_with_no_handler_run() {
     let running = Running::start().await;
-    let settled = running.deliver(Frame::Req { id: 1, pattern: STALL.to_owned(), headers: deadline("0"), data: Data::new(b"null".as_slice()) }).await;
+    for (n, value) in ["0", " 0 ", "000"].into_iter().enumerate() {
+        let id = 2 * n as u64 + 1;
+        let settled = running.deliver(Frame::Req { id, pattern: STALL.to_owned(), headers: deadline(value), data: Data::new(b"null".as_slice()) }).await;
+        assert!(
+            matches!(settled.frames.as_slice(), [Frame::Err { id: answered, error }] if *answered == id && error.kind == ErrorKind::Timeout && reason(error).is_none()),
+            "a call whose `deadline-ms` is {value:?} was not answered `timeout`: {settled:?}"
+        );
+        assert_eq!(settled.ack, Some(true), "a call answered `timeout` at once is acknowledged: {value:?}");
+
+        let opened = running.deliver(Frame::Open { id: id + 1, pattern: STREAMED.to_owned(), headers: deadline(value) });
+        let (settled, ()) = tokio::join!(opened, async {
+            let items = [Frame::In { id: id + 1, data: Data::new(b"1".as_slice()) }, Frame::InEnd { id: id + 1 }];
+            for frame in items {
+                running.deliveries.send(Delivery { frame, reply: None, ack: Ack::none() }).expect("the server reads its link");
+            }
+        });
+        assert!(
+            matches!(settled.frames.as_slice(), [Frame::Err { error, .. }] if error.kind == ErrorKind::Timeout),
+            "a streamed request whose `deadline-ms` is {value:?} was not answered `timeout`: {settled:?}"
+        );
+
+        let settled = running.deliver(Frame::Evt { pattern: EVENT.to_owned(), headers: deadline(value), data: Data::new(b"7".as_slice()) }).await;
+        assert_eq!(settled.ack, Some(false), "an event whose `deadline-ms` is {value:?} was not rejected: {settled:?}");
+    }
+    assert_eq!(running.runs.count(), 0, "handlers that ran for calls whose budget was spent");
+    assert_eq!(running.runs.offered(), 0, "errors the error handler was offered for calls whose budget was spent");
+    running.stop().await;
+}
+
+/// A spent and an unreadable `deadline-ms` are answered before admission: with the server's one
+/// slot held by a call in flight, each is answered its own refusal, `timeout` and `bad_deadline`,
+/// not the shed's `unavailable`, which a caller would retry. Planted break: the spent check moved
+/// after `try_admit`.
+#[tokio::test(flavor = "current_thread")]
+async fn a_spent_or_unreadable_deadline_is_answered_before_admission() {
+    let running = Running::start_with(Count::Max(1)).await;
+    // The held call's replies are never read; the receiver is kept so its sends succeed.
+    let (held, _written) = mpsc::unbounded_channel::<Frame>();
+    let reply = ReplyPath::new(move |frame: Frame| {
+        let sent = held.send(frame).map_err(BoxError::from);
+        Box::pin(async move { sent })
+    });
+    let stall = Frame::Req { id: 1, pattern: STALL.to_owned(), headers: deadline("60000"), data: Data::new(b"null".as_slice()) };
+    running.deliveries.send(Delivery { frame: stall, reply: Some(reply.clone()), ack: Ack::none() }).expect("the server reads its link");
+    tokio::time::timeout(PATIENCE, async {
+        while running.runs.count() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the held call's handler ran");
+
+    let settled = running.deliver(Frame::Req { id: 2, pattern: UNARY.to_owned(), headers: deadline("1"), data: Data::new(b"null".as_slice()) }).await;
+    assert!(
+        matches!(settled.frames.as_slice(), [Frame::Err { id: 2, error }] if error.kind == ErrorKind::Unavailable),
+        "the server's one slot is not held: {settled:?}"
+    );
+    let settled = running.deliver(Frame::Req { id: 3, pattern: UNARY.to_owned(), headers: deadline("0"), data: Data::new(b"null".as_slice()) }).await;
+    assert!(
+        matches!(settled.frames.as_slice(), [Frame::Err { id: 3, error }] if error.kind == ErrorKind::Timeout),
+        "a spent deadline at a full server: {settled:?}"
+    );
+    let settled = running.deliver(Frame::Req { id: 4, pattern: UNARY.to_owned(), headers: deadline("x"), data: Data::new(b"null".as_slice()) }).await;
+    refused(&settled, 4, "an unreadable deadline at a full server");
+
+    running.deliveries.send(Delivery { frame: Frame::Cancel { id: 1 }, reply: Some(reply), ack: Ack::none() }).expect("the server reads its link");
+    running.stop().await;
+}
+
+/// The smallest budget not yet spent, one millisecond, runs the handler under that deadline, and a
+/// handler that waits is ended by it and answered `timeout` through the error handlers.
+#[tokio::test(flavor = "current_thread")]
+async fn a_one_millisecond_deadline_runs_the_handler() {
+    let running = Running::start().await;
+    let settled = running.deliver(Frame::Req { id: 1, pattern: STALL.to_owned(), headers: deadline("1"), data: Data::new(b"null".as_slice()) }).await;
     assert!(
         matches!(settled.frames.as_slice(), [Frame::Err { id: 1, error }] if error.kind == ErrorKind::Timeout),
-        "a call whose `deadline-ms` is zero was not answered `timeout`: {settled:?}"
+        "a call whose `deadline-ms` is 1 was not answered `timeout`: {settled:?}"
     );
-    assert_eq!(running.runs.left(), vec![Some(Duration::ZERO)], "the deadline the handler found");
+    assert_eq!(running.runs.count(), 1, "the handler of a call with a millisecond left");
+    assert_eq!(running.runs.offered(), 1, "the error handler is offered the `Timeout` of a deadline that passed while the handler ran");
     running.stop().await;
 }

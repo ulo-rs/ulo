@@ -18,14 +18,14 @@ use rustls_native_certs::CertificateResult;
 use tokio::runtime::Handle;
 use tokio::sync::{Notify, OnceCell, mpsc, oneshot, watch};
 use tokio::task::{AbortHandle, JoinHandle};
-use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Redacted, Refused, Runtime, RuntimeShutDown, Timer};
+use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Redacted, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 #[cfg(feature = "conformance-probe")]
 use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics, panic_redacted};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured, NoTimer,
-    Instances, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, Misconfigured,
+    NoTimer, Instances, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::{Detail, Details, ErrorKind, SHUTDOWN_MESSAGE, Turns};
 
@@ -74,6 +74,10 @@ const SERVER_REQUESTS: usize = 65_536;
 /// it received and had not yet read, the DISCONNECT and what was queued ahead of it among them.
 const CUT_GRACE: Duration = Duration::from_secs(2);
 
+/// How long a server's `listen` and a client's connect wait for the broker, unless
+/// [`Mqtt::connect_within`] says otherwise.
+const CONNECT_WITHIN: Duration = Duration::from_secs(30);
+
 /// The MQTT v5 link.
 ///
 /// The link's connections and tasks live on the tokio runtime it holds, the one current where it
@@ -90,10 +94,15 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// shutdown outcome naming the link and the task and holding the panic redacted with the app's
 /// secrets; on a client it fails the calls waiting on the connection `Unavailable` holding the
 /// panic, and the next call connects again ([`TaskPanics`](ulo_rpc::link::TaskPanics)).
+///
+/// A server's `listen` and a client's connect wait for the broker at most
+/// [`connect_within`](Self::connect_within), 30 s unset, and a wait that runs out fails with
+/// [`ConnectTimedOut`].
 pub struct Mqtt {
     pub(crate) url: String,
     pub(crate) group: Option<String>,
     pub(crate) qos: QoS,
+    pub(crate) connect_within: Duration,
     pub(crate) codec: Codec,
     pub(crate) runtime: Option<Tokio>,
     /// The app's clock, read by `prepare`, which times a server's [`CUT_GRACE`]. A server that
@@ -216,6 +225,7 @@ impl Mqtt {
             qos: QoS::AtLeastOnce,
             codec: Codec::Json,
             runtime: Tokio::try_current(),
+            connect_within: CONNECT_WITHIN,
             timer: None,
             default_group: None,
             max_packet: Arc::new(AtomicU64::new(0)),
@@ -306,6 +316,25 @@ impl Mqtt {
         self
     }
 
+    /// How long the link waits for the broker to answer its connection, 30 seconds by default: a
+    /// server's `listen` from the connection to the broker's SUBACK of every subscription, and a
+    /// client's connect to the SUBACK of its reply topic. rumqttc bounds the connection itself,
+    /// its TCP connect, a TLS handshake and the CONNACK, at five seconds, so against a broker that
+    /// accepts the connection and never answers that bound ends the wait first: the bound in
+    /// effect is whichever ends first, this one or rumqttc's. A wait that runs out fails with
+    /// [`ConnectTimedOut`], which a server's `listen` returns as `Bind` and `RpcClient` answers
+    /// `Unavailable` with `reason: "connect_timed_out"`; the handshake is abandoned with the wait,
+    /// so its event loop ends and queues no SUBSCRIBE after it. A server's wait is timed on the
+    /// app's `Timer`, which `prepare` reads, and a client's on the runtime its client was built
+    /// on, the app's inside an app; a clock whose runtime has shut down fails `listen` as
+    /// `Permanent` `RuntimeShutDown` and a call `Unavailable` with
+    /// `reason: "runtime_shut_down"`. A zero bound is refused in `usable`, so in a server's
+    /// `prepare` and where a client takes the link.
+    pub fn connect_within(mut self, bound: Duration) -> Self {
+        self.connect_within = bound;
+        self
+    }
+
     fn runtime(&self) -> Result<Tokio, BoxError> {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
     }
@@ -373,6 +402,9 @@ impl Link for Mqtt {
 
     fn usable(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
+        if self.connect_within.is_zero() {
+            return Err("the MQTT link's `connect_within` is zero, so no connection to the broker could be made within it".into());
+        }
         Ok(())
     }
 
@@ -453,13 +485,21 @@ impl Link for Mqtt {
         let (ready, bound) = oneshot::channel();
         let (served, handshake) = (Arc::clone(&side), self.handshake());
         let shaken = Arc::clone(&handshake);
+        let timed_out = ConnectTimedOut::new(self.connect_within, target.address(), "MQTT");
+        let clock = Arc::clone(&timer);
         let event_loop =
             Loop::spawn(&runtime, timer, move |written| panics.watch("event loop", serve(served, eventloop, shaken, ready, written)));
-        // Until the broker answers, a `listen` dropped mid-handshake takes the event loop with it.
+        // Until the broker answers, a `listen` dropped mid-handshake, or cut at `connect_within`,
+        // takes the event loop with it.
         let pending = Pending::new(handshake, event_loop.task.abort_handle());
         // `bind`'s outcome waits for the first CONNACK and the SUBACK of every subscription, so a
         // broker without shared subscriptions, or one refusing a filter, fails `bind`.
-        let outcome = bound.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into()));
+        let answered = async { bound.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into())) };
+        let outcome = match ulo::timeout(&*clock, timed_out.within(), answered).await {
+            Ok(outcome) => outcome,
+            Err(Cut::Expired) => return Err(timed_out.into()),
+            Err(Cut::Refused(refused)) => return Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
+        };
         if let Err(error) = outcome {
             let _ = side.client.try_disconnect();
             return Err(error);
@@ -477,6 +517,7 @@ impl Link for Mqtt {
         runtime.run(async {}).await?;
         let id = client_id();
         let reply_topic = format!("ulo/rpc/reply/{id}");
+        let timed_out = ConnectTimedOut::new(self.connect_within, target.address(), "MQTT");
         let (client, eventloop) = AsyncClient::new(target.options(id.clone(), tls), 64);
         let side = Arc::new(ClientSide {
             client,
@@ -518,12 +559,16 @@ impl Link for Mqtt {
         let event_loop = Loop::spawn(&runtime, timer, move |written| {
             panics.watch_feeder("event loop", client_loop(looped, eventloop, shaken, frames, ready, written))
         });
-        // Until the broker answers, a `connect` dropped mid-handshake, a call's timeout cutting it
-        // short, takes the event loop with it.
+        // Until the broker answers, a `connect` dropped mid-handshake, a call's timeout or
+        // `connect_within` cutting it short, takes the event loop with it.
         let pending = Pending::new(handshake, event_loop.task.abort_handle());
         // The reply subscription is in place before the first request can be published.
-        let outcome = subscribed.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into()));
-        outcome?;
+        let answered = async { subscribed.await.unwrap_or_else(|_| Err("the MQTT link's event loop ended before the broker answered".into())) };
+        match ulo::timeout(&**handed, timed_out.within(), answered).await {
+            Ok(outcome) => outcome?,
+            Err(Cut::Expired) => return Err(timed_out.into()),
+            Err(Cut::Refused(refused)) => return Err(RuntimeShutDown::new(refused).into()),
+        }
         pending.disarm();
         lock(&self.state).client = Some((Arc::clone(&side), event_loop));
 
@@ -763,6 +808,11 @@ impl Target {
             return Err(invalid("no host"));
         }
         Ok(Target { host, port, tls, credentials })
+    }
+
+    /// The broker's `host:port`, as a `ConnectTimedOut` names it, without the url's credentials.
+    fn address(&self) -> String {
+        if self.host.contains(':') { format!("[{}]:{}", self.host, self.port) } else { format!("{}:{}", self.host, self.port) }
     }
 
     fn options(&self, client_id: String, tls: Option<TlsConfiguration>) -> MqttOptions {

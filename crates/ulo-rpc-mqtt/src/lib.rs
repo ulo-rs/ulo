@@ -77,3 +77,4 @@
 mod link;
 
 pub use link::{Mqtt, QoS};
+pub use ulo_rpc::ConnectTimedOut;

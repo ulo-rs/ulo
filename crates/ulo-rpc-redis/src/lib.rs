@@ -26,3 +26,4 @@
 mod link;
 
 pub use link::Redis;
+pub use ulo_rpc::ConnectTimedOut;

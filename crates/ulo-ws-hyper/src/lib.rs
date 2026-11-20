@@ -203,6 +203,20 @@ impl<L: Listener> ServerOn<L> {
         self.defaults = self.defaults.origins(origins);
         self
     }
+
+    /// The `WWW-Authenticate` challenge of a 401 refusing a handshake whose error names none:
+    /// `Bearer` unset, as [`GatewayDefaults::challenge`](ulo_ws::GatewayDefaults::challenge).
+    pub fn challenge(mut self, challenge: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        self.defaults = self.defaults.challenge(challenge);
+        self
+    }
+
+    /// The `Retry-After` of a 503 refusing a handshake for the server's own state: one second
+    /// unset, as [`GatewayDefaults::shed_retry_after`](ulo_ws::GatewayDefaults::shed_retry_after).
+    pub fn shed_retry_after(mut self, after: std::time::Duration) -> Self {
+        self.defaults = self.defaults.shed_retry_after(after);
+        self
+    }
 }
 
 impl<L: Listener> ServerOn<L> {

@@ -97,9 +97,17 @@ pub struct Server {
 
 /// A link listening on port 0 on the case's runtime, timing its linger on a scripted clock.
 pub fn serve(probe: &Probe) -> Server {
+    serve_limited(probe, None)
+}
+
+/// [`serve`] with the link's `max_frame` set.
+pub fn serve_limited(probe: &Probe, max_frame: Option<u64>) -> Server {
     let clock = ScriptedTimer::new();
     let gate = Arc::new(Gate { open: AtomicBool::new(false), waker: Mutex::new(None), parks: AtomicUsize::new(0) });
     let mut core = Core::new(EndpointSpec::from("127.0.0.1:0"));
+    if let Some(bytes) = max_frame {
+        core.set_max_frame(bytes);
+    }
     core.prepare(Ok(()), Some(Arc::new(clock.clone()))).expect("the link prepares");
     let (accepting, meter) = (Arc::clone(&gate), probe.meter());
     let runtime: Arc<dyn Runtime> = Arc::new(probe.runtime());

@@ -284,6 +284,32 @@ async fn a_handshake_refusal_counts_against_no_connection_limit() {
     app.stop().await;
 }
 
+/// F635: a standalone server answers its own refusals with its own `challenge` and
+/// `shed_retry_after`, `Bearer` and one second unset: a 401 whose error names no challenge
+/// carries the server's, and the 503 over `max_connections` its `Retry-After`. Planted breaks:
+/// the table reading the HTTP server's defaults on its own port; `ServerOn::challenge` writing
+/// nowhere.
+#[tokio::test]
+async fn a_standalone_server_answers_with_its_own_challenge_and_retry_after() {
+    let unset = start().await;
+    let refused = upgrade(unset.addr, "/strict", &[("x-token", "open")]).await;
+    assert_eq!((refused.status, refused.header("www-authenticate")), (401, Some("Bearer")), "body: {}", refused.body);
+    unset.stop().await;
+
+    let server = ulo_ws_hyper::Server::new("127.0.0.1:0").challenge("Basic realm=\"chat\"").shed_retry_after(std::time::Duration::from_secs(7));
+    let app = Running::start(Root, server).await;
+    let refused = upgrade(app.addr, "/strict", &[("x-token", "open")]).await;
+    assert_eq!(refused.status, 401, "body: {}", refused.body);
+    assert_eq!(refused.header("www-authenticate"), Some("Basic realm=\"chat\""), "the server's challenge");
+    let mut admitted = app.connect("/strict", &[("x-token", "open"), ("x-user", "ada")]).await;
+    send_json(&mut admitted, &json!({ "event": "hello", "id": 1 })).await;
+    assert_eq!(next_json(&mut admitted).await, json!({ "id": 1, "data": "hello" }));
+    let over = upgrade(app.addr, "/strict", &[("x-token", "open"), ("x-user", "bob")]).await;
+    assert_eq!((over.status, over.header("retry-after")), (503, Some("7")), "body: {}", over.body);
+    hang_up(admitted).await;
+    app.stop().await;
+}
+
 #[tokio::test]
 async fn connect_guards_by_value_and_by_closure_each_refuse_on_their_own() {
     let app = start().await;

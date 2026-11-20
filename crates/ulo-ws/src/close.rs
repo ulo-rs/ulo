@@ -16,6 +16,14 @@ use ulo_transport::{CallError, ErrorKind};
 /// protocol. 3000 to 3999 is the registry's range for libraries and frameworks, and 4000 to 4999
 /// is left to applications, a subprotocol's own codes among them, as graphql-transport-ws's 4401.
 ///
+/// A close the gateway derives from an error kind, a refusal by kind or a hand-written gateway's
+/// `on_message` panic, carries the kind in its reason, `not_found: no such room`, where more than
+/// one kind closes with its code: 1008, 1011 and 1013. Every other close carries its reason
+/// alone: a code set with [`ConnectRefused::code`](crate::ConnectRefused::code) or
+/// [`WithCloseCode`], the drain's 1001, a slow consumer's 1008,
+/// [`Connection::close`](crate::Connection::close), and the protocol's own 1002, 1003, 1007 and
+/// 1009. A client reads a kind from a reason only on a close by kind.
+///
 /// ```
 /// use ulo_ws::CloseCode;
 ///
@@ -39,7 +47,7 @@ impl CloseCode {
     pub const UNSUPPORTED_DATA: CloseCode = CloseCode(1003);
     /// 1008: a message violated the endpoint's policy, and no more specific code fits. The
     /// connect refusal of `BadRequest`, `NotFound`, `Conflict` and `Unprocessable`, its reason
-    /// starting with the kind, and a slow consumer.
+    /// starting with the kind, and a slow consumer, whose reason `slow consumer` is no kind's.
     pub const POLICY_VIOLATION: CloseCode = CloseCode(1008);
     /// 1009: a message too large to process.
     pub const MESSAGE_TOO_BIG: CloseCode = CloseCode(1009);

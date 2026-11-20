@@ -16,6 +16,12 @@
 //! bound wait in their topics rather than being refused; the drain pauses and commits; an
 //! `ssl://` broker entry selects `security.protocol=SSL` under the `tls` feature.
 //!
+//! Each pattern is its topic's name, so a pattern Kafka names no topic, over 249 bytes or holding a
+//! character other than an ASCII letter, a digit, `.`, `_` or `-`, or `.` or `..` alone, is refused:
+//! by a server in `prepare`, as `StartupError::Configure` naming every such pattern, and by a client
+//! before the frame is produced, as `NameTooLong` or `NameInvalid`, which `RpcClient` answers
+//! `BadRequest`.
+//!
 //! A server's `bind` returns once the consumers of the instance's own, the control topic's and
 //! the every-instance events', are assigned, so a record produced to either after `bind` returns
 //! is read, and fails with [`ConnectTimedOut`] when it has not returned within

@@ -24,9 +24,11 @@
 //! table.close().await;
 //! ```
 
+use std::borrow::Cow;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Duration;
 #[cfg(feature = "conformance-probe")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -36,6 +38,7 @@ use futures_core::future::BoxFuture;
 use http::StatusCode;
 use http::request::Parts;
 use ulo::{AppHandle, Bound, BoxError, DrainToken, Mounted, Runtime, Timer, Transport};
+use ulo_http::__private::HandshakeAnswers;
 use ulo_transport::{Count, ShedLog};
 use ulo_transport::prepare::Failures;
 
@@ -54,6 +57,12 @@ const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// The settings a gateway reads where its attribute leaves one unset: `WsModule`'s for the
 /// gateways on the HTTP server's port, a standalone server's for those on its own.
+///
+/// [`challenge`](Self::challenge) and [`shed_retry_after`](Self::shed_retry_after) are read by a
+/// table serving its own port, a standalone server's or a host's calling
+/// [`GatewayTable::handshake`]: on the HTTP server's port the handshake is answered with that
+/// server's or embedding's own `challenge` and `shed_retry_after`, which `WsModule` has no setting
+/// for, so one port never has two.
 #[derive(Clone, Debug, Default)]
 pub struct GatewayDefaults {
     pub(crate) max_message: Option<u64>,
@@ -64,6 +73,8 @@ pub struct GatewayDefaults {
     pub(crate) ping_interval: Bound,
     pub(crate) pong_timeout: Bound,
     pub(crate) origins: Origins,
+    pub(crate) challenge: Option<Cow<'static, str>>,
+    pub(crate) shed_retry_after: Option<Duration>,
     pub(crate) messages_read: MessagesRead,
     pub(crate) answer_hold: AnswerHold,
 }
@@ -213,6 +224,21 @@ impl GatewayDefaults {
         self.origins = origins.into();
         self
     }
+
+    /// The `WWW-Authenticate` challenge of a 401 refusing a handshake under `refuse = handshake`
+    /// whose error names none: `Bearer` (RFC 6750) unset. Read on a table's own port alone.
+    pub fn challenge(mut self, challenge: impl Into<Cow<'static, str>>) -> Self {
+        self.challenge = Some(challenge.into());
+        self
+    }
+
+    /// The `Retry-After` of a 503 refusing a handshake for the server's own state, the drain or
+    /// `max_connections` under `refuse = handshake`: one second unset. Read on a table's own port
+    /// alone.
+    pub fn shed_retry_after(mut self, after: Duration) -> Self {
+        self.shed_retry_after = Some(after);
+        self
+    }
 }
 
 /// The gateways one server serves, with the application's rooms, its runtime, and the
@@ -232,6 +258,8 @@ struct Inner {
     tracker: Arc<Tracker>,
     /// Counts the connections refused over a gateway's `max_connections`.
     shed: ShedLog,
+    /// What a handshake on the table's own port adds to its refusals, from its defaults.
+    answers: HandshakeAnswers,
     /// On the HTTP server's port, the bound listeners of the HTTP servers sharing the hand-off,
     /// each with its shed log; read on every upgrade, written once per server at its bind.
     listeners: RwLock<Listeners>,
@@ -329,7 +357,8 @@ impl GatewayTable {
         hub.record_gateways(&gateways);
         let tracker = Tracker::new(defaults.server_max_inflight.max_inflight(), defaults.messages_read.clone(), defaults.answer_hold.clone());
         let shed = ShedLog::new(<WsConnect as Transport>::KEY, Arc::clone(&runtime) as Arc<dyn Timer>);
-        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker, shed, listeners: RwLock::default() }) }
+        let answers = HandshakeAnswers::own(defaults.challenge.clone(), defaults.shed_retry_after);
+        GatewayTable { inner: Arc::new(Inner { gateways, hub, app, runtime, tracker, shed, answers, listeners: RwLock::default() }) }
     }
 
     /// Each gateway's path, its controller's prefix joined.
@@ -359,15 +388,16 @@ impl GatewayTable {
     /// over `max_connections` 503 with `Retry-After`.
     ///
     /// The challenge of a 401 whose error names none and the `Retry-After` of a 503 the server
-    /// gives for its own state are the HTTP server's `challenge` and `shed_retry_after` on its
-    /// port, and `Bearer` and one second, its defaults, on a standalone server's.
+    /// gives for its own state are the table's [`GatewayDefaults::challenge`] and
+    /// [`GatewayDefaults::shed_retry_after`], `Bearer` and one second unset; on the HTTP server's
+    /// port they are that server's own.
     ///
     /// `peer` is the client's address, which `ConnectionInfo::peer` reports.
     ///
     /// A connection refused over `max_connections` is counted into the table's shed log, whose
     /// `server` field [`bound_at`](Self::bound_at) names.
     pub async fn handshake(&self, head: Parts, peer: Option<SocketAddr>) -> Handshake {
-        self.handshake_logged(head, peer, self.inner.shed.clone()).await
+        self.handshake_logged(head, peer, self.inner.shed.clone(), Some(self.inner.answers.clone())).await
     }
 
     /// [`handshake`](Self::handshake) on the HTTP server's port, where the gateways are reached
@@ -377,7 +407,7 @@ impl GatewayTable {
     /// listener matches.
     pub(crate) async fn handshake_on(&self, head: Parts, peer: Option<SocketAddr>, local: Option<SocketAddr>) -> Handshake {
         let shed = local.and_then(|local| self.inner.listeners.read().unwrap_or_else(PoisonError::into_inner).log_for(local));
-        self.handshake_logged(head, peer, shed.unwrap_or_else(|| self.inner.shed.clone())).await
+        self.handshake_logged(head, peer, shed.unwrap_or_else(|| self.inner.shed.clone()), None).await
     }
 
     /// Records the addresses an HTTP server sharing the hand-off bound, each with a shed log
@@ -389,11 +419,14 @@ impl GatewayTable {
         });
     }
 
-    async fn handshake_logged(&self, head: Parts, peer: Option<SocketAddr>, shed: ShedLog) -> Handshake {
+    /// `answers` are the table's own on its own port; `None` on the HTTP server's port, where the
+    /// server that handed the request over answers.
+    async fn handshake_logged(&self, head: Parts, peer: Option<SocketAddr>, shed: ShedLog, answers: Option<HandshakeAnswers>) -> Handshake {
         let Some(gateway) = self.gateway_for(head.uri.path()) else {
             return Handshake::Refuse(Refusal::new(StatusCode::NOT_FOUND, "no gateway at this path"));
         };
-        connection::handshake(self.accept(gateway, shed), head, peer).await
+        let answers = answers.unwrap_or_else(|| ulo_http::__private::handshake_answers(&head.extensions));
+        connection::handshake(self.accept(gateway, shed), head, peer, answers).await
     }
 
     /// Names the server in the `server` field of the lines the table's shed log writes, a

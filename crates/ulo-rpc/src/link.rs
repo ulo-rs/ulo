@@ -91,11 +91,12 @@ pub trait Link: Send + Sync + 'static {
     }
 
     /// What the link refuses of the subscriptions [`listen`](Self::listen) would receive, before
-    /// any I/O: on RabbitMQ, a pattern whose event exchange or queue AMQP cannot name. Called from
-    /// `Server::prepare` with every pattern the server routes, the list `listen` receives, so the
-    /// refusal is a `Configure` failure, reported with every server's configuration failures
-    /// before any server binds. A link that wraps another forwards it, or the wrapped link's
-    /// refusal comes from its `listen`.
+    /// any I/O: on RabbitMQ, a pattern whose event exchange or queue AMQP cannot name, on Kafka one
+    /// that names no topic. Called from `Server::prepare` with every pattern the server routes,
+    /// the list `listen` receives, so the refusal is a `Configure` failure, reported with every
+    /// server's configuration failures before any server binds. A link that wraps another forwards it, or the wrapped link's
+    /// refusal comes from its `listen`; `ulo_rpc_conformance::assert_forwards` checks a wrapper
+    /// forwards it and the other methods called before any I/O.
     fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
         let _ = subscriptions;
         Ok(())
@@ -261,7 +262,8 @@ pub(crate) type SendFrame = Box<dyn Fn(Pattern, Frame, Option<ReplyTo>) -> BoxFu
 /// A link's client side, from [`Link::connect`]: `send` publishes a frame on `pattern`, with the
 /// reply's correlation when one is expected, and `replies` yields every reply-lane frame for this
 /// client. A link with a miss signal fails `send` with [`NoDestination`]; one refusing a frame over
-/// its size with [`FrameTooLarge`], and one carrying a name it cannot with [`NameTooLong`].
+/// its size with [`FrameTooLarge`], and one carrying a name it cannot with [`NameTooLong`] or
+/// [`NameInvalid`].
 ///
 /// On TCP, UDP, Redis, RabbitMQ and Kafka, frames go out in the order their sends were called: each
 /// frame takes its place in the writer's queue when `send` is called, before the returned future
@@ -828,7 +830,8 @@ impl Error for FrameTooLarge {}
 /// ```
 #[derive(Debug)]
 pub struct NameTooLong {
-    /// What the name is, as it reads in prose: `"event pattern"`, `"header name"`.
+    /// What the name is, as it reads in prose: `"request pattern"` for a `req`, `"stream pattern"`
+    /// for a streamed request's `open`, `"event pattern"`, `"header name"`.
     pub what: &'static str,
     pub name: String,
     /// The longest such name the link carries, in bytes.
@@ -842,6 +845,37 @@ impl fmt::Display for NameTooLong {
 }
 
 impl Error for NameTooLong {}
+
+/// A frame carrying a name the link's broker refuses for what it holds rather than its length,
+/// refused before it is sent: on Kafka, a request's, a stream's or an event's pattern holding a
+/// character other than an ASCII letter, a digit, `.`, `_` or `-`, or one that is `.` or `..`,
+/// which no topic is named. `RpcClient` answers it `BadRequest` with `reason: "name_invalid"`, the
+/// message naming the name and what the link carries: no retry sends such a frame.
+///
+/// ```
+/// use ulo::BoxError;
+/// use ulo_rpc::NameInvalid;
+///
+/// let refused: BoxError = NameInvalid { what: "request pattern", name: "orders/create".into(), allowed: "ASCII letters, digits, `.`, `_` and `-`" }.into();
+/// assert!(refused.is::<NameInvalid>());
+/// assert_eq!(refused.to_string(), "the request pattern `orders/create` is not a name the link carries: ASCII letters, digits, `.`, `_` and `-`");
+/// ```
+#[derive(Debug)]
+pub struct NameInvalid {
+    /// What the name is, as [`NameTooLong::what`] reads.
+    pub what: &'static str,
+    pub name: String,
+    /// What a name the link carries is made of, as it reads in prose.
+    pub allowed: &'static str,
+}
+
+impl fmt::Display for NameInvalid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the {} `{}` is not a name the link carries: {}", self.what, self.name, self.allowed)
+    }
+}
+
+impl Error for NameInvalid {}
 
 /// A frame the link's codec cannot encode, from [`Codec::encode_frame`]: a payload that is not an
 /// item of that codec, such as a `Data` built from JSON bytes and answered on a CBOR link. On a
