@@ -6,6 +6,9 @@
 //! connection; every call shape; `Addressed`, an event reaching the server its caller names, so an event declared
 //! `every_instance` is refused at startup; TLS through `ulo_net::Tls` with no ALPN; `goaway` on every connection
 //! at the drain.
+//! A server stops reading a peer that does not read its answers, closes a connection idle for
+//! 60 s (`Tcp::idle_timeout`), and holds any number of connections unless `Tcp::max_connections`
+//! bounds them.
 //!
 //! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
 //! runtime or given one with `with_handle`. `ulo-rpc-tcp-smol` carries the same wire on smol.

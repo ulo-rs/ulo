@@ -116,10 +116,13 @@ impl ExecOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CancelReason {
     /// The backend observed the peer close the connection or reset the stream: a dropped response
-    /// body, a closed connection, an h2 `RST_STREAM`. The server dropping an unread request body
-    /// is not one.
+    /// body, a closed connection, and on HTTP an h2 `RST_STREAM`. The server dropping an unread
+    /// request body is not one. gRPC never reports it: see `ClientCancelled`.
     Disconnected,
-    /// A WebSocket or RPC `cancel` frame, or a gRPC `RST_STREAM(CANCEL)`.
+    /// A WebSocket or RPC `cancel` frame, or a gRPC caller abandoning its call. On gRPC that is
+    /// every abandonment, a lost connection as well as an `RST_STREAM`: hyper drops the call's
+    /// future the same way for both and reports neither the reset's code nor the connection's
+    /// end to the service, so a gRPC execution reads this where HTTP would read `Disconnected`.
     ClientCancelled,
     /// A passed `grpc-timeout`, RPC `deadline-ms` header, configured route timeout, or a
     /// standalone execution's deadline. A transport renders `Timeout` for it.

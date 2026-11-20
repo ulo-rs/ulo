@@ -4,6 +4,9 @@
 //! to a server of the other. Ordered per connection; every call shape; `Addressed`, an event
 //! declared `every_instance` refused at startup; TLS through
 //! `ulo_net::Tls` with no ALPN; `goaway` on every connection at the drain.
+//! A server stops reading a peer that does not read its answers, closes a connection idle for
+//! 60 s (`Tcp::idle_timeout`), and holds any number of connections unless `Tcp::max_connections`
+//! bounds them.
 //!
 //! No tokio is involved: the sockets are `async-io`'s, whose reactor runs on a thread of its own,
 //! and the link's tasks run on the runtime it runs under, `ulo_runtime_smol::Smol` on a smol app: a server's

@@ -1,9 +1,9 @@
 //! The close codes a connection ends with: a refused connect by its kind, 3003 for a connect
 //! guard's `Ok(false)`, 3000 and 3008 for `Unauthorized` and `Timeout`, 1008 for the client's
 //! other mistakes, 1013 for `TooManyRequests` and `Unavailable`, 1011 for a fault, a panic or
-//! `Unimplemented`, a code `OnConnect` or an error sets itself, and the drain's 1001. A code more
-//! than one kind closes with carries the kind ahead of the reason, and a code one kind owns the
-//! reason alone. A refused connect is answered with the Close frame alone.
+//! `Unimplemented`, a code `OnConnect` or an error sets itself, and the drain's 1001. A close by
+//! kind carries the kind ahead of the reason on every code, and a code set by `OnConnect` or an
+//! error the reason alone. A refused connect is answered with the Close frame alone.
 
 use serde_json::json;
 use ulo_ws::DisconnectReason;
@@ -29,13 +29,13 @@ pub async fn guard_refusal<H: Host>() {
     app.stop().await;
 }
 
-/// A connect guard's error closes by its kind: the IANA registry's 3000 and 3008 for
-/// `Unauthorized` and `Timeout`, 1008 for `NotFound` with the kind ahead of the message, and the
-/// code `WithCloseCode` set in place of the kind's.
+/// A connect guard's error closes by its kind, the kind ahead of the message: the IANA registry's
+/// 3000 and 3008 for `Unauthorized` and `Timeout`, 1008 for `NotFound`; and the code
+/// `WithCloseCode` set in place of the kind's, with the message alone.
 pub async fn by_kind<H: Host>() {
     let app = Served::<H>::start().await;
-    assert_eq!(refused_with(&app, AS_UNAUTHORIZED).await, Some((3000, BY_ERROR.to_owned())), "`Unauthorized`");
-    assert_eq!(refused_with(&app, AS_TIMEOUT).await, Some((3008, BY_ERROR.to_owned())), "`Timeout`");
+    assert_eq!(refused_with(&app, AS_UNAUTHORIZED).await, Some((3000, format!("unauthorized: {BY_ERROR}"))), "`Unauthorized`");
+    assert_eq!(refused_with(&app, AS_TIMEOUT).await, Some((3008, format!("timeout: {BY_ERROR}"))), "`Timeout`");
     assert_eq!(refused_with(&app, AS_NOT_FOUND).await, Some((1008, format!("not_found: {BY_ERROR}"))), "`NotFound`");
     assert_eq!(refused_with(&app, AS_OWN_CODE).await, Some((ERROR_CODE, BY_ERROR.to_owned())), "`WithCloseCode`");
     app.stop().await;

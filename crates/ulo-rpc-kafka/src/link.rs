@@ -27,7 +27,7 @@ use ulo_runtime_tokio::Tokio;
 use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NameInvalid, NameTooLong,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, Misconfigured, NameInvalid, NameTooLong,
     NoDestination, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::ordered;
@@ -246,7 +246,9 @@ impl Kafka {
     }
 
     /// The client's reply topic, one per logical client and reused across restarts; unset, one per
-    /// process.
+    /// process. A name Kafka names no topic, by the rule patterns follow, fails the client's
+    /// connect as [`Misconfigured`], which `RpcClient` answers `Internal` with
+    /// `reason: "misconfigured_link"` on every call.
     pub fn reply_topic(mut self, topic: impl Into<String>) -> Self {
         self.reply_topic = Some(topic.into());
         self
@@ -303,54 +305,89 @@ const MAX_TOPIC: usize = 249;
 /// What a topic name is made of, as Kafka's `Topic.validate` checks it.
 const TOPIC_CHARACTERS: &str = "ASCII letters, digits, `.`, `_` and `-`, and neither `.` nor `..` alone";
 
-/// Why Kafka refuses `pattern` as a topic's name, the topic every request, stream and event on it
-/// is produced to: `None` for a name it accepts. The broker answers such a topic `InvalidTopic` at
-/// its creation and at every produce.
-fn unusable_topic(pattern: &str) -> Option<Unusable> {
-    let valid = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-');
-    if pattern.is_empty() || pattern == "." || pattern == ".." || !pattern.bytes().all(valid) {
-        Some(Unusable::Characters)
-    } else if pattern.len() > MAX_TOPIC {
+/// Why Kafka refuses `name` as a topic's name: `None` for a name it accepts. The broker answers
+/// such a topic `InvalidTopic` at its creation and at every produce.
+fn unusable_topic(name: &str) -> Option<Unusable> {
+    let valid = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    if let Some(invalid) = name.chars().find(|&c| !valid(c)) {
+        Some(Unusable::Character(invalid))
+    } else if name.is_empty() || name == "." || name == ".." {
+        Some(Unusable::Reserved)
+    } else if name.len() > MAX_TOPIC {
         Some(Unusable::Length)
     } else {
         None
     }
 }
 
-/// What makes a pattern no topic's name.
+/// What makes a name no topic's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Unusable {
-    Characters,
+    /// The first character Kafka's names do not hold.
+    Character(char),
+    /// Empty, `.` or `..`.
+    Reserved,
     Length,
+}
+
+impl Unusable {
+    /// The reason a startup refusal gives for `subject`, such as "pattern `a/b`".
+    fn reason(self, subject: &str, name: &str) -> String {
+        match self {
+            Unusable::Character(invalid) => format!(
+                "{subject} holds `{}`, which a Kafka topic's name cannot: a name is {TOPIC_CHARACTERS}",
+                invalid.escape_debug()
+            ),
+            Unusable::Reserved => format!("{subject} is not a Kafka topic's name, which is {TOPIC_CHARACTERS}"),
+            Unusable::Length => format!("{subject} is {} bytes, past Kafka's {MAX_TOPIC}-character limit on a topic's name", name.len()),
+        }
+    }
 }
 
 /// The refusal of a client frame on `pattern`, `what` it is, when Kafka names no topic so.
 fn topic_of(what: &'static str, pattern: &Pattern) -> Result<(), BoxError> {
-    match unusable_topic(pattern.as_str()) {
+    named(what, pattern.as_str())
+}
+
+/// `name`, `what` it is, refused as `NameInvalid` or `NameTooLong` when Kafka names no topic so.
+fn named(what: &'static str, name: &str) -> Result<(), BoxError> {
+    match unusable_topic(name) {
         None => Ok(()),
-        Some(Unusable::Characters) => Err(Box::new(NameInvalid { what, name: pattern.as_str().to_owned(), allowed: TOPIC_CHARACTERS })),
-        Some(Unusable::Length) => Err(Box::new(NameTooLong { what, name: pattern.as_str().to_owned(), limit: MAX_TOPIC as u64 })),
+        Some(Unusable::Character(_) | Unusable::Reserved) => Err(Box::new(NameInvalid { what, name: name.to_owned(), allowed: TOPIC_CHARACTERS })),
+        Some(Unusable::Length) => Err(Box::new(NameTooLong { what, name: name.to_owned(), limit: MAX_TOPIC as u64 })),
     }
 }
 
-/// The patterns of `subscriptions` Kafka names no topic so, every one named with its reason, as a
-/// `Permanent` failure: the topic's creation would fail whatever the broker.
+/// `name` as Kafka compares topics for a collision, `.` and `_` read as one character: two
+/// topics alike under it cannot both exist, and the second one's creation fails `InvalidTopic`.
+fn collision_key(name: &str) -> String {
+    name.replace('.', "_")
+}
+
+/// The patterns of `subscriptions` Kafka names no topic so, and those whose topics collide with
+/// another's or with the link's control topic once `.` and `_` are read as one, every one named
+/// with its reason, as a `Permanent` failure: the topic's creation would fail whatever the broker.
 fn topics(subscriptions: &[Subscription]) -> Result<(), BoxError> {
-    let refused: Vec<String> = subscriptions
-        .iter()
-        .filter_map(|Subscription { pattern, .. }| {
-            let pattern = pattern.as_str();
-            unusable_topic(pattern).map(|unusable| match unusable {
-                Unusable::Characters => {
-                    format!("pattern `{pattern}` is not a Kafka topic's name, which is {TOPIC_CHARACTERS}")
-                }
-                Unusable::Length => format!(
-                    "pattern `{pattern}` is {} bytes, past Kafka's {MAX_TOPIC}-character limit on a topic's name",
-                    pattern.len()
-                ),
-            })
-        })
-        .collect();
+    let mut refused = Vec::new();
+    let mut seen: HashMap<String, String> = HashMap::from([(collision_key(CONTROL), CONTROL.to_owned())]);
+    for Subscription { pattern, .. } in subscriptions {
+        let pattern = pattern.as_str();
+        if let Some(unusable) = unusable_topic(pattern) {
+            refused.push(unusable.reason(&format!("pattern `{pattern}`"), pattern));
+            continue;
+        }
+        match seen.get(&collision_key(pattern)) {
+            Some(first) if first == CONTROL => refused.push(format!(
+                "pattern `{pattern}` collides with the link's control topic `{CONTROL}`: Kafka reads `.` and `_` in a topic's name as one character"
+            )),
+            Some(first) => refused.push(format!(
+                "patterns `{first}` and `{pattern}` collide as Kafka topics: Kafka reads `.` and `_` in a topic's name as one character, so the second topic cannot be created"
+            )),
+            None => {
+                seen.insert(collision_key(pattern), pattern.to_owned());
+            }
+        }
+    }
     if refused.is_empty() { Ok(()) } else { Err(Permanent::new(refused.join("; ")).into()) }
 }
 
@@ -414,8 +451,10 @@ impl Link for Kafka {
     }
 
     /// Each pattern is its topic's name, so one Kafka names no topic is refused: over 249 bytes,
-    /// or holding a character other than an ASCII letter, a digit, `.`, `_` or `-`, or `.` or
-    /// `..` alone.
+    /// holding a character other than an ASCII letter, a digit, `.`, `_` or `-`, which the
+    /// refusal names, or `.` or `..` alone. So are two patterns whose topics Kafka reads as
+    /// colliding, alike once `.` and `_` are one character, and a pattern colliding so with the
+    /// link's control topic `ulo.rpc.control`.
     fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
         topics(subscriptions)
     }
@@ -546,6 +585,7 @@ impl Link for Kafka {
         let base = Brokers::parse(&self.brokers)?.config();
         let id = uuid::Uuid::new_v4().simple().to_string();
         let reply_topic = self.reply_topic.clone().unwrap_or_else(|| format!("ulo.rpc.reply.{id}"));
+        named("reply topic", &reply_topic).map_err(|source| Misconfigured { source })?;
         let (partitions, replication, client_producer) = (self.partitions, self.replication, self.client_producer);
         let (replies, producer) = {
             let reply_topic = reply_topic.clone();
@@ -1969,6 +2009,55 @@ mod tests {
         let refused = link.subscribable(&all).expect_err("seven unusable patterns were accepted").to_string();
         assert_eq!(refused.matches("pattern `").count(), unusable.len(), "every unusable pattern is named once: {refused}");
         assert!(refused.contains("is 250 bytes, past Kafka's 249-character limit"), "the long pattern's reason: {refused}");
+    }
+
+    /// Q34-34: a character Kafka's names do not hold is named in the startup refusal, `/` and `:`
+    /// among them. Planted break: the reason without the character.
+    #[test]
+    fn the_refusal_names_the_character_kafka_names_do_not_hold() {
+        let link = Kafka::brokers("127.0.0.1:9092");
+        for (pattern, held) in [("orders/create", "/"), ("orders:create", ":"), ("caf\u{e9}", "\u{e9}"), ("a b", " ")] {
+            let refused = link.subscribable(&[Subscription::from(Pattern::from(pattern))]).expect_err(pattern).to_string();
+            assert!(refused.contains(&format!("pattern `{pattern}` holds `{held}`, which a Kafka topic's name cannot")), "{refused}");
+        }
+    }
+
+    /// Q34-51: Kafka reads `.` and `_` in a topic's name as one character and refuses the second
+    /// of two topics alike under it `InvalidTopic`, so `subscribable` refuses two such patterns,
+    /// and a pattern colliding so with the link's own control topic, naming both. Planted break: no
+    /// collision check, which accepts `a.b` beside `a_b`.
+    #[test]
+    fn subscribable_refuses_patterns_whose_topics_collide() {
+        let link = Kafka::brokers("127.0.0.1:9092");
+        link.subscribable(&[Subscription::from(Pattern::from("a.b")), Subscription::from(Pattern::from("a-b"))]).expect("`a.b` and `a-b` do not collide");
+        let refused = link
+            .subscribable(&[Subscription::from(Pattern::from("a.b")), Subscription::from(Pattern::from("a_b"))])
+            .expect_err("`a.b` beside `a_b` was accepted");
+        assert!(refused.is::<Permanent>(), "a collision is refused as retryable: {refused}");
+        assert!(refused.to_string().contains("patterns `a.b` and `a_b` collide as Kafka topics"), "{refused}");
+        let control = link.subscribable(&[Subscription::from(Pattern::from("ulo_rpc.control"))]).expect_err("a pattern colliding with the control topic was accepted");
+        assert!(control.to_string().contains("pattern `ulo_rpc.control` collides with the link's control topic `ulo.rpc.control`"), "{control}");
+    }
+
+    /// Q34-45: a `reply_topic` Kafka names no topic fails the client's connect as `Misconfigured`
+    /// before any I/O, by the rule a pattern follows. Planted break: no check, which reaches for
+    /// the broker and fails as an unreachable one does.
+    #[test]
+    fn a_reply_topic_kafka_names_no_topic_fails_the_connect_misconfigured() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime");
+        runtime.block_on(async {
+            let handed: Arc<dyn Runtime> = Arc::new(Tokio::current());
+            let long = "r".repeat(250);
+            for topic in ["orders/replies", long.as_str()] {
+                let refused = match Kafka::brokers("127.0.0.1:9").reply_topic(topic).connect(&handed).await {
+                    Ok(_) => panic!("a reply topic `{topic}` connected"),
+                    Err(refused) => refused,
+                };
+                let misconfigured = refused.downcast_ref::<Misconfigured>().unwrap_or_else(|| panic!("refused other than as `Misconfigured`: {refused}"));
+                assert!(misconfigured.source.is::<NameInvalid>() || misconfigured.source.is::<NameTooLong>(), "{refused}");
+                assert!(refused.to_string().contains("reply topic `"), "the refusal names the reply topic: {refused}");
+            }
+        });
     }
 
     /// The client refuses a frame on a pattern Kafka names no topic before it is produced, as

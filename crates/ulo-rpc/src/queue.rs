@@ -79,7 +79,7 @@ struct State {
     halted: AtomicBool,
     /// The bound a refused offer passed, recorded before the caller halts the queue.
     overflow: Mutex<Option<Overflow>>,
-    /// Set by [`Feed::cut_with_call`] before it halts the queue.
+    /// Set by [`Feed::cut_with_call`] before it closes the queue.
     cut_with_call: AtomicBool,
 }
 
@@ -179,12 +179,14 @@ impl<T> Feed<T> {
         self.sender.close_channel();
     }
 
-    /// Ends the queue as halted because its call ended before the producer's last item: the
-    /// reader's next read ends it, and [`Drain::cut_with_call`] tells that end from a clean one
-    /// and from an overflow.
+    /// Ends the queue because its call ended before the producer's last item: the reader reads
+    /// the items already queued, then the end, and [`Drain::cut_with_call`] tells that end from a
+    /// clean one and from an overflow. A reader waiting for an item is woken, whichever task it
+    /// reads on, and nothing offered afterwards is queued.
     pub(crate) fn cut_with_call(&self) {
+        // Stored first, so the read that finds the queue closed finds it cut.
         self.state.cut_with_call.store(true, Ordering::Release);
-        self.halt();
+        self.sender.close_channel();
     }
 
     /// Whether the reader has gone.
@@ -221,7 +223,8 @@ impl Halted {
 }
 
 /// The reading end. Dropped, or ended halted, it lets go of the items it had not read, so the
-/// queue's counts return to zero once nothing is left to read.
+/// queue's counts return to zero once nothing is left to read. Cut with its call, it reads what
+/// was queued before the cut, then ends.
 pub(crate) struct Drain<T> {
     receiver: UnboundedReceiver<(T, u64)>,
     state: Arc<State>,
@@ -295,6 +298,52 @@ mod tests {
     use futures_util::FutureExt;
 
     use super::*;
+
+    /// Q34-30: a call that ends first hands its reader the items already queued, then the end,
+    /// which `cut_with_call` tells from a clean one; an offer after the cut is not queued.
+    /// Planted break: the cut halting the queue, which drops the two items unread.
+    #[test]
+    fn a_cut_queue_delivers_what_it_holds_then_ends() {
+        let (feed, mut drain) = queue::<u32>(Limits::default());
+        assert!(fits(&feed, 1, 4) && fits(&feed, 2, 4));
+        feed.cut_with_call();
+        assert!(fits(&feed, 3, 4), "an offer after the cut is answered");
+        assert_eq!(read_ready(&mut drain), vec![1, 2], "the items queued before the cut, and none after");
+        assert_eq!(drain.next().now_or_never(), Some(None), "the queue ends after its items");
+        assert!(drain.cut_with_call(), "the end is the cut's");
+        assert_eq!(drain.halted_at(), None, "a cut is no overflow");
+        assert_eq!(feed.held(), (0, 0), "the counts return to zero");
+    }
+
+    /// A queue holding nothing when its call ends ends at the next read, as cut.
+    #[test]
+    fn a_cut_queue_holding_nothing_ends_at_once() {
+        let (feed, mut drain) = queue::<u32>(Limits::default());
+        feed.cut_with_call();
+        assert_eq!(drain.next().now_or_never(), Some(None));
+        assert!(drain.cut_with_call());
+    }
+
+    /// A reader waiting for an item when the call ends is woken and reads the end. Planted break:
+    /// the cut setting its flag without closing the queue, which leaves the reader waiting.
+    #[test]
+    fn a_reader_waiting_when_the_call_ends_is_woken() {
+        struct Flag(AtomicBool);
+        impl Wake for Flag {
+            fn wake(self: Arc<Self>) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let (feed, mut drain) = queue::<u32>(Limits::default());
+        let flag = Arc::new(Flag(AtomicBool::new(false)));
+        let waker = Waker::from(Arc::clone(&flag));
+        let mut cx = Context::from_waker(&waker);
+        assert!(Pin::new(&mut drain).poll_next(&mut cx).is_pending(), "an empty queue has nothing to read");
+        feed.cut_with_call();
+        assert!(flag.0.load(Ordering::SeqCst), "the waiting reader was not woken by the cut");
+        assert_eq!(Pin::new(&mut drain).poll_next(&mut cx), Poll::Ready(None));
+        assert!(drain.cut_with_call());
+    }
 
     fn items(limit: usize) -> Limits {
         Limits { items: Some(limit), bytes: u64::MAX }

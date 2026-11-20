@@ -39,7 +39,8 @@ uuid = { workspace = true, features = ["v4"] }
 ulo-rpc-redis = { path = ".", features = ["conformance-probe"] }
 futures-executor.workspace = true
 testcontainers.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+# `test-util`: `tests/library_bound.rs` runs on a paused clock.
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros", "test-util"] }
 ulo-rpc-conformance = { path = "../ulo-rpc-conformance", features = ["tokio"] }
 
 [lints]

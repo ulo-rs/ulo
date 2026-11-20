@@ -203,8 +203,9 @@ pub mod wire {
     //! `{"kind":"all"}`, `{"kind":"room","room":<name>}` or `{"kind":"client","client":<id>}`.
     //! `except` lists ids, each `{"node":<32 lowercase hex digits>,"seq":<integer>}`. A field this
     //! version does not name makes the message [`Undecodable::Malformed`], whose reason repeats a
-    //! node id at its first 64 bytes and a parser's message at its first 256, each cut at a
-    //! character boundary and marked with `…`.
+    //! node id at its first 64 bytes, and a parser's message at its first 192 and its last 64,
+    //! where the parser writes the position and the names it expected, each cut at a character
+    //! boundary and marked with `…`.
     //!
     //! The version byte is read before anything is parsed, so a later version may change the whole
     //! layout and a reader of this one still tells it from a corrupt message. Any change to the
@@ -278,7 +279,7 @@ pub mod wire {
         }
         // Compact JSON writes a newline inside a string as `\n`, so the first newline ends the header.
         let split = rest.iter().position(|&byte| byte == b'\n').ok_or_else(|| Undecodable::Malformed("no newline ends the target".to_owned()))?;
-        let malformed = |error: serde_json::Error| Undecodable::Malformed(cut(&error.to_string(), REASON_SHOWN));
+        let malformed = |error: serde_json::Error| Undecodable::Malformed(cut_between(&error.to_string(), REASON_HEAD, REASON_TAIL));
         let header: HeaderIn = serde_json::from_slice(&rest[..split]).map_err(malformed)?;
         let named: Named = serde_json::from_str(header.audience.get()).map_err(malformed)?;
         if !KINDS.contains(&named.kind.as_str()) {
@@ -382,9 +383,11 @@ pub mod wire {
     /// The bytes of a peer's node id a [`Undecodable::Malformed`] repeats.
     const NODE_SHOWN: usize = 64;
 
-    /// The bytes of a JSON parser's reason a [`Undecodable::Malformed`] carries: the parser
-    /// quotes the field or value it refused, which the peer chose.
-    const REASON_SHOWN: usize = 256;
+    /// The bytes of a JSON parser's reason a [`Undecodable::Malformed`] carries from its start
+    /// and from its end: the parser quotes the field or value it refused, which the peer chose, and
+    /// ends with the names it expected and the position.
+    const REASON_HEAD: usize = 192;
+    const REASON_TAIL: usize = 64;
 
     /// `text` cut to `limit` bytes at a character boundary and marked with `…` when it was longer.
     fn cut(text: &str, limit: usize) -> String {
@@ -396,5 +399,69 @@ pub mod wire {
             end -= 1;
         }
         format!("{}…", &text[..end])
+    }
+
+    /// `text` with its first `head` and last `tail` bytes kept, each cut at a character boundary
+    /// inward, and `…` between them; a text no longer than the two and the `…` is kept whole.
+    fn cut_between(text: &str, head: usize, tail: usize) -> String {
+        if text.len() <= head + tail + '…'.len_utf8() {
+            return text.to_owned();
+        }
+        let mut end = head;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut start = text.len() - tail;
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        format!("{}…{}", &text[..end], &text[start..])
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::cut_between;
+
+        /// Q34-29: the head and the tail are kept, each cut inward at a character boundary, and a
+        /// text within the two is kept whole. Planted break: the head cut alone, which loses the
+        /// tail serde writes its position into.
+        #[test]
+        fn a_long_reason_keeps_its_head_and_its_tail() {
+            assert_eq!(cut_between("", 4, 2), "");
+            assert_eq!(cut_between("abcdef", 4, 2), "abcdef", "a text of exactly the two lengths is kept whole");
+            assert_eq!(cut_between("abcdefghijk", 4, 2), "abcd…jk");
+            // "é" is two bytes: the head's byte 4 and the tail's start fall inside one.
+            assert_eq!(cut_between("abcédéfghijk", 4, 4), "abc…hijk");
+            assert_eq!(cut_between("ééééé", 3, 3), "é…é");
+            let long = format!("{}{}", "x".repeat(1000), " at line 1 column 1017");
+            let cut = cut_between(&long, 192, 64);
+            assert!(cut.ends_with(" at line 1 column 1017") && cut.starts_with(&"x".repeat(192)), "{cut}");
+            assert_eq!(cut.len(), 192 + '…'.len_utf8() + 64);
+        }
+
+        /// The checker's edges: a four-byte character straddling the head's end and the tail's
+        /// start, a text of all four-byte characters, a text already holding `…`, and lengths
+        /// just past the two.
+        #[test]
+        fn cut_between_at_its_edges() {
+            let grin = "\u{1F600}";
+            // byte 192 falls inside the grin at 190..194; the tail's start, len - 64, inside the one at its end.
+            let text = format!("{}{grin}{}{grin}{}", "a".repeat(190), "b".repeat(500), "c".repeat(62));
+            let cut = cut_between(&text, 192, 64);
+            assert!(cut.starts_with(&"a".repeat(190)) && !cut.starts_with(&format!("{}{grin}", "a".repeat(190))), "{cut}");
+            assert!(cut.ends_with(&"c".repeat(62)) && !cut.contains(grin), "{cut}");
+            assert!(cut.len() <= 192 + 3 + 64);
+            let all = grin.repeat(100);
+            let cut = cut_between(&all, 192, 64);
+            assert_eq!(cut, format!("{}…{}", grin.repeat(48), grin.repeat(16)));
+            let ellipsis = format!("{}…{}", "x".repeat(300), "y".repeat(300));
+            assert!(cut_between(&ellipsis, 192, 64).ends_with(&"y".repeat(64)));
+            for len in 256..=262 {
+                let text = "z".repeat(len);
+                let cut = cut_between(&text, 192, 64);
+                eprintln!("len {len}: cut {} bytes", cut.len());
+                if len <= 259 { assert_eq!(cut, text, "a text of {len} bytes was cut longer") } else { assert!(cut.len() < len) }
+            }
+        }
     }
 }

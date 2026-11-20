@@ -36,10 +36,13 @@ pub async fn panic<B: Broker>() {
     fixture.stop().await;
 }
 
-/// A `Payload<T>` that fails to decode, as `bad_request`.
+/// A `Payload<T>` that fails to decode, a string where the handler reads a struct: on a JSON link
+/// the payload parses and does not fit, `unprocessable`, and on a CBOR link, whose decode is the
+/// parse, `bad_request`.
 pub async fn undecodable_payload<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
-    failed(fixture.rpc().request::<_, Sum>(ADD, &"not an object").timeout(WAIT).await, ErrorKind::BadRequest);
+    let kind = if fixture.capabilities().binary { ErrorKind::BadRequest } else { ErrorKind::Unprocessable };
+    failed(fixture.rpc().request::<_, Sum>(ADD, &"not an object").timeout(WAIT).await, kind);
     fixture.stop().await;
 }
 

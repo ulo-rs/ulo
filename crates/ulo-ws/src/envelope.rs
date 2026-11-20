@@ -112,8 +112,10 @@ impl fmt::Display for MessageId {
 }
 
 /// The message's `data`, decoded by the gateway's codec. A message without a `data` key fails as
-/// `ExtractError::Missing { param: "data" }`, one that does not decode as `Malformed`. It consumes
-/// the payload, so a handler takes one.
+/// `ExtractError::Missing { param: "data" }`. On JSON the `data` has already parsed as JSON with
+/// the envelope, so one that does not decode as `T` does not fit it and fails as `Mismatched`,
+/// classified `Unprocessable`; on MessagePack the decode and the parse are one step, and a failure
+/// is `Malformed`. It consumes the payload, so a handler takes one.
 #[derive(Clone, Debug)]
 pub struct Payload<T>(pub T);
 
@@ -127,19 +129,20 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Ws> for Payload<T> {
     const CONSUMES_BODY: bool = true;
 
     async fn from_call(cx: &WsCx) -> Result<Self, ExtractError> {
-        let decoded: Result<Option<T>, BoxError> = match &cx.inner.data {
+        let decoded: Result<Option<T>, (BoxError, bool)> = match &cx.inner.data {
             Data::Absent => Ok(None),
-            Data::Json(raw) => serde_json::from_str::<T>(raw.get()).map(Some).map_err(BoxError::from),
+            Data::Json(raw) => serde_json::from_str::<T>(raw.get()).map(Some).map_err(|error| (BoxError::from(error), true)),
             Data::MsgPack(frame) => match rmp_serde::from_slice::<DataField<T>>(frame) {
                 Ok(DataField { data: Field::Present(value) }) => Ok(Some(value)),
                 Ok(DataField { data: Field::Absent }) => Ok(None),
-                Err(error) => Err(BoxError::from(error)),
+                Err(error) => Err((BoxError::from(error), false)),
             },
         };
         match decoded {
             Ok(Some(value)) => Ok(Payload(value)),
             Ok(None) => Err(ExtractError::Missing { param: "data" }),
-            Err(error) => Err(ExtractError::Malformed { param: "data", source: cx.app().redact(error) }),
+            Err((error, true)) => Err(ExtractError::Mismatched { param: "data", source: cx.app().redact(error) }),
+            Err((error, false)) => Err(ExtractError::Malformed { param: "data", source: cx.app().redact(error) }),
         }
     }
 }
