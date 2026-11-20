@@ -3,7 +3,7 @@
 Guards, interceptors and an error handler at three tiers (global, controller, method), and
 `#[meta(..)]` read by a guard through the handler's info.
 
-```
+```bash
 cargo run -p ex-16-http-enhancers
 curl -i http://127.0.0.1:3000/reports
 curl -i -H 'x-role: admin' http://127.0.0.1:3000/reports/payroll

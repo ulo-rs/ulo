@@ -4,7 +4,7 @@ The signature picks the call shape: an `Inbound<T>` parameter is a streamed requ
 
 A stream has no timeout of its own: `idle_timeout` bounds the silence between reply frames, `deadline` bounds the whole call and is sent to the server, and `send_stream` takes `timeout` like a request. Each ends the call with the kind `Timeout`.
 
-```
+```bash
 cargo test -p ex-26-rpc-streams
 PORT=7000 cargo run -p ex-26-rpc-streams
 ```

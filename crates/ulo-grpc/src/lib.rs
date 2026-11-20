@@ -3,6 +3,8 @@
 //! `ulo-server-hyper`, the pre-dispatch stage as [`PreDispatch`], status and details mapping,
 //! health, reflection, and client modules.
 //!
+//! The crate is tokio-bound: tonic is tokio-only, and the server accepts through `ulo-listener-tokio`.
+//!
 //! ```ignore
 //! # // reason: the handler needs types generated from a .proto by the caller's build.rs
 //! // build.rs

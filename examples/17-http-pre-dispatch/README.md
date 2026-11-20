@@ -3,7 +3,7 @@
 Work done before routing: CORS, one tower layer, a middleware scoped to `/admin/*` that skips
 `/admin/health`, and one that hands a value to the handler as `Host<T>`.
 
-```
+```bash
 cargo run -p ex-17-http-pre-dispatch
 curl -i -H 'origin: https://app.example' http://127.0.0.1:3000/
 curl -i http://127.0.0.1:3000/admin/panel

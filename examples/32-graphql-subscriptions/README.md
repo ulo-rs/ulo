@@ -2,7 +2,7 @@
 
 Subscriptions over the `graphql-transport-ws` subprotocol. `GraphqlConfig::subscriptions(path)` mounts the gateway beside the endpoint, and the application imports `WsModule` once for it to be reachable. The `ticks` subscription reads from a `Ticker` provider; whatever calls `Ticker::publish` feeds every open subscription.
 
-```
+```bash
 cargo run -p ex-32-graphql-subscriptions
 ```
 

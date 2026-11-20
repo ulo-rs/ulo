@@ -2,13 +2,13 @@
 
 A WebSocket gateway: one reply per message under the message's `id`, a message guard that writes an extension the handler reads, `OnConnect` and `OnDisconnect` hooks, and a drain that closes each connection with 1001.
 
-```
+```bash
 cargo run -p ex-23-ws-gateway
 ```
 
 The server listens on `PORT` (default 3000) at `/chat`. With any WebSocket client (`websocat` here), name yourself in the `x-name` header and send a message:
 
-```
+```text
 websocat -H 'x-name: ada' ws://127.0.0.1:3000/chat
 {"event":"say","id":1,"data":"hello"}      # reply: {"id":1,"data":"ada: hello"}
 ```

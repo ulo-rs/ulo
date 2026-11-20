@@ -81,7 +81,9 @@ pub trait GatewayConfig: Construct {
 /// connection phase: an `ExecutionRef` the gateway holds then answers `ExecutionEnded` to `get`. Messages reach `on_message` one at a
 /// time and in order; work that outlives a message runs in an execution the gateway opens.
 pub trait Gateway: GatewayConfig {
-    /// After the connect guards admit; an `Err` refuses the connection with its close code.
+    /// After the connect guards admit; an `Err` refuses the connection with its close code, or
+    /// under `refuse = handshake` with its HTTP status. A panic is an `Internal` refusal: close
+    /// code 1011, or 500 under `refuse = handshake`.
     fn on_connect(&self, conn: &Connection) -> impl Future<Output = Result<(), ConnectRefused>> + Send {
         let _ = conn;
         async { Ok(()) }
@@ -267,7 +269,9 @@ pub enum Port {
 
 /// Runs after the connect guards admit, and may refuse: implemented on the gateway type, which
 /// the gateway attribute detects by probing the concrete type. Impl-level enhancers do not reach
-/// it.
+/// it. A panic in the hook is caught by `dispatch` and refuses the connection as `Internal`: close
+/// code 1011 with the reason starting `internal: `, or under `refuse = handshake` a 500 before the
+/// upgrade.
 pub trait OnConnect: Send + Sync + 'static {
     fn on_connect(&self, cx: &crate::transport::ConnectCx) -> impl Future<Output = Result<(), ConnectRefused>> + Send;
 }

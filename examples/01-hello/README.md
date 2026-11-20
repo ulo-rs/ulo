@@ -3,7 +3,7 @@
 One module, one controller, one route, and the five phases that start an application:
 `wire`, `connect`, `bind`, `listen`, `serve`.
 
-```
+```bash
 cargo run -p ex-01-hello
 curl http://127.0.0.1:3000/
 ```

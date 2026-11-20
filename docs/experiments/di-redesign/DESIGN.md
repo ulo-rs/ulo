@@ -725,10 +725,10 @@ impl UsersController {
     #[guards(value = RateLimit::per_second(100))]        // by value: built once, shared
     #[guards(with = |u: Ext<CurrentUser>| RoleGuard::require(u, Role::Admin))]  // closure, Auto: per execution, it reads Ext
     #[guards(with(execution) = || RequestTimer::start())]                        // closure, explicit: fresh state per call
-    async fn get(&self, id: Path<u64>) -> Result<Json<User>, HttpError> { /* ... */ }
+    async fn get(&self, id: Path<u64>) -> Result<Json<User>, UserError> { /* ... */ }
 
     #[fw_rpc::message("users.get")]
-    async fn get_rpc(&self, req: Payload<GetUser>) -> Result<User, RpcError> { /* ... */ }
+    async fn get_rpc(&self, req: Payload<GetUser>) -> Result<User, UserError> { /* ... */ }
 }
 ```
 

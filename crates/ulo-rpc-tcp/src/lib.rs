@@ -6,6 +6,9 @@
 //! `every_instance` is refused at startup; TLS through `ulo_net::Tls` with no ALPN; `goaway` on every connection
 //! at the drain.
 //!
+//! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
+//! runtime or given one with `with_handle`. `ulo-rpc-tcp-smol` carries the same wire on smol.
+//!
 //! ```
 //! # fn f(app: ulo::App<ulo::Connected>) {
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_tcp::Tcp::new("0.0.0.0:7000")));

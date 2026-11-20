@@ -82,6 +82,11 @@ pub trait Guard<T: Transport>: Send + Sync + 'static {
     fn can_activate(&self, cx: &T::Cx) -> impl Future<Output = Result<bool, BoxError>> + Send;
 }
 
+/// Wraps the handler and the interceptors inside it. An error the handler or an inner
+/// interceptor returns, a panic included, is the `Err` of `next.run`; an `Err` item of a streamed
+/// reply arrives inside the stream `next.run` answered with. An interceptor never sees a guard's
+/// refusal, which comes before any interceptor is built, nor a reply an error handler produced,
+/// since the error handlers run after the whole chain has returned.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an interceptor for `{T}`",
     label = "an interceptor for `{T}` is needed here",

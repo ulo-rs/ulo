@@ -3,7 +3,7 @@
 Many providers contributed to one key, read as `Many<dyn Plugin>`, and a dependency that may be absent, read as `Option<Dep<T>>`.
 `into dyn Plugin: [..]` contributes. Collection order is imports first, in the order written, then the module's own entries.
 
-```
+```bash
 cargo run -p ex-04-collections-and-optional
 ```
 

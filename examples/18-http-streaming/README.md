@@ -3,7 +3,7 @@
 A streamed body and Server-Sent Events: frames written while the handler runs, resumption from
 `Last-Event-ID`, a keep-alive, and a stream that ends with the drain.
 
-```
+```bash
 cargo run -p ex-18-http-streaming
 curl -N http://127.0.0.1:3000/events &
 curl -X POST http://127.0.0.1:3000/events/hello

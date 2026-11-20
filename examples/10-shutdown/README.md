@@ -3,7 +3,7 @@
 Stop accepting, drain, close. `drain_timeout` is the window in-flight requests get; `shutdown_timeout` caps the whole sequence. A handler that watches `ExecutionRef::draining()` ends its own work early, and `AppHandle::close(Signal)` starts the sequence from outside.
 A request still held when the window ends is cancelled and answered 503 `the server is shutting down`; the `Shutdown` report counts it as abandoned.
 
-```
+```bash
 cargo run -p ex-10-shutdown
 curl http://127.0.0.1:3000/work    # held: nothing in the running binary releases it
 ```

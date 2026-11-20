@@ -3,7 +3,7 @@
 Example 01 on smol: `ulo-runtime-smol` for tasks and timers, `ulo-listener-smol` for sockets, hyper on
 top. No tokio runtime is in the tree; `scripts/runtime_levels.py` checks it.
 
-```
+```bash
 cargo run -p ex-22-http-on-smol
 curl http://127.0.0.1:3000/
 ```

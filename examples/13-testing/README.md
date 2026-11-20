@@ -3,7 +3,7 @@
 `TestApp` builds the production module graph with parts replaced: `override_value`, `override_factory`, `.in_module::<M>()` to scope one, `replace_module`, and `.timer(..)` / `.runtime(..)` for the clock.
 An override that matches no binding, or two, fails wiring, so a stale mock cannot pass.
 
-```
+```bash
 cargo test -p ex-13-testing
 ```
 

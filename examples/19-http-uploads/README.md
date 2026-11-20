@@ -2,7 +2,7 @@
 
 `Multipart` uploads under a server body limit and a tighter per-route `#[meta(MaxBody(..))]`.
 
-```
+```bash
 cargo run -p ex-19-http-uploads
 echo hello > a.txt
 curl -i -F doc=@a.txt http://127.0.0.1:3000/files

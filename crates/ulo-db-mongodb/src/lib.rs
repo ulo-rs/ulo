@@ -1,5 +1,8 @@
 //! The MongoDB store for `ulo-db` (integrations DESIGN §4.6): `mongodb::Client`, bound bare.
 //!
+//! The crate is tokio-bound: the driver supports tokio alone in 3.x, so the app runs on
+//! `ulo-runtime-tokio`.
+//!
 //! ```
 //! # use ulo_db_mongodb::MongoModule;
 //! # fn f(m: &mut ulo::ModuleDef<'_>, config: &ulo_config::Config) {

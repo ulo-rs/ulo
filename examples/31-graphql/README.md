@@ -2,7 +2,7 @@
 
 async-graphql served over HTTP. `GraphqlModule` mounts the endpoint, `AsyncGraphql<Api, Gql> as dyn Engine` binds the engine, and `Gql` is an execution-scoped context: every field of one request reads the same instance, and the next request gets a new one.
 
-```
+```bash
 cargo run -p ex-31-graphql
 curl -H 'content-type: application/json' -d '{"query":"{ greeting(name: \"ulo\") }"}' http://127.0.0.1:3000/graphql
 ```
