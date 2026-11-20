@@ -54,9 +54,11 @@ use ulo_rpc::Link;
 use ulo_rpc::link::ClientProbe;
 
 pub mod cases;
+mod forwards;
 mod rt;
 
 pub use cases::deadlines::Stamped;
+pub use forwards::assert_forwards;
 // The harness pieces live in `ulo-conformance-support`, shared with the database suite, and are
 // re-exported here, so a link's `tests/conformance.rs` depends on this crate alone.
 #[cfg(feature = "smol")]
@@ -256,6 +258,7 @@ macro_rules! conformance_suite {
             a_reply_stream_its_caller_does_not_read_ends_overflow => queues::reply_overflow,
             a_streamed_request_its_handler_does_not_read_ends_overflow => queues::request_overflow,
             deadline_ms_fires_deadline => deadlines::deadline_ms,
+            a_spent_deadline_ms_is_answered_timeout_with_no_handler_run => deadlines::spent_deadline_ms,
             client_timeout_is_timeout => deadlines::client_timeout,
             a_call_s_timeout_is_the_server_s_deadline => deadlines::timeout_is_the_server_s_deadline,
             a_stream_s_idle_timeout_is_per_frame => deadlines::stream_idle_timeout_is_per_frame,

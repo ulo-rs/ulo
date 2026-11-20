@@ -38,6 +38,30 @@ pub async fn deadline_ms<B: Broker>() {
     fixture.stop().await;
 }
 
+/// A `deadline-ms` of zero is a budget already spent: a call whose `req` carries it, written by a
+/// [`Stamped`] link below a client waiting ten seconds, is answered the server's `timeout` within
+/// five seconds and its handler never runs, and the same call carrying a minute runs it.
+pub async fn spent_deadline_ms<B: Broker>() {
+    let fixture = Fixture::<B>::start().await;
+    // The fixture's readiness check calls the same handler.
+    let ready = fixture.server.probe.adds_begun();
+    let spent = Stamped { link: fixture.broker.client_link(&addresses(&[&fixture.server])), value: "0" };
+    let client = client_over::<B, _>(spent).await;
+    let started = Instant::now();
+    let outcome = client.rpc.request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).timeout(Duration::from_secs(10)).await;
+    failed(outcome, ErrorKind::Timeout);
+    assert!(started.elapsed() < Duration::from_secs(5), "the call was answered after {:?}, at the client's timeout rather than the server's", started.elapsed());
+    assert_eq!(fixture.server.probe.adds_begun() - ready, 0, "the handler of a call whose budget was spent ran");
+    client.close().await;
+    let left = Stamped { link: fixture.broker.client_link(&addresses(&[&fixture.server])), value: "60000" };
+    let client = client_over::<B, _>(left).await;
+    let sum = client.rpc.request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).timeout(Duration::from_secs(10)).await;
+    assert_eq!(sum.expect("a call with a minute left is answered"), Sum { sum: 5 });
+    assert_eq!(fixture.server.probe.adds_begun() - ready, 1, "the handler of a call with a minute left");
+    client.close().await;
+    fixture.stop().await;
+}
+
 /// The client's own timeout, as `Timeout`.
 pub async fn client_timeout<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
@@ -1263,6 +1287,21 @@ fn stamped(headers: &CallHeaders, value: &str) -> CallHeaders {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::forwards::tests::Refuses;
+
+    /// Every wrapper the scenarios put around a broker's link forwards what the server asks of a
+    /// link before any I/O, `endpoint` among it, over a link refusing all it can. Planted break:
+    /// `Tapped`'s `endpoint` left unwritten.
+    #[test]
+    fn the_suite_s_wrappers_forward_to_the_link_they_wrap() {
+        futures_executor::block_on(async {
+            crate::assert_forwards(&mut SlowConnect::new(Refuses, Hold::Waits(Duration::ZERO)), &mut Refuses).await;
+            crate::assert_forwards(&mut Tapped { link: Refuses, tap: Tap::default() }, &mut Refuses).await;
+            crate::assert_forwards(&mut Counted { link: Refuses, counts: Arc::default() }, &mut Refuses).await;
+            crate::assert_forwards(&mut MutedCancel(Refuses), &mut Refuses).await;
+            crate::assert_forwards(&mut Stamped { link: Refuses, value: "0" }, &mut Refuses).await;
+        });
+    }
 
     fn at(base: Instant, millis: u64) -> Instants {
         let moment = base + Duration::from_millis(millis);

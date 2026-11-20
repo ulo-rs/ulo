@@ -292,6 +292,29 @@ async fn a_client_link_dropped_without_close_closes_its_connections() {
     released(&broker.client, "the client's link dropped without `close`").await;
 }
 
+/// F625: a client frame on a pattern Kafka names no topic is refused before it is produced, so the
+/// broker's `InvalidTopic`, which the client answers as a retryable `Unavailable`, is never
+/// reached: `NameInvalid` for `/` and `:`, `NameTooLong` past 249 bytes, each frame alone, the
+/// connection carrying the next. `RpcClient` answers them `BadRequest`. Planted break: the check
+/// removed from the client's writer, which answers `Unavailable` "the link refused the frame:
+/// ... InvalidTopic".
+#[tokio::test(flavor = "multi_thread")]
+async fn a_client_frame_on_a_pattern_kafka_names_no_topic_is_refused_bad_request() {
+    let broker = KraftBroker::start().await;
+    let runtime: Arc<dyn ulo::Runtime> = Arc::new(ulo_runtime_tokio::Tokio::current());
+    let client = ulo_rpc::RpcClient::new(broker.client_link(&[]), Arc::clone(&runtime)).expect("the link is usable");
+    for (pattern, reason) in [("orders/create", "name_invalid"), ("orders:create", "name_invalid")] {
+        let refused = client.request::<_, ()>(pattern, &()).timeout(Duration::from_secs(10)).await.expect_err(pattern);
+        assert_eq!((refused.kind(), refused.reason()), (ulo_transport::ErrorKind::BadRequest, Some(reason)), "{pattern}: {refused:?}");
+    }
+    let long = "t".repeat(259);
+    let refused = client.request::<_, ()>(long.as_str(), &()).timeout(Duration::from_secs(10)).await.expect_err("a 259-byte pattern");
+    assert_eq!((refused.kind(), refused.reason()), (ulo_transport::ErrorKind::BadRequest, Some("name_too_long")), "{refused:?}");
+    let refused = client.emit("orders/created", &()).await.expect_err("an event on `orders/created`");
+    assert_eq!((refused.kind(), refused.reason()), (ulo_transport::ErrorKind::BadRequest, Some("name_invalid")), "{refused:?}");
+    client.emit("orders.created", &()).await.expect("an event on a topic's name is produced on the same connection");
+}
+
 /// F429: a server's link dropped holding a call whose delivery nobody answers closes its
 /// connections, undrained and drained. A held call's reply path holds the writer's queue and the
 /// table the call is held in, and the table holds the path; the writer holds the producer. The

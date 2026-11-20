@@ -10,11 +10,11 @@ use redis::aio::{ConnectionManager, PubSubSink, PubSubStream};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
-use ulo::{AppHandle, BoxError, BoxFuture, Permanent, Runtime};
+use ulo::{AppHandle, BoxError, BoxFuture, Cut, Permanent, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
 use ulo_rpc::link::{Inbound, TaskPanics};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, Ordering as Order,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Delivery, DeliveryMode, ErrorBody, Frame, Link, NoDestination, Ordering as Order,
     Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::ordered;
@@ -33,6 +33,10 @@ const CONTROL: &str = "ulo:rpc:control";
 /// Frames queued for one side's writer ahead of the next send's wait: each send is queued at its call and waits until it is
 /// among this many the writer has not taken.
 const WRITE_QUEUE: usize = 64;
+
+/// How long a server's `listen` and a client's connect wait for Redis, unless
+/// [`Redis::connect_within`] says otherwise.
+const CONNECT_WITHIN: Duration = Duration::from_secs(30);
 
 /// The Redis link.
 ///
@@ -54,10 +58,19 @@ const WRITE_QUEUE: usize = 64;
 /// failure, the app's shutdown outcome naming the link and the task and holding the panic redacted
 /// with the app's secrets; on a client it fails the calls waiting on the connection `Unavailable`
 /// holding the panic, and the next call connects again ([`TaskPanics`]).
+///
+/// A server's `listen` and a client's connect wait for Redis at most
+/// [`connect_within`](Self::connect_within), 30 s unset, and a wait that runs out fails with
+/// [`ConnectTimedOut`](ulo_rpc::ConnectTimedOut).
 pub struct Redis {
     pub(crate) url: String,
     pub(crate) codec: Codec,
     pub(crate) runtime: Option<Tokio>,
+    pub(crate) connect_within: Duration,
+    /// The app's clock, from `prepare`, which times a server's `listen`; a server listening without
+    /// one times it on the link's runtime. Asserted unwind-safe, as `app_runtime` is: it is only
+    /// waited on.
+    pub(crate) timer: AssertUnwindSafe<Option<Arc<dyn Timer>>>,
     /// The app's runtime, read by `prepare`, which redacts a server task's panic with the app's
     /// secrets when it is logged. Asserted unwind-safe, so the link stays `UnwindSafe`: it is
     /// only spawned on.
@@ -106,6 +119,8 @@ impl Redis {
             url: url.into(),
             codec: Codec::Json,
             runtime: Tokio::try_current(),
+            connect_within: CONNECT_WITHIN,
+            timer: AssertUnwindSafe(None),
             app_runtime: AssertUnwindSafe(None),
             state: Mutex::new(State::default()),
             #[cfg(feature = "conformance-probe")]
@@ -156,8 +171,32 @@ impl Redis {
         self
     }
 
+    /// How long the link waits for Redis to take its connections, 30 seconds by default: a
+    /// server's `listen`, its publisher connection and its Pub/Sub connection with every channel
+    /// subscribed, and a client's connect, its publisher connection and its reply channel's
+    /// subscription. The redis client bounds each connection on its own and retries it, about 16
+    /// seconds in all against a server that accepts the connection and never answers, so the
+    /// bound in effect is whichever ends first, this one or the client's. A wait that runs out
+    /// fails with [`ConnectTimedOut`], which a server's `listen` returns as `Bind` and `RpcClient`
+    /// answers `Unavailable` with `reason: "connect_timed_out"`; the connections are dropped with
+    /// the wait, so nothing of them remains. A server's wait is timed on the app's `Timer`, which
+    /// `prepare` reads, or on the link's runtime when it listens with none, and a client's on the
+    /// runtime its client was built on, the app's inside an app; a clock whose runtime has shut down fails `listen` as `Permanent` `RuntimeShutDown` and
+    /// a call `Unavailable` with `reason: "runtime_shut_down"`. A zero bound is refused in
+    /// `usable`, so in a server's `prepare` and where a client takes the link.
+    pub fn connect_within(mut self, bound: Duration) -> Self {
+        self.connect_within = bound;
+        self
+    }
+
     fn runtime(&self) -> Result<Tokio, BoxError> {
         self.runtime.clone().ok_or_else(|| NO_RUNTIME.into())
+    }
+
+    /// What a `ConnectTimedOut` names the server by: the url's host and port, never its
+    /// credentials.
+    fn timed_out(&self, client: &redis::Client) -> ConnectTimedOut {
+        ConnectTimedOut::new(self.connect_within, client.get_connection_info().addr().to_string(), "Redis")
     }
 }
 
@@ -187,11 +226,15 @@ impl Link for Redis {
 
     fn usable(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
+        if self.connect_within.is_zero() {
+            return Err("the Redis link's `connect_within` is zero, so no connection to Redis could be made within it".into());
+        }
         Ok(())
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
         self.app_runtime = AssertUnwindSafe(app.runtime().cloned());
+        self.timer = AssertUnwindSafe(app.timer().cloned());
         // `listen` binds on the link's runtime: one that has shut down, or has no IO driver, is
         // refused here, before the configuration and before any server binds. The shutdown is
         // asked first, since a runtime that has shut down answers nothing about its driver.
@@ -209,20 +252,25 @@ impl Link for Redis {
     /// capabilities declare (`without_single_delivery`).
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         let runtime = self.runtime()?;
+        let timer = self.timer.0.clone().unwrap_or_else(|| Arc::new(runtime.clone()));
         let client = client(&self.url)?;
+        let timed_out = self.timed_out(&client);
         let patterns: Vec<String> = subscriptions.iter().map(|subscription| subscription.pattern.as_str().to_owned()).collect();
-        let (publisher, sink, stream) = {
+        let connecting = {
             let (client, channels) = (client.clone(), server_channels(&patterns, true));
-            runtime
-                .run(async move {
-                    let publisher = ConnectionManager::new(client.clone()).await?;
-                    // Subscribed before `listen` returns, so a failure leaves nothing subscribed
-                    // and the first call after `bind` finds the server listening.
-                    let (sink, stream) = subscribe(&client, &channels).await?;
-                    Ok::<_, BoxError>((publisher, sink, stream))
-                })
-                .await
-                .map_err(Permanent::new)??
+            runtime.run(async move {
+                let publisher = ConnectionManager::new(client.clone()).await?;
+                // Subscribed before `listen` returns, so a failure leaves nothing subscribed
+                // and the first call after `bind` finds the server listening.
+                let (sink, stream) = subscribe(&client, &channels).await?;
+                Ok::<_, BoxError>((publisher, sink, stream))
+            })
+        };
+        // Dropped at the bound, the connect's task is aborted and its connections with it.
+        let (publisher, sink, stream) = match ulo::timeout(&*timer, timed_out.within(), connecting).await {
+            Ok(connected) => connected.map_err(Permanent::new)??,
+            Err(Cut::Expired) => return Err(timed_out.into()),
+            Err(Cut::Refused(refused)) => return Err(Permanent::new(RuntimeShutDown::new(refused)).into()),
         };
 
         let (phase, _) = watch::channel(Phase::Serving);
@@ -252,16 +300,21 @@ impl Link for Redis {
     async fn connect(&self, client_runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let client = client(&self.url)?;
+        let timed_out = self.timed_out(&client);
         let channel = format!("ulo:rpc:reply:{}", uuid::Uuid::new_v4().simple());
-        let (publisher, sink, stream) = {
+        let connecting = {
             let channel = channel.clone();
-            runtime
-                .run(async move {
-                    let publisher = ConnectionManager::new(client.clone()).await?;
-                    let (sink, stream) = subscribe(&client, std::slice::from_ref(&channel)).await?;
-                    Ok::<_, BoxError>((publisher, sink, stream))
-                })
-                .await??
+            runtime.run(async move {
+                let publisher = ConnectionManager::new(client.clone()).await?;
+                let (sink, stream) = subscribe(&client, std::slice::from_ref(&channel)).await?;
+                Ok::<_, BoxError>((publisher, sink, stream))
+            })
+        };
+        // The clock of the runtime the client was handed, the app's inside an app.
+        let (publisher, sink, stream) = match ulo::timeout(&**client_runtime, timed_out.within(), connecting).await {
+            Ok(connected) => connected??,
+            Err(Cut::Expired) => return Err(timed_out.into()),
+            Err(Cut::Refused(refused)) => return Err(RuntimeShutDown::new(refused).into()),
         };
         let side = Arc::new(ClientSide {
             publisher: Mutex::new(Some(publisher)),

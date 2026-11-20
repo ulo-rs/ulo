@@ -1,5 +1,6 @@
 //! Per-delivery execution (transports DESIGN §5.2): one execution per call, `deadline-ms` as its
-//! deadline, a `deadline-ms` the server cannot read refused before any execution opens,
+//! deadline, a `deadline-ms` the server cannot read refused before any execution opens, a spent
+//! one, zero, answered `timeout` before any execution opens and with no error handler offered it,
 //! `cancel` as `ClientCancelled`, the four shapes, `dispatch_late` for an item's error,
 //! and the split per `Capabilities` between the whole frame and the payload with native
 //! correlation. `Server::serve` runs it for every delivery the link's inbound stream yields.
@@ -229,6 +230,21 @@ fn start(shared: &Arc<Shared>, incoming: Incoming, reply: Option<ReplyPath>, ack
             return;
         }
     };
+    // `deadline-ms` is the budget left when the caller sent the frame, so a spent one is zero. The
+    // call is answered as a passed deadline is, and before admission for the reason above.
+    if deadline == Some(Duration::ZERO) {
+        match answered {
+            Some((id, reply)) => {
+                refuse(shared, tasks, reply, id, timed_out());
+                ack.ack();
+            }
+            None => {
+                tracing::warn!(pattern = incoming.pattern.as_str(), link = shared.link, "an event whose `deadline-ms` is spent was rejected");
+                ack.reject();
+            }
+        }
+        return;
+    }
     let Some(permit) = shared.admission.try_admit() else {
         match answered {
             Some((id, reply)) => {

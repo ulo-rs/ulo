@@ -337,8 +337,9 @@ pub enum DisconnectReason {
 /// Under `refuse = handshake` the refusal is answered before the upgrade with the status and
 /// headers HTTP answers its error with, the status [`WithHttpStatus`](ulo_http::WithHttpStatus)
 /// set or the kind's: `Unauthorized` 401 with `WWW-Authenticate`, the error's own challenge or
-/// the `challenge` of the HTTP server or embedding whose port serves the gateway, `Bearer` on a
-/// standalone server's port; `Forbidden` 403; `TooManyRequests` 429 and `Unavailable` 503, each with
+/// the `challenge` of the HTTP server or embedding whose port serves the gateway, or on a
+/// standalone server's port or a host's its [`GatewayDefaults::challenge`](crate::GatewayDefaults::challenge),
+/// `Bearer` unset; `Forbidden` 403; `TooManyRequests` 429 and `Unavailable` 503, each with
 /// `Retry-After` from a `RetryAfter` detail; `Timeout` 504; and so on through HTTP's table. The
 /// body is the reason as plain text. A refusal written as a close code alone,
 /// [`code`](Self::code), has no kind and is answered 403.

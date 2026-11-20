@@ -1,9 +1,11 @@
 //! Support for the code `ulo-http-macros` generates, and for `ulo-ws`'s refused handshake. Not
 //! part of the public API: names and shapes here change with their users.
 
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
@@ -37,6 +39,20 @@ pub fn error_head(error: &CallError) -> (StatusCode, HeaderMap) {
 pub struct HandshakeAnswers(Option<Arc<HttpConfig>>);
 
 impl HandshakeAnswers {
+    /// The answers of a server that is no `ulo_http` server: a standalone WebSocket server's or a
+    /// host's, its `challenge` and `shed_retry_after`, each `HttpConfig::default()`'s, `Bearer`
+    /// and one second, where it sets none, and no forwarded host.
+    pub fn own(challenge: Option<Cow<'static, str>>, shed_retry_after: Option<Duration>) -> HandshakeAnswers {
+        let mut config = HttpConfig::default();
+        if let Some(challenge) = challenge {
+            config.challenge = challenge;
+        }
+        if let Some(after) = shed_retry_after {
+            config.shed_retry_after = after;
+        }
+        HandshakeAnswers(Some(Arc::new(config)))
+    }
+
     /// `WWW-Authenticate` on a 401 whose error names no challenge: the server's `challenge`.
     pub fn challenge(&self) -> HeaderValue {
         match &self.0 {

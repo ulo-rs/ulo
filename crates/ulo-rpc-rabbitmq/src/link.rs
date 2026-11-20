@@ -87,9 +87,10 @@ fn too_long(what: &'static str, name: &str, limit: usize) -> BoxError {
     Box::new(NameTooLong { what, name: name.to_owned(), limit: limit as u64 })
 }
 
-/// A request's or a stream's routing key, its pattern, as a `shortstr`, or the frame's refusal.
-fn routing_key(pattern: &Pattern) -> Result<ShortString, BoxError> {
-    ShortString::try_new(pattern.as_str().to_owned()).map_err(|_| too_long("request pattern", pattern.as_str(), MAX_NAME))
+/// A request's or a stream's routing key, its pattern, as a `shortstr`, or the frame's refusal
+/// naming the pattern as `what`: `"request pattern"` for a `req`, `"stream pattern"` for an `open`.
+fn routing_key(what: &'static str, pattern: &Pattern) -> Result<ShortString, BoxError> {
+    ShortString::try_new(pattern.as_str().to_owned()).map_err(|_| too_long(what, pattern.as_str(), MAX_NAME))
 }
 
 /// An event's exchange `ulo.rpc.event.<pattern>` and its routing key, the pattern, or the frame's
@@ -1331,7 +1332,7 @@ impl ClientSide {
     async fn send(self: &Arc<Self>, pattern: Pattern, frame: Frame, answer: oneshot::Sender<Result<(), BoxError>>, confirming: &mut Confirming) {
         match frame {
             Frame::Req { id, headers, data, .. } => {
-                let key = match header_names(&headers).and_then(|()| routing_key(&pattern)) {
+                let key = match header_names(&headers).and_then(|()| routing_key("request pattern", &pattern)) {
                     Ok(key) => key,
                     Err(refused) => return drop(answer.send(Err(refused))),
                 };
@@ -1361,7 +1362,7 @@ impl ClientSide {
                 self.settle(published, None, pattern, answer, confirming);
             }
             Frame::Open { id, headers, .. } => {
-                let key = match header_names(&headers).and_then(|()| routing_key(&pattern)) {
+                let key = match header_names(&headers).and_then(|()| routing_key("stream pattern", &pattern)) {
                     Ok(key) => key,
                     Err(refused) => return drop(answer.send(Err(refused))),
                 };
@@ -1868,8 +1869,8 @@ mod tests {
         let event = event_names(&pattern(242)).expect_err("an event on a 242-byte pattern was published");
         assert_eq!(too_long_of(event), ("event pattern", 242, 241), "the refusal of an event on a 242-byte pattern");
 
-        assert_eq!(routing_key(&pattern(255)).expect("a request on a 255-byte pattern is published").as_str().len(), 255);
-        let request = routing_key(&pattern(256)).expect_err("a request on a 256-byte pattern was published");
+        assert_eq!(routing_key("request pattern", &pattern(255)).expect("a request on a 255-byte pattern is published").as_str().len(), 255);
+        let request = routing_key("request pattern", &pattern(256)).expect_err("a request on a 256-byte pattern was published");
         assert_eq!(too_long_of(request), ("request pattern", 256, 255), "the refusal of a request on a 256-byte pattern");
 
         let mut headers = CallHeaders::new();

@@ -27,8 +27,8 @@ use ulo_runtime_tokio::Tokio;
 use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NoDestination, NoTimer,
-    Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NameInvalid, NameTooLong,
+    NoDestination, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::ordered;
 use ulo_transport::Count;
@@ -297,6 +297,63 @@ impl Kafka {
 
 const NO_RUNTIME: &str = "the Kafka link has no tokio runtime: build it inside one, or give it one with `.with_handle(..)`";
 
+/// The longest topic name Kafka accepts, `Topic.MAX_NAME_LENGTH`.
+const MAX_TOPIC: usize = 249;
+
+/// What a topic name is made of, as Kafka's `Topic.validate` checks it.
+const TOPIC_CHARACTERS: &str = "ASCII letters, digits, `.`, `_` and `-`, and neither `.` nor `..` alone";
+
+/// Why Kafka refuses `pattern` as a topic's name, the topic every request, stream and event on it
+/// is produced to: `None` for a name it accepts. The broker answers such a topic `InvalidTopic` at
+/// its creation and at every produce.
+fn unusable_topic(pattern: &str) -> Option<Unusable> {
+    let valid = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-');
+    if pattern.is_empty() || pattern == "." || pattern == ".." || !pattern.bytes().all(valid) {
+        Some(Unusable::Characters)
+    } else if pattern.len() > MAX_TOPIC {
+        Some(Unusable::Length)
+    } else {
+        None
+    }
+}
+
+/// What makes a pattern no topic's name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Unusable {
+    Characters,
+    Length,
+}
+
+/// The refusal of a client frame on `pattern`, `what` it is, when Kafka names no topic so.
+fn topic_of(what: &'static str, pattern: &Pattern) -> Result<(), BoxError> {
+    match unusable_topic(pattern.as_str()) {
+        None => Ok(()),
+        Some(Unusable::Characters) => Err(Box::new(NameInvalid { what, name: pattern.as_str().to_owned(), allowed: TOPIC_CHARACTERS })),
+        Some(Unusable::Length) => Err(Box::new(NameTooLong { what, name: pattern.as_str().to_owned(), limit: MAX_TOPIC as u64 })),
+    }
+}
+
+/// The patterns of `subscriptions` Kafka names no topic so, every one named with its reason, as a
+/// `Permanent` failure: the topic's creation would fail whatever the broker.
+fn topics(subscriptions: &[Subscription]) -> Result<(), BoxError> {
+    let refused: Vec<String> = subscriptions
+        .iter()
+        .filter_map(|Subscription { pattern, .. }| {
+            let pattern = pattern.as_str();
+            unusable_topic(pattern).map(|unusable| match unusable {
+                Unusable::Characters => {
+                    format!("pattern `{pattern}` is not a Kafka topic's name, which is {TOPIC_CHARACTERS}")
+                }
+                Unusable::Length => format!(
+                    "pattern `{pattern}` is {} bytes, past Kafka's {MAX_TOPIC}-character limit on a topic's name",
+                    pattern.len()
+                ),
+            })
+        })
+        .collect();
+    if refused.is_empty() { Ok(()) } else { Err(Permanent::new(refused.join("; ")).into()) }
+}
+
 /// Why a `cancel` can reach the server ahead of its request.
 const CONTROL_LANE: &str = "the link carries a request and its `cancel` on separate lanes, and the broker may deliver the `cancel` first";
 
@@ -356,6 +413,13 @@ impl Link for Kafka {
         self.max_inflight = calls.max_inflight();
     }
 
+    /// Each pattern is its topic's name, so one Kafka names no topic is refused: over 249 bytes,
+    /// or holding a character other than an ASCII letter, a digit, `.`, `_` or `-`, or `.` or
+    /// `..` alone.
+    fn subscribable(&self, subscriptions: &[Subscription]) -> Result<(), BoxError> {
+        topics(subscriptions)
+    }
+
     /// A pattern reaching one instance is a topic of the group's consumer, which Kafka assigns
     /// each partition of to one member. Those reaching every instance, events declared
     /// `every_instance`, are read by a consumer of this instance's own, assigned every partition of
@@ -371,6 +435,7 @@ impl Link for Kafka {
     /// minutes, librdkafka's metadata refresh interval, and logs a `warn` naming the topic and both
     /// counts when it has changed (`watch_partitions`).
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
+        topics(subscriptions)?;
         let group = self
             .group
             .clone()
@@ -1423,6 +1488,15 @@ async fn client_writer(side: Arc<ClientSide>, mut queued: ordered::Receiver<Job>
 
 impl ClientSide {
     async fn send(self: &Arc<Self>, pattern: Pattern, frame: Frame, answer: oneshot::Sender<Result<(), BoxError>>, delivering: &mut Delivering) {
+        let named = match &frame {
+            Frame::Req { .. } => topic_of("request pattern", &pattern),
+            Frame::Open { .. } => topic_of("stream pattern", &pattern),
+            Frame::Evt { .. } => topic_of("event pattern", &pattern),
+            _ => Ok(()),
+        };
+        if let Err(refused) = named {
+            return drop(answer.send(Err(refused)));
+        }
         match frame {
             Frame::Req { id, headers, data, .. } => {
                 lock(&self.calls).insert(id, ClientCall::Unary);
@@ -1874,6 +1948,47 @@ mod tests {
     use futures_util::FutureExt;
 
     use super::*;
+
+    /// F625: a pattern is its topic's name, and Kafka's `Topic.validate` refuses a name of more
+    /// than 249 characters, a character outside `[a-zA-Z0-9._-]`, and `.` and `..`. Each is
+    /// refused by `subscribable`, every one named in one `Permanent` refusal that `listen` repeats,
+    /// and the names at the edges are accepted. Planted breaks: the limit read as 255; `/` let
+    /// through.
+    #[test]
+    fn subscribable_refuses_a_pattern_kafka_names_no_topic() {
+        let link = Kafka::brokers("127.0.0.1:9092");
+        let served = [Subscription::from(Pattern::from("t".repeat(249))), Subscription::new("a.B_c-9", Instances::Every), Subscription::from(Pattern::from("..."))];
+        link.subscribable(&served).expect("patterns Kafka names topics are accepted");
+        let unusable = ["t".repeat(250), "orders/create".to_owned(), "orders:create".to_owned(), "caf\u{e9}".to_owned(), ".".to_owned(), "..".to_owned(), String::new()];
+        for pattern in &unusable {
+            let refused = link.subscribable(&[Subscription::from(Pattern::from(pattern.as_str()))]).expect_err(pattern);
+            assert!(refused.is::<Permanent>(), "a pattern Kafka names no topic is refused as retryable: {refused}");
+            assert!(refused.to_string().contains(&format!("pattern `{pattern}`")), "the refusal names the pattern: {refused}");
+        }
+        let all: Vec<Subscription> = unusable.iter().map(|pattern| Subscription::from(Pattern::from(pattern.as_str()))).collect();
+        let refused = link.subscribable(&all).expect_err("seven unusable patterns were accepted").to_string();
+        assert_eq!(refused.matches("pattern `").count(), unusable.len(), "every unusable pattern is named once: {refused}");
+        assert!(refused.contains("is 250 bytes, past Kafka's 249-character limit"), "the long pattern's reason: {refused}");
+    }
+
+    /// The client refuses a frame on a pattern Kafka names no topic before it is produced, as
+    /// `NameTooLong` past 249 bytes and `NameInvalid` for its characters, which `RpcClient`
+    /// answers `BadRequest`, so no retry sends it; a frame on a control lane is not refused.
+    /// Planted break: the refusal left as the broker's `InvalidTopic`, which the client answers
+    /// `Unavailable`.
+    #[test]
+    fn a_client_frame_on_a_pattern_kafka_names_no_topic_is_refused() {
+        let named = |what, pattern: &str| topic_of(what, &Pattern::from(pattern));
+        named("request pattern", &"t".repeat(249)).expect("a 249-byte pattern is a topic's name");
+        let long = named("request pattern", &"t".repeat(250)).expect_err("a 250-byte pattern was produced to");
+        let long = long.downcast_ref::<NameTooLong>().unwrap_or_else(|| panic!("refused other than as `NameTooLong`: {long}"));
+        assert_eq!((long.what, long.name.len(), long.limit), ("request pattern", 250, 249));
+        for (what, pattern) in [("stream pattern", "orders/create"), ("event pattern", "orders:create"), ("request pattern", "..")] {
+            let refused = named(what, pattern).expect_err(pattern);
+            let invalid = refused.downcast_ref::<NameInvalid>().unwrap_or_else(|| panic!("refused other than as `NameInvalid`: {refused}"));
+            assert_eq!((invalid.what, invalid.name.as_str()), (what, pattern));
+        }
+    }
 
     /// The server's shed log names the link by it as answered.
     #[test]

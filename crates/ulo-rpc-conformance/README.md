@@ -107,6 +107,16 @@ held-`cancel` scenarios above on a link that holds no `cancel`. The test is stam
 server's `opened` declares the same three not applicable too: they read the link's client table
 through a probe outside the suite's public API, which the links `ulo` ships attach.
 
+## A link that wraps another
+
+The suite cannot tell that a link wraps another, a TLS or logging layer around a broker's link,
+and a wrapper that leaves a `Link` method unwritten answers the trait's default in place of the
+wrapped link's. `assert_forwards(&mut wrapper, &mut inner)`, called from the wrapper's own tests
+with `inner` configured as the link it wraps, panics naming the first method the server calls
+before any I/O whose answers differ: `capabilities`, `usable`, `subscribable`, `endpoint`,
+`bound` and `prepare`. A missing forward shows only where the inner link answers other than the
+default, so call it again with an inner link configured to refuse what it can.
+
 ## Scenarios
 
 The scenarios are the functions of the [`cases`](https://docs.rs/ulo-rpc-conformance/latest/ulo_rpc_conformance/cases/)

@@ -1,5 +1,6 @@
 //! The call a frame names, read from the frame's leading bytes alone: a server answers a frame
-//! over its `max_frame` under the frame's `id` without reading the body past them.
+//! over its `max_frame` under the frame's `id` without decoding the body past them, which it reads
+//! and drops.
 //!
 //! The frame is a map whose entries come in any order, so the `t` and `id` entries are found only
 //! where they precede everything the leading bytes cut off. `ulo-rpc`'s codec writes `t` and `id`
@@ -28,6 +29,13 @@ impl Calling {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    // How many times `call` has scanned on this thread, for a test of how often a frame's leading
+    // bytes are scanned.
+    pub(crate) static SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// How deep a value skipped ahead of `t` or `id` may nest; one nesting deeper names no call.
 const DEPTH: usize = 32;
 
@@ -36,6 +44,8 @@ const DEPTH: usize = 32;
 /// off, comes after an entry that is, is written in a form the scan does not read (an escaped key,
 /// an `id` that is no plain unsigned integer), or the frame is no call's.
 pub(crate) fn call(codec: Codec, bytes: &[u8]) -> Option<(Calling, u64)> {
+    #[cfg(test)]
+    SCANS.with(|scans| scans.set(scans.get() + 1));
     let (t, id) = match codec {
         Codec::Json => Json { bytes, at: 0 }.entries()?,
         Codec::Cbor => Cbor { bytes, at: 0 }.entries()?,
@@ -368,9 +378,11 @@ mod tests {
                 assert_eq!(call(codec, &codec.encode_frame(frame).unwrap()), None, "{codec:?} {frame:?}");
             }
         }
-        // The key `t` written as a Unicode escape, which a JSON reader takes as `t`.
+        // The keys `t` and `id` written with a Unicode escape, which a JSON reader takes as `t`
+        // and `id`.
         let escaped = format!(r#"{{"{}u0074":"req","id":1}}"#, char::from(0x5c));
-        for json in [r#"{"t":"req","id":-1}"#, r#"{"t":"req","id":1.0}"#, r#"{"t":"req","id":01}"#, &escaped] {
+        let escaped_id = format!(r#"{{"t":"req","{}u0069d":1}}"#, char::from(0x5c));
+        for json in [r#"{"t":"req","id":-1}"#, r#"{"t":"req","id":1.0}"#, r#"{"t":"req","id":01}"#, &escaped, &escaped_id] {
             assert_eq!(call(Codec::Json, json.as_bytes()), None, "{json}");
         }
     }

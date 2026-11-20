@@ -32,6 +32,15 @@
 //! next failed write; a request still arriving at the drain closed by the host; an HTTP/2
 //! connection kept to the stop deadline without GOAWAY.
 //!
+//! As the default service, the app answers every request no resource of the host matches, and
+//! `App::route(path, web::get().to(..))` makes the route's method a guard of its resource: a
+//! `POST` to that path matches no resource and reaches the app, which answers its own 404 (or 405
+//! or 501 where it routes the path) with no `Allow` naming the host route's method, where actix
+//! alone answers an empty 404. The embedding does not own actix's router, so a host route whose
+//! method mismatch should answer 405 with `Allow` is registered as
+//! `App::service(web::resource(path).route(web::get().to(..)))`, whose resource matches every
+//! method and answers 405 itself.
+//!
 //! The request still arriving is `DrainPending::Closed`. From actix-web 4.15 actix's graceful stop reaches every
 //! HTTP/1 connection, and a connection with no complete request in progress closes at once. A
 //! client caught mid-request at the moment of shutdown, its head not yet fully sent, gets a closed
