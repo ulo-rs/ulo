@@ -970,12 +970,7 @@ impl<B: Broker> Fixture<B> {
         let server = server_capped(&broker, cap).await;
         let client = client(&broker, &[&server]).await;
         ready(&broker, &client.rpc, &[&server]).await;
-        within::<B, _>(Duration::from_secs(10), "the readiness calls' executions to end", async {
-            while !server.probe.adds_settled() {
-                sleep::<B>(Duration::from_millis(5)).await;
-            }
-        })
-        .await;
+        settled::<B>(&server).await;
         Fixture { broker, server, client }
     }
 
@@ -989,13 +984,16 @@ impl<B: Broker> Fixture<B> {
     }
 
     /// [`start_bounded`](Self::start_bounded) with the server over the link `server_link` builds
-    /// from the broker, the broker's own link inside something that watches it.
+    /// from the broker, the broker's own link inside something that watches it. Returned once the
+    /// readiness calls' executions have ended: the server frees a call's place under the bound
+    /// after its answer has left, so a readiness call already answered may still hold one.
     pub(crate) async fn start_over<L: Link>(max_inflight: Count, server_link: impl FnOnce(&B) -> L) -> Fixture<B> {
         let broker = B::start().await;
         let link = server_link(&broker);
         let server = server_over(&broker, link, max_inflight).await;
         let client = client(&broker, &[&server]).await;
         ready(&broker, &client.rpc, &[&server]).await;
+        settled::<B>(&server).await;
         Fixture { broker, server, client }
     }
 
@@ -1035,6 +1033,17 @@ pub(crate) async fn ready<B: Broker>(broker: &B, rpc: &RpcClient, servers: &[&Se
             _ => sleep::<B>(Duration::from_millis(100)).await,
         }
     }
+}
+
+/// Waits until every readiness call that reached `server`'s handler has had its execution end,
+/// which is after the call's place under the server's bound is free.
+async fn settled<B: Broker>(server: &Server) {
+    within::<B, _>(Duration::from_secs(10), "the readiness calls' executions to end", async {
+        while !server.probe.adds_settled() {
+            sleep::<B>(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
 }
 
 /// Polls `done` until it holds or `within` passes; answers whether it held.

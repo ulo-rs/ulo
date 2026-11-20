@@ -294,3 +294,48 @@ async fn a_hand_off_two_servers_share_serves_the_second_after_the_first_drops() 
     within("the app's close", handle.close(Signal::new("test"))).await.unwrap_or_else(|error| panic!("the app did not close: {error}"));
     within("`serve`'s end", serving).await.expect("the serving task panicked").unwrap_or_else(|error| panic!("`serve` failed: {error}"));
 }
+
+/// An app dropped unclosed while a client is upgraded on its gateway ends the connection: the
+/// client reads its end, the app's singletons drop and no task is left on the runtime (F435).
+/// The app serves on a task the test aborts, which drops it with nothing closed. Planted breaks:
+/// the table's drop aborting nothing, and an aborted connection left in the rooms, whose membership
+/// keeps the app's singletons.
+#[tokio::test]
+async fn an_app_dropped_unclosed_ends_its_upgraded_connections() {
+    let before = alive_tasks();
+    let flags = Arc::new(Flags::default());
+    let app = within(
+        "the app's start",
+        App::builder(Root(Arc::clone(&flags), false))
+            .runtime(Tokio::current())
+            .wire()
+            .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
+            .connect(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
+    .bind(ulo_http_hyper::Server::new("127.0.0.1:0"))
+    .listen()
+    .await
+    .unwrap_or_else(|error| panic!("the app did not listen: {error}"));
+    let addr = app.addresses()[0].addr;
+    let serving = tokio::spawn(app.serve(std::future::pending::<Signal>()));
+    let upgrade = support::upgrade(addr, "/lobby", &[]).await;
+    let Some(mut socket) = upgrade.socket else { panic!("the upgrade was refused: {} {:?}", upgrade.status, upgrade.body) };
+    support::send_json(&mut socket, &json!({ "event": "ping", "id": "a" })).await;
+    assert_eq!(support::next_json(&mut socket).await, json!({ "id": "a", "data": "pong" }), "the gateway did not answer");
+
+    serving.abort();
+    assert!(serving.await.is_err_and(|ended| ended.is_cancelled()), "the serving task ended before its abort");
+    within("the connection's end as the client reads it", async {
+        loop {
+            match socket.next().await {
+                None | Some(Err(_)) | Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    until("the app's singletons' drop", || flags.singleton_dropped.load(Ordering::SeqCst)).await;
+    until("every task's end", || alive_tasks() == before).await;
+}

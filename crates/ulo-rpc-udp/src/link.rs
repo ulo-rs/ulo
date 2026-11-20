@@ -80,8 +80,10 @@ pub struct Udp {
     /// The server's receive task; set while the server listens. It is held here and not in
     /// `State`, which the task holds itself, so the link's drop reaches it.
     receiving: Mutex<Option<Owned>>,
-    /// The server socket's writer, which `close` leaves running to send its refusals.
-    writing: Mutex<Option<Flushed>>,
+    /// The server socket's writer and its task, which `close` stops once it has queued its
+    /// refusals and waits for, so the socket is closed when `close` returns. Dropped with the link,
+    /// the task is left to send what is queued.
+    writing: Mutex<Option<(Flushed, JoinHandle<()>)>>,
     /// The server's calls in flight; set while the server listens.
     calls: Mutex<Option<Arc<Mutex<Ids>>>>,
 }
@@ -248,8 +250,8 @@ impl Link for Udp {
         *lock(&self.state.socket) = Some(Arc::clone(&socket));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
         let (dropped, stop) = oneshot::channel::<()>();
-        drop(runtime.handle().spawn(write_server_datagrams(Arc::clone(&socket), queued, stop, timer)));
-        *lock(&self.writing) = Some(Flushed(Some(dropped)));
+        let writer = runtime.handle().spawn(write_server_datagrams(Arc::clone(&socket), queued, stop, timer));
+        *lock(&self.writing) = Some((Flushed(Some(dropped)), writer));
         *lock(&self.state.writes) = Some(writes.clone());
         let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&self.state))));
         *lock(&self.calls) = Some(Arc::clone(&ids));
@@ -307,7 +309,9 @@ impl Link for Udp {
     /// before it stops, answered the same way rather than delivered. It then stops the receive
     /// task, reads what the socket's buffer already holds and answers each request found there the
     /// same way, so a datagram that arrived before the close is answered; one arriving after it is
-    /// not.
+    /// not. It returns once its writer has sent what was queued, within two seconds on the app's
+    /// `Timer`, and has let go of the socket: the address can be bound again, and a datagram sent
+    /// to it afterwards meets a closed port.
     async fn close(&self) -> Result<(), BoxError> {
         let calls = lock(&self.calls).take();
         let writes = lock(&self.state.writes).clone();
@@ -330,6 +334,13 @@ impl Link for Udp {
         if let (Some(socket), Some(writes)) = (socket, writes) {
             let codec = self.codec;
             self.runtime()?.run(async move { final_read(&socket, codec, &writes).await }).await?;
+        }
+        // The writer holds the last handle on the socket: stopped, it sends what is queued, within
+        // `CUT_GRACE`, and ends, which closes the socket.
+        let writing = lock(&self.writing).take();
+        if let Some((stop, writer)) = writing {
+            drop(stop);
+            let _ = writer.await;
         }
         Ok(())
     }
@@ -846,7 +857,7 @@ where
     };
     match select(std::pin::pin!(drain), timer.try_sleep(grace)).await {
         Either::Left(_) => {}
-        Either::Right((Ok(()), _)) => tracing::debug!("the UDP link let go of its socket `CUT_GRACE` after its drop with writes still queued"),
+        Either::Right((Ok(()), _)) => tracing::debug!("the UDP link let go of its socket with writes still queued, {grace:?} after its close or its drop"),
         // Timed on no other clock: the grace is the app's, and its runtime is gone.
         Either::Right((Err(refused), _)) => tracing::debug!(%refused, "the runtime timing the UDP link's grace refused it; the socket is let go without one"),
     }

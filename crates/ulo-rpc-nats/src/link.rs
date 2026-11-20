@@ -1413,9 +1413,17 @@ fn is_terminal(frame: &Frame) -> bool {
     matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. })
 }
 
-/// The servers' `host:port`s, comma-separated, without the url's credentials.
+/// The servers' `host:port`s, comma-separated, without the url's credentials. An IPv6 host is
+/// written in brackets, which `ServerAddr::host` strips.
 fn addresses(servers: &[ServerAddr]) -> String {
-    servers.iter().map(|server| format!("{}:{}", server.host(), server.port())).collect::<Vec<_>>().join(",")
+    servers
+        .iter()
+        .map(|server| match server.host() {
+            host if host.contains(':') => format!("[{host}]:{}", server.port()),
+            host => format!("{host}:{}", server.port()),
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn servers(url: &str) -> Result<Vec<ServerAddr>, BoxError> {
@@ -1917,6 +1925,14 @@ mod tests {
         let endpoint = Link::endpoint(&Nats::url(url)).expect("an endpoint");
         assert_eq!(endpoint, "nats://a:4222,tls://b:4222,nats://c:4222");
         assert!(!endpoint.contains("pw"), "a credential reached the endpoint: {endpoint}");
+    }
+
+    /// A connect bound's message names an IPv6 server as `[host]:port`, as the url wrote it
+    /// (F523). Planted break: the host written as `ServerAddr::host` answers it.
+    #[test]
+    fn a_connect_bound_names_an_ipv6_server_in_brackets() {
+        let named = addresses(&servers("nats://[::1]:4222, tls://u:pw@[2001:db8::7]:4223,nats://10.0.0.7:4222,broker").expect("the url parses"));
+        assert_eq!(named, "[::1]:4222,[2001:db8::7]:4223,10.0.0.7:4222,broker:4222");
     }
 
     /// A request lane stopped where it is about to hold a call, for a test to run `close` there.

@@ -202,7 +202,9 @@ pub mod wire {
     //! `gateway` is the path or namespace addressed, or `null` for every gateway. `audience` is
     //! `{"kind":"all"}`, `{"kind":"room","room":<name>}` or `{"kind":"client","client":<id>}`.
     //! `except` lists ids, each `{"node":<32 lowercase hex digits>,"seq":<integer>}`. A field this
-    //! version does not name makes the message [`Undecodable::Malformed`].
+    //! version does not name makes the message [`Undecodable::Malformed`], whose reason repeats a
+    //! node id at its first 64 bytes and a parser's message at its first 256, each cut at a
+    //! character boundary and marked with `…`.
     //!
     //! The version byte is read before anything is parsed, so a later version may change the whole
     //! layout and a reader of this one still tells it from a corrupt message. Any change to the
@@ -276,7 +278,7 @@ pub mod wire {
         }
         // Compact JSON writes a newline inside a string as `\n`, so the first newline ends the header.
         let split = rest.iter().position(|&byte| byte == b'\n').ok_or_else(|| Undecodable::Malformed("no newline ends the target".to_owned()))?;
-        let malformed = |error: serde_json::Error| Undecodable::Malformed(error.to_string());
+        let malformed = |error: serde_json::Error| Undecodable::Malformed(cut(&error.to_string(), REASON_SHOWN));
         let header: HeaderIn = serde_json::from_slice(&rest[..split]).map_err(malformed)?;
         let named: Named = serde_json::from_str(header.audience.get()).map_err(malformed)?;
         if !KINDS.contains(&named.kind.as_str()) {
@@ -372,8 +374,27 @@ pub mod wire {
             let hex = self.node.len() == 32 && self.node.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
             match u128::from_str_radix(&self.node, 16) {
                 Ok(node) if hex => Ok(ConnId { node: NodeId(node), seq: self.seq }),
-                _ => Err(Undecodable::Malformed(format!("`{}` is not a node id of 32 lowercase hex digits", self.node))),
+                _ => Err(Undecodable::Malformed(format!("`{}` is not a node id of 32 lowercase hex digits", cut(&self.node, NODE_SHOWN)))),
             }
         }
+    }
+
+    /// The bytes of a peer's node id a [`Undecodable::Malformed`] repeats.
+    const NODE_SHOWN: usize = 64;
+
+    /// The bytes of a JSON parser's reason a [`Undecodable::Malformed`] carries: the parser
+    /// quotes the field or value it refused, which the peer chose.
+    const REASON_SHOWN: usize = 256;
+
+    /// `text` cut to `limit` bytes at a character boundary and marked with `…` when it was longer.
+    fn cut(text: &str, limit: usize) -> String {
+        if text.len() <= limit {
+            return text.to_owned();
+        }
+        let mut end = limit;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &text[..end])
     }
 }

@@ -22,7 +22,7 @@
 //! outlasts the bound is refused. A `nats://` link whose load fails connects without the file.
 //! A server's `listen` and a client's connect then wait for the NATS server at most
 //! [`Nats::connect_within`], 30 s unset, its `INFO` included, and a wait that runs out fails with
-//! [`ulo_rpc::ConnectTimedOut`].
+//! [`ConnectTimedOut`].
 //!
 //! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
 //! runtime or given one with `with_handle`.
@@ -56,3 +56,4 @@
 mod link;
 
 pub use link::Nats;
+pub use ulo_rpc::ConnectTimedOut;

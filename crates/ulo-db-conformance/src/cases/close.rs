@@ -24,6 +24,37 @@ struct Query {
     draining: bool,
 }
 
+/// The store's `close` closes the client: a query through the client the module bound, kept past
+/// the app's close, fails, where the same query succeeded before it (F439). A host declared
+/// without `close`, as Redis's `ConnectionManager` has none, skips it. Planted break: a `close`
+/// that does nothing.
+pub async fn refuses_queries_after_close<H: Host>() {
+    let host = H::start().await;
+    if let Some(reason) = host.capabilities().why_not_close() {
+        crate::skipped("a_closed_pool_refuses_queries", "close", reason);
+        return;
+    }
+    let app = connected(builder::<H>(Root::new().import(store::<H>(host.options()))), "the app").await;
+    let client: Client<H> = match app.get::<Client<H>>().await {
+        Ok(client) => (*client).clone(),
+        Err(error) => crate::startup_failed!("the app exports no client for `{}`: {error}", <H::Store as Store>::NAME),
+    };
+    if let Err(error) = <H::Store as Store>::ping(&client).await {
+        panic!("a query before the close failed: {}", report(&*error));
+    }
+    timeout::<H, _>(PATIENCE, app.close(Signal::new("conformance")))
+        .await
+        .unwrap_or_else(|| panic!("the shutdown did not finish within {PATIENCE:?}"))
+        .unwrap_or_else(|error| panic!("the shutdown reported failures, the store's close among them: {error}"));
+    let after = timeout::<H, _>(PATIENCE, <H::Store as Store>::ping(&client)).await;
+    match after {
+        Some(Err(_)) => {}
+        Some(Ok(())) => panic!("a query through the client after the app closed succeeded: the store's close left the client open"),
+        None => panic!("a query through the client after the app closed did not end within {PATIENCE:?}"),
+    }
+    drop(host);
+}
+
 /// The pool closes after the transports drain, a query in flight at the drain completing. Planted
 /// break: a pool closed before the drain.
 ///

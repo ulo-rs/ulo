@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use ulo::testing::ScriptedTimer;
 use ulo::{App, Module, ModuleDef, ModuleIdentity, RuntimeShutDown, Signal, StartupError, is_permanent};
-use ulo_rpc::{ConnectTimedOut, ErrorKind, RpcClient, Server, UnusableLink};
-use ulo_rpc_nats::Nats;
+use ulo_rpc::{ErrorKind, RpcClient, Server, UnusableLink};
+use ulo_rpc_nats::{ConnectTimedOut, Nats};
 use ulo_runtime_tokio::Tokio;
 
 struct Root;

@@ -628,7 +628,8 @@ async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &R
 /// item, `unavailable` with the reason `overflow` or, for an item over the byte bound on its own,
 /// `bad_request` with `payload_too_large`.
 async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Option<CancelReason>, halted: Option<&Halted>) {
-    // A queue is halted only at an overflow, which records the bound it passed.
+    // A queue is halted at an overflow, which records the bound it passed, and once its call has
+    // ended, after this answer.
     let overflow = halted.filter(|halted| halted.get()).and_then(Halted::overflow);
     let error = match (reason, overflow) {
         (Some(CancelReason::ClientCancelled | CancelReason::Disconnected), _) => return,
@@ -839,11 +840,15 @@ struct Registered {
     serial: u64,
 }
 
+/// A streamed request whose `in_end` had not arrived when its call ended is cut rather than
+/// ended: a task the handler handed it to reads its end as a failure, not as a complete request.
 impl Drop for Registered {
     fn drop(&mut self) {
         let mut calls = self.shared.calls();
-        if calls.get(&self.id).is_some_and(|live| live.serial == self.serial) {
-            calls.remove(&self.id);
+        if calls.get(&self.id).is_some_and(|live| live.serial == self.serial)
+            && let Some(Live { inbound: Some(feed), .. }) = calls.remove(&self.id)
+        {
+            feed.cut_with_call();
         }
     }
 }
