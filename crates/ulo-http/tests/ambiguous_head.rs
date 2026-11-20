@@ -21,6 +21,9 @@ impl Hit {
     }
 }
 
+/// A named request, its request builder and the detail its 400 carries.
+type Case = (&'static str, fn() -> Call, &'static str);
+
 fn register(m: &mut ModuleDef<'_>) {
     m.controller::<Hit>();
 }
@@ -28,7 +31,7 @@ fn register(m: &mut ModuleDef<'_>) {
 #[tokio::test]
 async fn two_host_lines_or_both_length_headers_answer_400_and_close_on_http_1_alone() {
     let app = start(register).await;
-    let cases: [(&str, fn() -> Call, &str); 2] = [
+    let cases: [Case; 2] = [
         ("two `Host` lines", || Call::get("/hit").header("host", "a.example").header("host", "a.example"), "the request carries more than one `Host` line"),
         (
             "`Content-Length` beside `Transfer-Encoding`",
