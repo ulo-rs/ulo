@@ -72,6 +72,11 @@ async fn a_gateway_declared_port_own_beside_the_http_server_alone_is_refused_nam
     assert_eq!(error.names(), [TypeName::of::<Lobby>(), TypeName::of::<Ws>(), TypeName::of::<Ws>()], "{errors}");
     assert!(entry.to_string().contains("the controller `Lobby`"), "{errors}");
     assert!(entry.to_string().contains("`AppBuilder::unserved::<Ws>()`"), "{errors}");
+    assert!(
+        entry.to_string().contains("would never run: serve it with a standalone WebSocket server, `ulo_ws_hyper::Server`, or drop `port = own`"),
+        "the refusal names the server and the attribute: {errors}"
+    );
+    assert!(!entry.to_string().contains("bind one"), "{errors}");
 }
 
 #[tokio::test]

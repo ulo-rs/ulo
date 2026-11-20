@@ -20,7 +20,11 @@ use crate::connection::Refusal;
 ///   of the listed origins, each `http` or `https`, a host, and an optional port, compared with
 ///   the scheme, the host ignoring ASCII case and the port with the scheme's default filled in.
 ///   A same-origin page is admitted only when listed. `prepare` refuses an entry that is not such
-///   an origin, `null` included.
+///   an origin, `null` included; an empty list, which would admit only a handshake that sends no
+///   `Origin`; and an entry whose host is not ASCII, naming its punycode form, since a browser
+///   sends `Origin` in ASCII and such an entry could match no handshake: `https://bücher.example`
+///   is written `https://xn--bcher-kva.example`. A trailing `.` is part of a listed host as of a
+///   sent one, so `https://app.example.` admits only a page loaded from the dotted name.
 /// - [`Any`](Origins::Any): every page.
 ///
 /// Same-origin compares the `Origin`'s host and port with the request's authority, its `Host`, or
@@ -93,17 +97,37 @@ impl OriginCheck {
         match origins {
             Origins::SameOrigin => OriginCheck::SameOrigin,
             Origins::Any => OriginCheck::Any,
+            Origins::List(list) if list.is_empty() => {
+                refusals.push(
+                    "`origins([])` lists no origin, so it admits only a handshake that sends no `Origin`, which a browser always \
+                     sends; leave `origins` unset for `Origins::SameOrigin`, the default, which admits the server's own pages, \
+                     or write `Origins::Any` to admit every page"
+                        .to_owned(),
+                );
+                OriginCheck::List(Vec::new())
+            }
             Origins::List(list) => OriginCheck::List(
                 list.iter()
                     .filter_map(|entry| {
-                        let parsed = WebOrigin::parse(entry);
-                        if parsed.is_none() {
+                        let Some(parsed) = WebOrigin::parse(entry) else {
                             refusals.push(format!(
                                 "`origins([..])` lists `{entry}`, which is not an origin written `http://host` or \
                                  `https://host`, with an optional `:port` and nothing after it; `Origins::Any` admits every page"
                             ));
+                            return None;
+                        };
+                        if !parsed.host.is_ascii() {
+                            let ascii = match parsed.punycode() {
+                                Some(ascii) => format!("write it `{ascii}`, as a browser sends it"),
+                                None => "write its host in punycode, as a browser sends it".to_owned(),
+                            };
+                            refusals.push(format!(
+                                "`origins([..])` lists `{entry}`, whose host is not ASCII; a browser sends `Origin` in ASCII, so the \
+                                 entry matches no handshake: {ascii}"
+                            ));
+                            return None;
                         }
-                        parsed
+                        Some(parsed)
                     })
                     .collect(),
             ),
@@ -175,6 +199,90 @@ impl WebOrigin {
         let (host, port) = host_port(rest)?;
         Some(WebOrigin { scheme, host: host.to_ascii_lowercase(), port: port.unwrap_or(scheme.default_port()) })
     }
+}
+
+impl WebOrigin {
+    /// The origin with each label of its host that is not ASCII written in punycode, `xn--` and
+    /// RFC 3492's encoding of the label lowercased, its port left out when it is the scheme's
+    /// default. The labels are not otherwise IDNA-mapped, so a label a browser would normalise
+    /// first, one in a decomposed form among them, may be written differently by the browser.
+    /// `None` for a label too long to encode.
+    fn punycode(&self) -> Option<String> {
+        let labels: Option<Vec<String>> = self
+            .host
+            .split('.')
+            .map(|label| if label.is_ascii() { Some(label.to_owned()) } else { encode_label(&label.to_lowercase()).map(|code| format!("xn--{code}")) })
+            .collect();
+        let scheme = match self.scheme {
+            Scheme::Http => "http",
+            Scheme::Https => "https",
+        };
+        let host = labels?.join(".");
+        Some(if self.port == self.scheme.default_port() { format!("{scheme}://{host}") } else { format!("{scheme}://{host}:{}", self.port) })
+    }
+}
+
+/// `label` in RFC 3492 punycode, without the `xn--` prefix; `None` when the encoding overflows,
+/// which no label of a DNS name's length reaches.
+fn encode_label(label: &str) -> Option<String> {
+    const BASE: u32 = 36;
+    const T_MIN: u32 = 1;
+    const T_MAX: u32 = 26;
+    let input: Vec<u32> = label.chars().map(u32::from).collect();
+    let mut output: String = label.chars().filter(char::is_ascii).collect();
+    let basic = u32::try_from(output.len()).ok()?;
+    if basic > 0 {
+        output.push('-');
+    }
+    let (mut code, mut delta, mut bias, mut handled) = (0x80u32, 0u32, 72u32, basic);
+    while (handled as usize) < input.len() {
+        let next = *input.iter().filter(|&&point| point >= code).min()?;
+        delta = delta.checked_add((next - code).checked_mul(handled + 1)?)?;
+        code = next;
+        for &point in &input {
+            if point < code {
+                delta = delta.checked_add(1)?;
+            }
+            if point == code {
+                let mut q = delta;
+                let mut k = BASE;
+                loop {
+                    let t = if k <= bias { T_MIN } else if k >= bias + T_MAX { T_MAX } else { k - bias };
+                    if q < t {
+                        break;
+                    }
+                    output.push(digit(t + (q - t) % (BASE - t)));
+                    q = (q - t) / (BASE - t);
+                    k += BASE;
+                }
+                output.push(digit(q));
+                bias = adapt(delta, handled + 1, handled == basic);
+                delta = 0;
+                handled += 1;
+            }
+        }
+        delta = delta.checked_add(1)?;
+        code = code.checked_add(1)?;
+    }
+    Some(output)
+}
+
+/// RFC 3492 §6.1's bias adaptation.
+fn adapt(delta: u32, points: u32, first: bool) -> u32 {
+    let mut delta = if first { delta / 700 } else { delta / 2 };
+    delta += delta / points;
+    let mut k = 0;
+    while delta > ((36 - 1) * 26) / 2 {
+        delta /= 36 - 1;
+        k += 36;
+    }
+    k + (36 * delta) / (delta + 38)
+}
+
+/// The punycode digit for `value`, below 36: `a` to `z`, then `0` to `9`.
+fn digit(value: u32) -> char {
+    let value = u8::try_from(value).unwrap_or(0);
+    char::from(if value < 26 { b'a' + value } else { b'0' + value - 26 })
 }
 
 /// `origin` against the request's effective host, the scheme not compared: a port missing on
@@ -384,6 +492,56 @@ mod tests {
         for entry in ["`null`", "`app.example`", "`https://a.example/`", "`ftp://a.example`"] {
             assert!(refusals.iter().any(|refusal| refusal.contains(entry)), "{entry}: {refusals:?}");
         }
+    }
+
+    #[test]
+    fn an_empty_list_is_refused_naming_the_default_and_any() {
+        let mut refusals = Vec::new();
+        OriginCheck::of(&Origins::List(Vec::new()), &mut refusals);
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(refusals[0].contains("`origins([])`") && refusals[0].contains("`Origins::SameOrigin`") && refusals[0].contains("`Origins::Any`"), "{refusals:?}");
+    }
+
+    /// An entry whose host is not ASCII is refused naming the punycode a browser sends, its port
+    /// kept where it is not the scheme's default; an ASCII entry, punycode already, is accepted.
+    #[test]
+    fn an_entry_whose_host_is_not_ascii_is_refused_naming_its_punycode_form() {
+        let mut refusals = Vec::new();
+        let check = OriginCheck::of(
+            &Origins::from(["https://bücher.example", "http://MÜNCHEN.example:8080", "https://xn--bcher-kva.example", "https://例え.テスト"]),
+            &mut refusals,
+        );
+        assert_eq!(refusals.len(), 3, "{refusals:?}");
+        assert!(refusals[0].contains("`https://bücher.example`") && refusals[0].contains("write it `https://xn--bcher-kva.example`"), "{refusals:?}");
+        assert!(refusals[1].contains("write it `http://xn--mnchen-3ya.example:8080`"), "{refusals:?}");
+        assert!(refusals[2].contains("write it `https://xn--r8jz45g.xn--zckzah`"), "{refusals:?}");
+        assert!(admits(&check, "api.example", "https://xn--bcher-kva.example"));
+    }
+
+    /// RFC 3492 §7.1's sample strings, lowercased where the sample marks case, beside the labels
+    /// the refusals name.
+    #[test]
+    fn a_label_encodes_as_rfc_3492_s_samples() {
+        for (label, encoded) in [
+            ("bücher", "bcher-kva"),
+            ("münchen", "mnchen-3ya"),
+            ("例え", "r8jz45g"),
+            ("テスト", "zckzah"),
+            ("他们为什么不说中文", "ihqwcrb4cv8a8dqg056pqjye"),
+            ("ليهمابتكلموشعربي؟", "egbpdaj6bu4bxfgehfvwxn"),
+            ("pročprostěnemluvíčesky", "proprostnemluvesky-uyb24dma41a"),
+        ] {
+            assert_eq!(super::encode_label(label).as_deref(), Some(encoded), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_trailing_dot_is_part_of_a_listed_host() {
+        let mut refusals = Vec::new();
+        let check = OriginCheck::of(&Origins::from(["https://app.example."]), &mut refusals);
+        assert!(refusals.is_empty(), "{refusals:?}");
+        assert!(admits(&check, "api.example", "https://app.example."));
+        assert!(!admits(&check, "api.example", "https://app.example"));
     }
 
     #[test]

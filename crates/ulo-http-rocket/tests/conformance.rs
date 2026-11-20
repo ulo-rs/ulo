@@ -97,5 +97,5 @@ impl Host for RocketHost {
 ulo_http_conformance::http_conformance_suite!(RocketHost; not_applicable {
     drain_http1: "rocket 0.5 binds and accepts inside `launch`, takes no listener and reports no connection, so the suite cannot show a request in progress when the drain begins",
     unknown_method_not_implemented: "rocket 0.5 parses nine methods and answers any other with its own 400 before the app is called",
-    obs_text_header_value_unchanged: "rocket 0.5 carries a header value as a `str`, so a value holding bytes that are no UTF-8 is left out and logged, never altered (`convert::as_text`)",
+    obs_text_header_value_unchanged: "rocket 0.5 carries a header value as a `str`, so a response holding a value that is no UTF-8 is answered 500 in its place, logged at `error` (`convert::response`)",
 });

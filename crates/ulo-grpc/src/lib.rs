@@ -84,6 +84,10 @@ pub use pre_dispatch::PreDispatch;
 pub use server::Server;
 pub use status::{WithGrpcCode, code_for, code_for_http, from_status, to_status};
 pub use transport::{Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, IntoGrpcReply, IntoGrpcStream, PeerAddr, Reply, Response};
+/// What [`GrpcCx::tls`] answers, HTTP's own types: a guard authorising by client certificate names
+/// them from here.
+#[doc(no_inline)]
+pub use ulo_http::{PeerCertificates, TlsInfo};
 pub use http;
 pub use ulo_grpc_macros::method;
 pub use ulo_transport::{
