@@ -25,7 +25,8 @@ use crate::redact::Secret;
 
 /// `url` as a module setting reports it: its scheme, host, port and path, never its userinfo,
 /// query or fragment, and its scheme and `[unreadable]` when it does not read as a scheme and an
-/// authority (DESIGN §8.3). Every integration crate whose `settings` report a URL writes it
+/// authority, or when the text kept could precede an `@` of `url`, which would make it part of a
+/// userinfo (DESIGN §8.3). Every integration crate whose `settings` report a URL writes it
 /// through this, so two settings differing only in a credential compare equal and neither is
 /// printed.
 ///
@@ -34,9 +35,25 @@ use crate::redact::Secret;
 ///
 /// assert_eq!(setting_url("redis://user:pw@cache:6379/2?pass=x#frag"), "redis://cache:6379/2");
 /// assert_eq!(setting_url("redis://token/x@cache"), "redis://[unreadable]");
+/// assert_eq!(setting_url("amqp://u:12?34@h/v"), "amqp://[unreadable]");
 /// ```
 pub fn setting_url(url: &str) -> String {
     crate::redact::setting_url(url)
+}
+
+/// A comma-separated list of URLs, as a client that splits it at its commas reads it, reported as
+/// [`setting_url`] reports each element, joined with `,`. An element holding no `@` of its own is
+/// `[unreadable]` when a later element holds one: what it keeps could be the start of a password
+/// holding a comma.
+///
+/// ```
+/// use ulo::secrets::setting_url_list;
+///
+/// assert_eq!(setting_url_list("nats://u:p@a:4222,nats://u:p@b:4222"), "nats://a:4222,nats://b:4222");
+/// assert_eq!(setting_url_list("nats://u:12,34@h:4222"), "nats://[unreadable],h:4222");
+/// ```
+pub fn setting_url_list(list: &str) -> String {
+    crate::redact::setting_url_list(list)
 }
 
 /// Runs one synchronous deserialisation with the secret collector open on this thread, answering

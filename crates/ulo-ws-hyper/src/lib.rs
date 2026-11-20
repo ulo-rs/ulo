@@ -264,7 +264,7 @@ fn check_inherited(endpoints: &[Endpoint], failures: &mut Failures) {
     };
     for (name, listed) in names {
         match activation.count(name) {
-            0 => failures.push(activation.unavailable(name).to_string()),
+            0 => failures.push(activation.unavailable_reason(name)),
             inherited if listed > inherited => failures.push(format!(
                 "{} is listed {listed} times, and {inherited} inherited sockets answer to it",
                 Endpoint::Inherited(name.clone())

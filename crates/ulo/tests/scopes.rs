@@ -198,6 +198,34 @@ async fn a_failed_execution_scoped_build_runs_once_and_its_error_is_kept_for_the
     close(app).await;
 }
 
+struct Tenant;
+
+/// A kept failure outlasts the state it failed on: a build that read an `Ext` before it was
+/// inserted keeps failing in that execution after the insert, and an execution that inserts first
+/// builds.
+#[tokio::test]
+async fn a_failure_kept_for_an_execution_holds_after_the_extension_it_read_is_inserted() {
+    let app = connected(Mod::<A>::new(|m| {
+        m.execution(|_tenant: Ext<Tenant>| async { Svc });
+    }))
+    .await;
+    app.execute(ExecOptions::new(), async |exec| {
+        assert!(exec.get::<Svc>().await.is_err(), "no `Tenant` yet");
+        exec.extensions().insert(Tenant);
+        let later = exec.get::<Svc>().await;
+        assert!(later.is_err(), "the failure is kept for the execution, the insert notwithstanding");
+    })
+    .await
+    .unwrap();
+    app.execute(ExecOptions::new(), async |exec| {
+        exec.extensions().insert(Tenant);
+        assert!(exec.get::<Svc>().await.is_ok(), "an execution holding `Tenant` before the read builds");
+    })
+    .await
+    .unwrap();
+    close(app).await;
+}
+
 #[tokio::test]
 async fn an_execution_scoped_binding_cannot_be_read_without_an_execution() {
     let app = connected(Mod::<A>::new(|m| {

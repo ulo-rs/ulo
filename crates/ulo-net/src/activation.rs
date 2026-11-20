@@ -105,6 +105,18 @@ impl Activation {
         }
     }
 
+    /// [`unavailable`](Self::unavailable) as a server's `prepare` reports it. A
+    /// [`ActivationError::NotListening`] for a named endpoint is prefixed with the name, which the
+    /// descriptor's index alone does not give: `` endpoint `web`: inherited descriptor #3 is not a
+    /// listening TCP socket ``. An endpoint named by its index, and a
+    /// [`ActivationError::Missing`], name it already.
+    pub fn unavailable_reason(&self, name: &ListenerName) -> String {
+        match (self.unavailable(name), name) {
+            (error @ ActivationError::NotListening { .. }, ListenerName::Named(named)) => format!("endpoint `{named}`: {error}"),
+            (error, _) => error.to_string(),
+        }
+    }
+
     /// Takes the inherited socket `name`, non-blocking: the first not yet taken among those the
     /// name answers for.
     pub fn take(&self, name: &ListenerName) -> Result<TcpListener, ActivationError> {

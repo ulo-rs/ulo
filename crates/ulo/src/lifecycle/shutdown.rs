@@ -376,8 +376,8 @@ async fn run_shutdown_hook(
 }
 
 /// The partial teardown of a connect walk that failed (§9.2): the `OnModuleDestroy` hooks of
-/// `initialized`, the owners whose init hooks all completed, in the exact reverse of their startup
-/// order, each under its own bound and the whole under a `shutdown_timeout` cap starting now, as at
+/// `initialized`, the owners that had initialized, given in startup order and run in its exact
+/// reverse, each under its own bound and the whole under a `shutdown_timeout` cap starting now, as at
 /// close (§9.5). Every hook is attempted; what they record is returned in the order they ran.
 pub(crate) async fn tear_down(shared: &Arc<AppShared>, initialized: &[HookOwner]) -> Vec<ShutdownFailure> {
     let graph = shared.graph();

@@ -335,7 +335,7 @@ impl App<Wired> {
     /// Every mounted handler, of every transport, as
     /// [`AppHandle::handlers`](crate::AppHandle::handlers) lists them, read from the wired graph:
     /// no singleton is built and no readiness check runs, so a routes dump or a generated API
-    /// document is produced without reaching a database. `HandlerInfo::method`,
+    /// document is produced without reaching a database. `HandlerInfo::request_method`,
     /// `HandlerInfo::route` and `HandlerInfo::prefix` name an HTTP operation, and
     /// `HandlerInfo::module` the module that registers it.
     pub fn handlers(&self) -> Vec<Arc<HandlerInfo>> {
@@ -549,7 +549,7 @@ impl App<Connected> {
         F: AsyncFnOnce(&Execution) -> R,
     {
         let root = self.shared.graph().root;
-        self.shared.execute(root, opts, f).await
+        self.shared.execute(root, opts, None, f).await
     }
 
     /// Runs the shutdown sequence with no sockets to close: for a job, a CLI command or a test

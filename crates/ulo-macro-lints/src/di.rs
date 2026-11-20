@@ -1,5 +1,6 @@
 //! `#[injectable]` on a struct and on an impl, with each scope, a timeout, `#[construct]`, an
-//! `async` fallible constructor and a lifecycle hook.
+//! `async` fallible constructor, a lifecycle hook, and constructor parameters and fields behind
+//! a `#[cfg]` that is off and one that is on.
 
 use std::time::Duration;
 
@@ -45,6 +46,39 @@ impl Defaulted {
         Defaulted { store }
     }
 }
+
+/// An impl-form injectable whose constructor has a parameter behind a `#[cfg]` that is off and one
+/// behind a `#[cfg]` that is on.
+pub struct GatedCtor {
+    pub clock: Dep<Clock>,
+}
+
+#[injectable]
+impl GatedCtor {
+    pub fn new(#[cfg(any())] absent: Dep<Clock>, #[cfg(not(any()))] clock: Dep<Clock>) -> Self {
+        GatedCtor { clock }
+    }
+}
+
+/// A struct-form injectable with fields behind a `#[cfg]` that is off and one that is on, injected
+/// and defaulted.
+#[injectable]
+pub struct GatedFields {
+    #[cfg(any())]
+    pub absent: Dep<Clock>,
+    #[cfg(not(any()))]
+    pub clock: Dep<Clock>,
+    #[cfg(any())]
+    #[injectable(default)]
+    pub absent_hits: u64,
+    #[cfg(not(any()))]
+    #[injectable(default)]
+    pub hits: u64,
+}
+
+/// A tuple injectable whose gated field renumbers the fields after it.
+#[injectable]
+pub struct GatedTuple(#[cfg(any())] pub Dep<Clock>, pub Dep<Clock>, #[cfg(not(any()))] #[injectable(default)] pub u64);
 
 impl OnModuleInit for Clock {
     async fn on_module_init(&self) -> Result<(), BoxError> {

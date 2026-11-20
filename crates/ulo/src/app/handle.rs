@@ -72,7 +72,7 @@ impl AppHandle {
         F: AsyncFnOnce(&Execution) -> R,
     {
         let root = self.shared.graph().root;
-        self.shared.execute(root, opts, f).await
+        self.shared.execute(root, opts, None, f).await
     }
 
     /// Wires `module` against the frozen graph, every error collected, then connects it through

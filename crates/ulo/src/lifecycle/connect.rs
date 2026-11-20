@@ -1,8 +1,10 @@
 //! The connect phase (§9.2, §9.3): singletons in a stable topological order, each followed by
 //! its readiness check, then every `OnModuleInit` hook in the same order with a module's own
 //! hooks after its providers', then every `OnApplicationBootstrap` hook. The first failure
-//! stops the walk, the `OnModuleDestroy` hooks of every owner whose init stage completed run in
-//! reverse, and the failure is returned as a `ConnectError` carrying what those hooks recorded.
+//! stops the walk, the `OnModuleDestroy` hooks of every owner that had initialized run in
+//! reverse, and the failure is returned as a `ConnectError` carrying what those hooks recorded. A
+//! binding with no init hook has initialized once it is built and checked; a module with none,
+//! once the init stage has passed it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,23 +31,45 @@ use crate::timer::{BoxError, BoundKind, Resolved, RuntimeShutDown, resolve_bound
 /// caller's: `App::connect` moves it around this call, and `load` runs while the app is Running.
 #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], modules: &[ModuleId]) -> Result<(), ConnectError> {
-    for &id in singletons {
-        if shared.singletons.get(id).is_none() {
-            build_singleton(shared, id).await?;
-        }
-        let graph = shared.graph();
-        if let Some(ready) = &graph.binding(id).record.ready {
-            run_readiness(shared, id, ready).await?;
+    for (position, &id) in singletons.iter().enumerate() {
+        if let Err(error) = build_and_check(shared, id).await {
+            let graph = shared.graph();
+            let checked = singletons[..position].iter().map(|&id| HookOwner::Binding(id));
+            let initialized: Vec<HookOwner> = checked.filter(|&owner| !has_init_hook(&graph, owner)).collect();
+            return Err(torn_down(shared, &initialized, error).await);
         }
     }
     let plan = hook_plan(&shared.graph(), singletons, modules);
     if let Err((error, failed_at)) = run_startup_hooks(shared, HookKind::OnModuleInit, &plan).await {
-        return Err(torn_down(shared, &plan[..failed_at], error).await);
+        let graph = shared.graph();
+        let later = plan[failed_at + 1..]
+            .iter()
+            .copied()
+            .filter(|&owner| matches!(owner, HookOwner::Binding(_)) && !has_init_hook(&graph, owner));
+        let initialized: Vec<HookOwner> = plan[..failed_at].iter().copied().chain(later).collect();
+        return Err(torn_down(shared, &initialized, error).await);
     }
     if let Err((error, _)) = run_startup_hooks(shared, HookKind::OnApplicationBootstrap, &plan).await {
         return Err(torn_down(shared, &plan, error).await);
     }
     Ok(())
+}
+
+/// Builds the singleton `id` unless it is built, then runs its readiness check.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
+async fn build_and_check(shared: &Arc<AppShared>, id: BindingId) -> Result<(), ConnectError> {
+    if shared.singletons.get(id).is_none() {
+        build_singleton(shared, id).await?;
+    }
+    let graph = shared.graph();
+    if let Some(ready) = &graph.binding(id).record.ready {
+        run_readiness(shared, id, ready).await?;
+    }
+    Ok(())
+}
+
+fn has_init_hook(graph: &Graph, owner: HookOwner) -> bool {
+    hooks_of(graph, owner).iter().any(|hook| hook.kind == HookKind::OnModuleInit)
 }
 
 /// `error` after the destroy hooks of `initialized` have run (§9.2), the failures they recorded

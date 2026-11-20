@@ -1,13 +1,15 @@
 //! The struct form: every field is an injection point, read in declaration order, except a field
 //! marked `#[injectable(default)]`, set from `Default::default()`; on a `#[controller]` struct the
 //! marker is `#[controller(default)]`, and the other attribute's marker is refused, pointing at
-//! it. Tuple and unit structs are accepted; a tuple field is labelled by its index.
+//! it. Tuple and unit structs are accepted; a tuple field is labelled by its index. A field behind
+//! a `#[cfg]` that is off is neither declared, read nor set, whichever its role.
 
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::spanned::Spanned;
-use syn::{Field, Index, ItemStruct, Member, Type};
+use syn::{Field, Fields, Index, ItemStruct, Member, Type};
 
+use ulo_handler_codegen::cfg::presence_gates;
 use ulo_handler_codegen::restore::restore_item;
 
 use crate::construct::{ConstructArgs, Kind};
@@ -37,6 +39,8 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
     let mut dependency_specs = Vec::new();
     let mut dependency_members = Vec::new();
     let mut default_members = Vec::new();
+    let mut positional = Vec::new();
+    let mut gated = false;
     let mut errors = Vec::new();
 
     for (index, field) in item.fields.iter_mut().enumerate() {
@@ -46,10 +50,16 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
         };
         match classify(kind, field, index) {
             Ok(FieldRole::Dependency(spec)) => {
+                gated |= !spec.gates.is_empty();
+                positional.push(Positional::Dependency(dependency_specs.len()));
                 dependency_specs.push(*spec);
                 dependency_members.push(member);
             }
-            Ok(FieldRole::Default) => default_members.push(member),
+            Ok(FieldRole::Default(gates)) => {
+                gated |= !gates.is_empty();
+                default_members.push(quote!(#(#gates)* #member));
+                positional.push(Positional::Default(gates));
+            }
             Err(e) => errors.push(e),
         }
     }
@@ -60,12 +70,33 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
     let scope = args.scope.as_ref().map_or_else(|| quote!(#ulo::scope::Auto), |s| s.path());
     let bindings = dependencies::bindings(dependency_specs.len());
     let reads = dependencies::read(&dependency_specs, &bindings);
+    let dependency_members = dependency_specs.iter().zip(&dependency_members).map(|(spec, member)| {
+        let gates = &spec.gates;
+        quote!(#(#gates)* #member)
+    });
+    // A tuple field compiled out renumbers the fields after it, so a gated tuple struct is built
+    // by position, where each value's `#[cfg]` drops it along with its field.
+    let value = if gated && matches!(item.fields, Fields::Unnamed(_)) {
+        let values = positional.iter().map(|field| match field {
+            Positional::Dependency(i) => {
+                let gates = &dependency_specs[*i].gates;
+                let binding = &bindings[*i];
+                quote!(#(#gates)* #binding)
+            }
+            Positional::Default(gates) => quote!(#(#gates)* ::core::default::Default::default()),
+        });
+        quote!(Self(#(#values),*))
+    } else {
+        quote! {
+            Self {
+                #(#dependency_members: #bindings,)*
+                #(#default_members: ::core::default::Default::default(),)*
+            }
+        }
+    };
     let construct = quote! {
         #reads
-        ::core::result::Result::Ok(Self {
-            #(#dependency_members: #bindings,)*
-            #(#default_members: ::core::default::Default::default(),)*
-        })
+        ::core::result::Result::Ok(#value)
     };
 
     let name = &item.ident;
@@ -92,10 +123,17 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
     })
 }
 
-/// What one field contributes: a dependency, or a default.
+/// A field's place in a tuple struct built by position: the index of its dependency, or a default
+/// under the field's `#[cfg]`s.
+enum Positional {
+    Dependency(usize),
+    Default(Vec<syn::Attribute>),
+}
+
+/// What one field contributes: a dependency, or a default under the field's `#[cfg]`s.
 pub(crate) enum FieldRole {
     Dependency(Box<DependencySpec>),
-    Default,
+    Default(Vec<syn::Attribute>),
 }
 
 /// Reads and strips the field's `#[injectable(default)]`, or `#[controller(default)]` under
@@ -127,14 +165,15 @@ pub(crate) fn classify(kind: Kind, field: &mut Field, index: usize) -> syn::Resu
         }
         default = true;
     }
+    let gates = presence_gates(&field.attrs);
     if default {
-        return Ok(FieldRole::Default);
+        return Ok(FieldRole::Default(gates));
     }
     let label = match &field.ident {
         Some(ident) => DependencyLabel::Field(ident.clone()),
         None => DependencyLabel::Index(index),
     };
-    Ok(FieldRole::Dependency(Box::new(DependencySpec { label, ty: field.ty.clone(), span: field.ty.span() })))
+    Ok(FieldRole::Dependency(Box::new(DependencySpec { label, ty: field.ty.clone(), span: field.ty.span(), gates })))
 }
 
 fn marker_error(kind: Kind, marker: &syn::Attribute) -> syn::Error {
