@@ -69,7 +69,9 @@ impl ulo_db_conformance::Host for Host {
     }
 
     fn capabilities(&self) -> ulo_db_conformance::Capabilities {
-        ulo_db_conformance::Capabilities::new().without_migrations("Redis has no migrator")
+        ulo_db_conformance::Capabilities::new()
+            .without_migrations("Redis has no migrator")
+            .without_close("redis-rs's `ConnectionManager` has no close")
     }
 }
 

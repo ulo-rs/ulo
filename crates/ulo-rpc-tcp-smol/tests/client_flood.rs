@@ -94,7 +94,8 @@ async fn run_a_flood_of_replies_does_not_hold_the_reply_lane_open_past_close(pro
     let rpc = (*app.get::<RpcClient>().await.expect("the app holds an `RpcClient`")).clone();
     let call = ulo::spawn_with(&OnSmol::runtime(), async move { rpc.request::<String, String>("held", &"x".to_owned()).await });
     probe.until("the peer beginning its flood", probe.budget().boot, || flood.try_recv().is_ok()).await;
-    probe.until("the reader taking the flood", probe.budget().boot, || written.load(Ordering::Acquire) > FLOODED).await;
+    // Bounded on progress: a loaded machine slows the flood without stopping it.
+    probe.until_reaches("the reader taking the flood", probe.budget().settle * 4, || written.load(Ordering::Acquire), FLOODED + 1).await;
 
     probe.within("the client app's close", probe.budget().boot, async {
         if let Err(error) = app.close(Signal::new("client_flood")).await {

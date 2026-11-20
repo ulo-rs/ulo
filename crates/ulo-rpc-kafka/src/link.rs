@@ -901,13 +901,55 @@ fn partition_ids(consumer: &StreamConsumer, topic: &str) -> Result<Vec<i32>, Box
     Ok(ids)
 }
 
+/// `topic`'s partition count as the cluster's metadata gives it: 0 for a topic the metadata
+/// does not name or names as unknown, as it names a deleted one, and an error for a read that
+/// failed or a topic the metadata answers with another error.
+fn partition_count(consumer: &StreamConsumer, topic: &str) -> Result<usize, BoxError> {
+    let metadata = consumer.fetch_metadata(Some(topic), Timeout::After(METADATA_TIMEOUT))?;
+    let Some(found) = metadata.topics().iter().find(|found| found.name() == topic) else { return Ok(0) };
+    match found.error().map(RDKafkaErrorCode::from) {
+        None => Ok(found.partitions().len()),
+        Some(RDKafkaErrorCode::UnknownTopicOrPartition | RDKafkaErrorCode::UnknownTopic) => Ok(0),
+        Some(code) => Err(format!("the metadata answers `{topic}` with {code}").into()),
+    }
+}
+
+/// What one refresh read of a watched topic.
+#[derive(Debug)]
+enum Seen {
+    /// The count differs from the one known before, which it replaces.
+    Changed { topic: String, before: usize, after: usize },
+    /// The read failed; the count known stays.
+    Unread { topic: String, error: BoxError },
+}
+
+/// Compares each of `topics`' known counts with its read in `counts`, in the same order, and
+/// writes a changed count over the known one: a read that failed leaves its own topic's count and
+/// no other.
+fn compare_counts(topics: &mut [(String, usize)], counts: Vec<Result<usize, BoxError>>) -> Vec<Seen> {
+    let mut seen = Vec::new();
+    for ((topic, known), read) in topics.iter_mut().zip(counts) {
+        match read {
+            Ok(now) if now != *known => {
+                seen.push(Seen::Changed { topic: topic.clone(), before: *known, after: now });
+                *known = now;
+            }
+            Ok(_) => {}
+            Err(error) => seen.push(Seen::Unread { topic: topic.clone(), error }),
+        }
+    }
+    seen
+}
+
 /// Reads, every [`METADATA_REFRESH`] on the app's `timer`, the partition count of each topic in
 /// `watched`, each a consumer of the server's own beside the topics it was assigned every
 /// partition of and the count it was assigned, and logs a `warn` naming the topic and both counts
-/// when the count read differs from the last one known. Such a consumer reads the partitions it
-/// was assigned at `bind` and no other, so a record produced to a partition added since reaches
-/// none of the instances already listening. A failed read is logged at `debug` and read again at
-/// the next refresh. Ends once the server stops serving, or once the timer refuses a wait.
+/// when the count read differs from the last one known, a topic deleted since counting as 0
+/// partitions. Such a consumer reads the partitions it was assigned at `bind` and no other, so a
+/// record produced to a partition added since reaches none of the instances already listening.
+/// Each topic is read on its own: a read that fails is logged at `debug` naming its topic and read
+/// again at the next refresh, and the other topics' counts are compared as read. Ends once the
+/// server stops serving, or once the timer refuses a wait.
 async fn watch_partitions(mut phase: watch::Receiver<Phase>, mut watched: Vec<Assigned>, timer: Arc<dyn Timer>) {
     loop {
         let refreshed = async {
@@ -917,25 +959,26 @@ async fn watch_partitions(mut phase: watch::Receiver<Phase>, mut watched: Vec<As
             for (consumer, topics) in &mut watched {
                 let reader = Arc::clone(consumer);
                 let names: Vec<String> = topics.iter().map(|(topic, _)| topic.clone()).collect();
-                let read = blocking(move || names.iter().map(|topic| partition_ids(&reader, topic).map(|ids| ids.len())).collect::<Result<Vec<_>, _>>()).await;
-                match read.and_then(|counts| counts) {
-                    Ok(counts) => {
-                        for ((topic, known), now) in topics.iter_mut().zip(counts) {
-                            if *known != now {
-                                tracing::warn!(
-                                    topic,
-                                    before = *known,
-                                    after = now,
-                                    "a topic the Kafka link reads every partition of has {now} partitions where it had {}; this instance reads the \
-                                     partitions it was assigned at `bind` and no other, so a record produced to another reaches no instance already \
-                                     listening",
-                                    *known
-                                );
-                                *known = now;
-                            }
+                let counts = match blocking(move || names.iter().map(|topic| partition_count(&reader, topic)).collect::<Vec<_>>()).await {
+                    Ok(counts) => counts,
+                    Err(error) => {
+                        tracing::debug!(%error, "the Kafka link could not read the partition counts of the topics it reads every partition of");
+                        continue;
+                    }
+                };
+                for seen in compare_counts(topics, counts) {
+                    match seen {
+                        Seen::Changed { topic, before, after } => tracing::warn!(
+                            topic = topic.as_str(),
+                            before,
+                            after,
+                            "a topic the Kafka link reads every partition of has {after} partitions where it had {before}; this instance reads the \
+                             partitions it was assigned at `bind` and no other, so a record produced to another reaches no instance already listening"
+                        ),
+                        Seen::Unread { topic, error } => {
+                            tracing::debug!(topic = topic.as_str(), %error, "the Kafka link could not read the partition count of a topic it reads every partition of");
                         }
                     }
-                    Err(error) => tracing::debug!(%error, "the Kafka link could not read the partition counts of the topics it reads every partition of"),
                 }
             }
             true
@@ -1839,6 +1882,24 @@ mod tests {
         let endpoint = Link::endpoint(&Kafka::brokers(brokers)).expect("an endpoint");
         assert_eq!(endpoint, "broker1:9092,ssl://broker2:9093,broker3:9094");
         assert!(!endpoint.contains("pass") && !endpoint.contains("user"), "a credential reached the endpoint: {endpoint}");
+    }
+
+    /// The partition watcher compares each topic's count on its own: a failed read beside them
+    /// keeps its own topic's count and hides no change on another, and a deleted topic, read as
+    /// 0 partitions, is a change (F628). Planted break: the reads collected into one `Result`.
+    #[test]
+    fn a_failed_partition_read_hides_no_change_on_the_other_topics() {
+        let mut topics = vec![("failing".to_owned(), 1), ("grown".to_owned(), 1), ("deleted".to_owned(), 2), ("same".to_owned(), 4)];
+        let seen = compare_counts(&mut topics, vec![Err("the broker did not answer".into()), Ok(3), Ok(0), Ok(4)]);
+        let seen: Vec<String> = seen
+            .iter()
+            .map(|seen| match seen {
+                Seen::Changed { topic, before, after } => format!("{topic}: {before} -> {after}"),
+                Seen::Unread { topic, error } => format!("{topic}: unread, {error}"),
+            })
+            .collect();
+        assert_eq!(seen, ["failing: unread, the broker did not answer", "grown: 1 -> 3", "deleted: 2 -> 0"]);
+        assert_eq!(topics, [("failing".to_owned(), 1), ("grown".to_owned(), 3), ("deleted".to_owned(), 0), ("same".to_owned(), 4)]);
     }
 
     /// A clock that `sleep` advances, starting at `start`, or, `refusing`, one whose runtime has

@@ -216,7 +216,9 @@ impl GatewayDefaults {
 }
 
 /// The gateways one server serves, with the application's rooms, its runtime, and the
-/// connections the server has open. Cheap to clone; every clone is the same table.
+/// connections the server has open. Cheap to clone; every clone is the same table. Its last clone
+/// dropped without [`close`](Self::close), as a server's is when its app drops unclosed, aborts the
+/// connections it upgraded.
 #[derive(Clone)]
 pub struct GatewayTable {
     inner: Arc<Inner>,
@@ -233,6 +235,15 @@ struct Inner {
     /// On the HTTP server's port, the bound listeners of the HTTP servers sharing the hand-off,
     /// each with its shed log; read on every upgrade, written once per server at its bind.
     listeners: RwLock<Listeners>,
+}
+
+/// The table's last clone dropped, its server dropped without `close`, aborts the connections
+/// left: a connection's task holds the tracker and not the table, so nothing else ends one before
+/// its peer hangs up.
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.tracker.abort_all();
+    }
 }
 
 /// The listeners [`GatewayTable::listening`] recorded, as many as the HTTP servers bound, never

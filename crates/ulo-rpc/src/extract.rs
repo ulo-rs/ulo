@@ -79,7 +79,8 @@ fn decode<T: DeserializeOwned>(cx: &RpcCx, data: &Data) -> Result<T, ExtractErro
 /// whatever task reads it; the call is answered `unavailable` with the reason `overflow` whatever
 /// the handler returns. An item over `max_queued_bytes` on its own ends the request with
 /// [`ExtractError::TooLarge`] naming the bound, and the call is answered `bad_request` with the
-/// reason `payload_too_large`.
+/// reason `payload_too_large`. A request still being read on another task when its call ends,
+/// its handler having answered before `in_end`, ends there with [`ExtractError::CallEnded`].
 pub struct Inbound<T> {
     pub(crate) items: BoxStream<'static, Result<T, ExtractError>>,
 }
@@ -97,12 +98,14 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Inbound<T> {
             async move {
                 let mut receiver = receiver?;
                 let Some(data) = receiver.next().await else {
-                    let failed = match receiver.halted_at()? {
-                        Overflow::Items { limit } => {
+                    let failed = match receiver.halted_at() {
+                        Some(Overflow::Items { limit }) => {
                             ExtractError::Overflowed { param: PAYLOAD, limit: u64::try_from(limit).unwrap_or(u64::MAX) }
                         }
-                        Overflow::Bytes { limit, .. } => ExtractError::OverflowedBytes { param: PAYLOAD, limit },
-                        Overflow::TooLarge { limit, .. } => ExtractError::TooLarge { param: PAYLOAD, limit },
+                        Some(Overflow::Bytes { limit, .. }) => ExtractError::OverflowedBytes { param: PAYLOAD, limit },
+                        Some(Overflow::TooLarge { limit, .. }) => ExtractError::TooLarge { param: PAYLOAD, limit },
+                        None if receiver.cut_with_call() => ExtractError::CallEnded { param: PAYLOAD },
+                        None => return None,
                     };
                     return Some((Err(failed), None));
                 };

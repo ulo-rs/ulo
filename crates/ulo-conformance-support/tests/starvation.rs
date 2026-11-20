@@ -80,6 +80,90 @@ fn a_scenario_past_its_deadline_fails_naming_the_loop() {
     });
 }
 
+/// How many steps the progress below takes, one per look of the waiting loop: at least 2 ms a
+/// look, so 100 ms or more in all, past [`BOUND`] however idle the machine.
+const PROGRESS: u64 = 50;
+
+/// The bound both waits below are given.
+const BOUND: Duration = Duration::from_millis(50);
+
+/// A wait bounded by its total fails a flood that keeps progressing but takes longer than the
+/// bound, which is what a loaded machine makes of one (F671): the progress here is one step per
+/// look, so the total is past the bound on any machine.
+#[test]
+#[should_panic(expected = "self-test progress: the progress did not happen within 50ms")]
+fn a_wait_bounded_by_its_total_fails_progress_that_never_stops() {
+    Starvation::new("self-test progress").run(|probe| async move {
+        let mut read = 0;
+        probe
+            .until("the progress", BOUND, || {
+                read += 1;
+                read >= PROGRESS
+            })
+            .await;
+    });
+}
+
+/// The same progress under a bound on progress reaches its target: it never stays still for a
+/// look. Planted break: `until_reaches` counting every look rather than the still ones.
+#[test]
+fn a_wait_bounded_by_progress_passes_progress_that_never_stops() {
+    Starvation::new("self-test progress").run(|probe| async move {
+        let mut read = 0;
+        probe
+            .until_reaches(
+                "the progress",
+                BOUND,
+                || {
+                    read += 1;
+                    read
+                },
+                PROGRESS,
+            )
+            .await;
+    });
+}
+
+/// Progress that pauses, again and again, for fewer looks than the bound reaches its target: the
+/// bound counts the looks since the last step, not since the wait began. Planted break: the
+/// count of still looks not reset by a step.
+#[test]
+fn a_wait_bounded_by_progress_passes_progress_that_pauses_short_of_the_bound() {
+    Starvation::new("self-test progress").run(|probe| async move {
+        let mut looks = 0;
+        probe
+            .until_reaches(
+                "the progress",
+                BOUND,
+                || {
+                    looks += 1;
+                    looks / 5
+                },
+                PROGRESS,
+            )
+            .await;
+    });
+}
+
+#[test]
+#[should_panic(expected = "self-test progress: the progress stopped at 7 of 50 for 50ms")]
+fn a_wait_bounded_by_progress_fails_progress_that_stops() {
+    Starvation::new("self-test progress").run(|probe| async move {
+        let mut read = 0;
+        probe
+            .until_reaches(
+                "the progress",
+                BOUND,
+                || {
+                    read = (read + 1).min(7);
+                    read
+                },
+                PROGRESS,
+            )
+            .await;
+    });
+}
+
 #[test]
 #[should_panic(expected = "self-test until: the condition did not happen within")]
 fn a_bounded_wait_that_expires_fails_naming_the_loop() {

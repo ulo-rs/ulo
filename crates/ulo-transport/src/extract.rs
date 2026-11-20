@@ -183,6 +183,11 @@ pub enum ExtractError {
     /// stream and classifies as `Overflowed` does. An item past the bound on its own is
     /// `TooLarge`, which no read makes room for.
     OverflowedBytes { param: &'static str, limit: u64 },
+    /// A streamed body still being read when its call ended, before the caller's last item: a
+    /// handler answered and left the body to a task of its own. The stream yields this as its
+    /// last item, so that task does not take the part it read for the whole. It classifies as
+    /// `Unavailable`; the call has been answered already.
+    CallEnded { param: &'static str },
 }
 
 impl ExtractError {
@@ -198,7 +203,8 @@ impl ExtractError {
             | ExtractError::HostMissing { param, .. }
             | ExtractError::BodyTaken { param, .. }
             | ExtractError::Overflowed { param, .. }
-            | ExtractError::OverflowedBytes { param, .. } => param,
+            | ExtractError::OverflowedBytes { param, .. }
+            | ExtractError::CallEnded { param } => param,
         }
     }
 }
@@ -227,6 +233,7 @@ impl fmt::Display for ExtractError {
             ExtractError::OverflowedBytes { param, limit } => {
                 write!(f, "`{param}`'s next item would have taken the bytes waiting to be read past {limit}, and it ended the call")
             }
+            ExtractError::CallEnded { param } => write!(f, "`{param}` was cut short: its call ended before the caller's last item"),
         }
     }
 }
@@ -246,14 +253,15 @@ impl Error for ExtractError {
 /// lookup failure's text, which names keys, is withheld as `CallError::from_boxed` withholds it.
 /// `HostMissing` and `BodyTaken` are `Internal` with the message withheld: the fault is the
 /// deployment's or the server's own, and the text names a type. `Overflowed` and `OverflowedBytes`
-/// are `Unavailable`: the request was well formed and the server did not keep up with it.
+/// are `Unavailable`: the request was well formed and the server did not keep up with it, and
+/// `CallEnded` is too: the server ended the call before the request did.
 impl Classify for ExtractError {
     fn classify(&self) -> ErrorKind {
         match self {
             ExtractError::Invalid { .. } | ExtractError::Mismatched { .. } => ErrorKind::Unprocessable,
             ExtractError::Dependency { source, .. } => from_lookup(source, 0).kind(),
             ExtractError::HostMissing { .. } | ExtractError::BodyTaken { .. } => ErrorKind::Internal,
-            ExtractError::Overflowed { .. } | ExtractError::OverflowedBytes { .. } => ErrorKind::Unavailable,
+            ExtractError::Overflowed { .. } | ExtractError::OverflowedBytes { .. } | ExtractError::CallEnded { .. } => ErrorKind::Unavailable,
             _ => ErrorKind::BadRequest,
         }
     }

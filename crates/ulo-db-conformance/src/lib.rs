@@ -92,6 +92,7 @@ pub const PASSWORD: &str = "hunter2";
 pub struct Capabilities {
     lazy_start: Absent,
     migrations: Absent,
+    close: Absent,
 }
 
 /// `None` where the store has the capability, and why it has not otherwise.
@@ -106,7 +107,7 @@ impl Default for Capabilities {
 impl Capabilities {
     /// A store holding every capability.
     pub const fn new() -> Self {
-        Capabilities { lazy_start: None, migrations: None }
+        Capabilities { lazy_start: None, migrations: None, close: None }
     }
 
     /// The host's options take `.lazy()`: `Store::create_connects` answers false for them, and
@@ -136,6 +137,20 @@ impl Capabilities {
 
     pub const fn why_not_migrations(&self) -> Option<&'static str> {
         self.migrations
+    }
+
+    /// The store's `close` closes the client, so `a_closed_pool_refuses_queries` runs: a query
+    /// through the client after the app's close fails.
+    pub const fn close(&self) -> bool {
+        self.close.is_none()
+    }
+
+    pub const fn without_close(self, reason: &'static str) -> Self {
+        Capabilities { close: Some(reason), ..self }
+    }
+
+    pub const fn why_not_close(&self) -> Option<&'static str> {
+        self.close
     }
 }
 
@@ -372,6 +387,7 @@ macro_rules! conformance_suite {
             lazy_readiness_waits_for_the_first_ping => lazy::waits_for_the_first_ping,
             health_goes_down_in_an_outage_and_recovers => health::outage_and_recovery,
             pool_closes_after_the_drain => close::after_the_drain,
+            a_closed_pool_refuses_queries => close::refuses_queries_after_close,
             connecting_does_not_stall_the_thread => stall::connecting_does_not_stall_the_thread [block_on_one_thread],
             unsupported_runtime_is_refused => runtime::unsupported_runtime_is_refused,
             two_keyed_instances_stay_separate => keyed::two_instances,

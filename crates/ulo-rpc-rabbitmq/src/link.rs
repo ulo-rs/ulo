@@ -229,12 +229,19 @@ pub struct RabbitMq {
 pub(crate) struct State {
     /// The server side and its consumers' tasks.
     server: Option<(Arc<ServerSide>, Vec<AbortHandle>)>,
-    /// The client side's connection, closed on the runtime it was opened on, and the tasks of
-    /// its writer and its reply router.
-    client: Option<(Connection, Tokio, [AbortHandle; 2])>,
+    /// Each client side's connection, closed on the runtime it was opened on, and the tasks of
+    /// its writer and its reply router: one per `connect` that built a side, since a caller of
+    /// `Link::connect` other than `RpcClient` may hold two at once. A side whose connection is no
+    /// longer open is let go, its tasks aborted, when the next is recorded.
+    clients: Vec<ClientConnection>,
     /// The client's connect, running or answered and not yet taken.
     connecting: Option<Connecting>,
+    /// How many times `close` has run, read by a `connect` when it takes a connection and again
+    /// when it records it, so a `close` between the two is seen.
+    closes: u64,
 }
+
+type ClientConnection = (Connection, Tokio, [AbortHandle; 2]);
 
 /// A link dropped without `close` aborts the tasks holding its channels: an `AbortHandle` dropped
 /// leaves its task running, and a channel keeps its connection open until the process ends.
@@ -245,7 +252,7 @@ impl Drop for State {
         if let Some((_, tasks)) = &self.server {
             tasks.iter().for_each(AbortHandle::abort);
         }
-        if let Some((_, _, tasks)) = &self.client {
+        for (_, _, tasks) in &self.clients {
             tasks.iter().for_each(AbortHandle::abort);
         }
         if let Some(connecting) = &self.connecting {
@@ -483,8 +490,19 @@ impl RabbitMq {
     }
 
     /// The client side on a connection its connect opened: its writer and reply router spawned on
-    /// the link's runtime and the connection written to the link's state, with no await between.
-    fn client_side(&self, runtime: Tokio, client: &Arc<dyn Runtime>, (connection, channel, replies): Opened) -> Outbound {
+    /// the link's runtime and the connection written to the link's state, under one hold of the
+    /// state's lock. `closes` is the count of `close`s the `connect` read as it took the
+    /// connection: a `close` that ran since found no side to close, so the connection is closed
+    /// here and the `connect` answers that the client is closed.
+    fn client_side(&self, runtime: Tokio, client: &Arc<dyn Runtime>, (connection, channel, replies): Opened, closes: u64) -> Result<Outbound, BoxError> {
+        let mut state = lock(&self.state);
+        if state.closes != closes {
+            drop(state);
+            drop(runtime.handle().spawn(async move {
+                let _ = connection.close(200, "close".into()).await;
+            }));
+            return Err(CLOSED.into());
+        }
         let side = Arc::new(ClientSide {
             channel,
             codec: self.codec,
@@ -511,9 +529,17 @@ impl RabbitMq {
         let replies_out = panics.guard(receiver_stream(replies_out));
         let explaining = panics.clone();
         let routing = runtime.handle().spawn(panics.watch_feeder("reply router", route_replies(Arc::clone(&side), replies, frames, writes.clone())));
-        lock(&self.state).client = Some((connection, runtime.clone(), [writing.abort_handle(), routing.abort_handle()]));
+        state.clients.retain(|(connection, _, tasks)| {
+            let open = connection.status().connected();
+            if !open {
+                tasks.iter().for_each(AbortHandle::abort);
+            }
+            open
+        });
+        state.clients.push((connection, runtime.clone(), [writing.abort_handle(), routing.abort_handle()]));
+        drop(state);
 
-        Outbound {
+        Ok(Outbound {
             // Queued at the call, so frames go out in the order their sends were called.
             send: Box::new(move |pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
                 let (answer, answered) = oneshot::channel();
@@ -532,7 +558,7 @@ impl RabbitMq {
                 })
             }),
             replies: replies_out,
-        }
+        })
     }
 
     /// The error a `connect` that waited on a failed connect answers.
@@ -674,7 +700,8 @@ impl Link for RabbitMq {
 
     // Waits on the link's one client connect, starting it when none is running, its bound timed
     // on the clock of the `client` that started it (`Connecting`). The client side is built on the
-    // connection in this poll, with no await between taking it and writing the link's state.
+    // connection in this poll, with no await between taking it and writing the link's state; a
+    // `close` on another thread between the two is seen through the state's count of closes.
     async fn connect(&self, client: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
         let runtime = self.runtime()?;
         let uri = uri(&self.url)?;
@@ -700,7 +727,7 @@ impl Link for RabbitMq {
                         if state.connecting.as_ref().is_some_and(|connecting| Arc::ptr_eq(&connecting.outcome, &outcome)) {
                             state.connecting = None;
                         }
-                        Ok(*opened)
+                        Ok((*opened, state.closes))
                     }
                     Some(Outcome::Failed(failure)) => {
                         *written = Some(Outcome::Failed(failure.clone()));
@@ -709,8 +736,12 @@ impl Link for RabbitMq {
                     None => Err(None),
                 }
             };
+            #[cfg(test)]
+            if taken.is_ok() {
+                tests::gate::at_record(&self.url).await;
+            }
             return match taken {
-                Ok(opened) => Ok(self.client_side(runtime, client, opened)),
+                Ok((opened, closes)) => self.client_side(runtime, client, opened, closes),
                 Err(Some(failure)) => Err(self.failed(failure, &uri)),
                 // Another `connect` took the connection: this one starts the next.
                 Err(None) if answered => continue,
@@ -750,9 +781,30 @@ impl Link for RabbitMq {
     }
 
     async fn close(&self) -> Result<(), BoxError> {
-        let (server, client, connecting) = {
+        // One hold of the state's lock, which a `connect` also holds as it takes a connection: a
+        // connection is either taken here or by that `connect`, which then sees the count move.
+        let (server, clients, untaken) = {
             let mut state = lock(&self.state);
-            (state.server.take(), state.client.take(), state.connecting.take())
+            state.closes += 1;
+            // A connect still running is aborted, and a connection no `connect` took is closed;
+            // either way the `connect`s waiting on it answer that the client is closed.
+            let untaken = state.connecting.take().and_then(|connecting| {
+                let untaken = {
+                    let mut outcome = lock(&connecting.outcome);
+                    let untaken = match outcome.take() {
+                        Some(Outcome::Opened(opened)) => Some(opened.0),
+                        kept => {
+                            *outcome = kept;
+                            None
+                        }
+                    };
+                    outcome.get_or_insert(Outcome::Failed(Failure::Closed));
+                    untaken
+                };
+                connecting.task.abort();
+                untaken
+            });
+            (state.server.take(), std::mem::take(&mut state.clients), untaken)
         };
         // Started before the first await, so a `close` cut at its first poll leaves the server's
         // connection to the task, which publishes what the server queued before it.
@@ -762,24 +814,6 @@ impl Link for RabbitMq {
             side.close_after_writes(tasks)
         });
         let mut failure = None;
-        // A connect still running is aborted, and a connection no `connect` took is closed; either
-        // way the `connect`s waiting on it answer that the client is closed.
-        let untaken = connecting.and_then(|connecting| {
-            let untaken = {
-                let mut outcome = lock(&connecting.outcome);
-                let untaken = match outcome.take() {
-                    Some(Outcome::Opened(opened)) => Some(opened.0),
-                    kept => {
-                        *outcome = kept;
-                        None
-                    }
-                };
-                outcome.get_or_insert(Outcome::Failed(Failure::Closed));
-                untaken
-            };
-            connecting.task.abort();
-            untaken
-        });
         if let (Some(connection), Some(runtime)) = (untaken, &self.runtime)
             && let Err(error) = close_on(runtime, async move { connection.close(200, "close".into()).await }).await
         {
@@ -796,13 +830,13 @@ impl Link for RabbitMq {
         // The probe's hooks hold a sender of the client writer's queue, which would keep the writer
         // past the close in a probe build; production builds have no probe.
         #[cfg(feature = "conformance-probe")]
-        if client.is_some() {
+        if !clients.is_empty() {
             self.probe.attach(|_| {}, || 0);
         }
-        if let Some((connection, runtime, _)) = client
-            && let Err(error) = close_on(&runtime, async move { connection.close(200, "close".into()).await }).await
-        {
-            failure = Some(error);
+        for (connection, runtime, _) in clients {
+            if let Err(error) = close_on(&runtime, async move { connection.close(200, "close".into()).await }).await {
+                failure = Some(error);
+            }
         }
         match failure {
             Some(error) => Err(format!("the RabbitMQ link did not close cleanly: {error}").into()),
@@ -823,13 +857,30 @@ async fn close_on(runtime: &Tokio, close: impl Future<Output = lapin::Result<()>
     Ok(runtime.run(close).await??)
 }
 
+/// `url` parsed, its IPv6 host kept: amq-protocol-uri before 10.7 reads the host through
+/// `Url::domain`, which answers nothing for an IP literal, and puts `localhost` in its place, so
+/// `amqp://[2001:db8::7]` would dial the local machine. The host is written without brackets, as
+/// the connection dials it as a `(host, port)` pair.
 fn uri(url: &str) -> Result<AMQPUri, BoxError> {
-    url.parse::<AMQPUri>().map_err(|error| format!("the RabbitMQ link's url does not parse: {error}").into())
+    let mut parsed = url.parse::<AMQPUri>().map_err(|error| format!("the RabbitMQ link's url does not parse: {error}"))?;
+    if let Some(host) = ipv6_host(url) {
+        parsed.authority.host = host.to_string();
+    }
+    Ok(parsed)
 }
 
-/// The broker's `host:port`, without the url's credentials.
+/// The IPv6 literal `url`'s authority names as its host, `[..]` after any userinfo.
+fn ipv6_host(url: &str) -> Option<std::net::Ipv6Addr> {
+    let (_, rest) = url.split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    host.strip_prefix('[')?.split_once(']')?.0.parse().ok()
+}
+
+/// The broker's `host:port`, without the url's credentials, an IPv6 host in brackets.
 fn address(uri: &AMQPUri) -> String {
-    format!("{}:{}", uri.authority.host, uri.authority.port)
+    let host = &uri.authority.host;
+    if host.contains(':') { format!("[{host}]:{}", uri.authority.port) } else { format!("{host}:{}", uri.authority.port) }
 }
 
 /// Declares each pattern's queue and consumes it under the prefetch, one window for every pattern
@@ -944,7 +995,7 @@ impl ServerSide {
                 };
                 match select(pin!(closing), grace).await {
                     Either::Left((closed, _)) => closed,
-                    Either::Right((Ok(()), _)) => Err("its connection had not closed `CUT_GRACE` after `close` began".into()),
+                    Either::Right((Ok(()), _)) => Err(format!("its connection had not closed {} s after `close` began", CUT_GRACE.as_secs()).into()),
                     Either::Right((Err(refused), _)) => Err(RuntimeShutDown::new(refused).into()),
                 }
             };
@@ -992,12 +1043,14 @@ impl ServerSide {
             (None, None) => self.deliver(Delivery { frame: Frame::Evt { pattern, headers: call_headers, data }, reply: None, ack }),
             (Some(reply), None) => {
                 let key = correlation.clone().unwrap_or_else(|| reply.clone());
-                let (id, path) = self.hold(key, reply, correlation);
+                // A request delivered once `close` has closed the table is left unsettled, and
+                // the broker hands it on once the connection closes.
+                let Some((id, path)) = self.hold(key, reply, correlation) else { return };
                 self.deliver(Delivery { frame: Frame::Req { id, pattern, headers: call_headers, data }, reply: Some(path), ack });
             }
             (Some(reply), Some(OPEN)) => {
                 let key = correlation.clone().unwrap_or_else(|| reply.clone());
-                let (id, path) = self.hold(key, reply.clone(), correlation.clone());
+                let Some((id, path)) = self.hold(key, reply.clone(), correlation.clone()) else { return };
                 // The caller holds the request's items until this arrives, so they reach the
                 // control exchange after the call is held here.
                 if let Err(error) = write(&self.writes, reply, correlation, Some(OPENED), Bytes::new()).await {
@@ -1025,8 +1078,9 @@ impl ServerSide {
         }
     }
 
-    /// Holds a call under `key`, its `correlation_id`, the key its control messages carry.
-    fn hold(&self, key: String, reply: String, correlation: Option<String>) -> (u64, ReplyPath) {
+    /// Holds a call under `key`, its `correlation_id`, the key its control messages carry; `None`
+    /// once `close` has closed the table.
+    fn hold(&self, key: String, reply: String, correlation: Option<String>) -> Option<(u64, ReplyPath)> {
         let writes = self.writes.clone();
         let codec = self.codec;
         let calls = Arc::clone(&self.calls);
@@ -1046,8 +1100,8 @@ impl ServerSide {
             drop(table);
             Box::pin(async move { written?.await })
         });
-        let id = self.calls.hold(key, Held { id: 0, path: path.clone(), reply, correlation });
-        (id, path)
+        let id = self.calls.hold(key, Held { id: 0, path: path.clone(), reply, correlation })?;
+        Some((id, path))
     }
 }
 
@@ -1165,13 +1219,18 @@ impl Calls {
         Calls { next: AtomicU64::new(1), held: Mutex::new(Table::default()), count: watch::channel(0).0 }
     }
 
-    fn hold(&self, key: String, mut call: Held) -> u64 {
+    /// Holds `call` under `key`, unless `close` has closed the table: `close` answered every call
+    /// it held and set the count to zero, and a call held after it would be answered by nothing.
+    fn hold(&self, key: String, mut call: Held) -> Option<u64> {
+        let mut table = lock(&self.held);
+        if table.closed {
+            return None;
+        }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         call.id = id;
-        let mut table = lock(&self.held);
         table.held.insert(key, call);
         self.count.send_replace(table.held.len());
-        id
+        Some(id)
     }
 
     fn get(&self, key: &str) -> Option<(u64, ReplyPath)> {
@@ -1635,6 +1694,39 @@ mod tests {
         }
     }
 
+    /// The host a link dials is the one its url names, an IPv6 literal included, and a connect
+    /// bound's message names it as `[host]:port` (F523): amq-protocol-uri 10.6 reads
+    /// `amqp://[::1]` as `localhost`. Planted break: `uri` without the IPv6 host.
+    #[test]
+    fn an_ipv6_host_is_dialled_as_named_and_reported_in_brackets() {
+        let rows = [
+            ("amqp://[2001:db8::7]:5673/v", "2001:db8::7", "[2001:db8::7]:5673"),
+            ("amqps://ulo:hunter2@[::1]", "::1", "[::1]:5671"),
+            ("amqp://u:p%5B@[fe80::1]:5672/%2f?heartbeat=10", "fe80::1", "[fe80::1]:5672"),
+            ("amqp://10.0.0.7:5672", "10.0.0.7", "10.0.0.7:5672"),
+            ("amqp://broker", "broker", "broker:5672"),
+        ];
+        for (url, host, shown) in rows {
+            let parsed = uri(url).expect("the url parses");
+            assert_eq!((parsed.authority.host.as_str(), address(&parsed).as_str()), (host, shown), "{url}");
+        }
+    }
+
+    /// A call held once `close` has closed the table is refused, so no call waits on an answer
+    /// the link never sends, and the count `close` wrote stays as it was (F582). Planted break:
+    /// `Calls::hold` inserting into a closed table.
+    #[test]
+    fn a_call_is_not_held_once_close_has_closed_the_table() {
+        let calls = Calls::new();
+        let path = ReplyPath::new(|_| -> BoxFuture<'static, Result<(), BoxError>> { Box::pin(std::future::ready(Ok(()))) });
+        let held = || Held { id: 0, path: path.clone(), reply: "reply".to_owned(), correlation: None };
+        assert!(calls.hold("before".to_owned(), held()).is_some(), "an open table refused a call");
+        drop(calls.close());
+        assert_eq!(calls.hold("after".to_owned(), held()), None, "a closed table held a call");
+        assert!(calls.get("after").is_none(), "the refused call is in the table");
+        assert_eq!(*calls.count.borrow(), 1, "the refused call was counted");
+    }
+
     /// The server's writer stopped before it publishes a reply to a named queue, for a test to
     /// run `close` while the reply waits.
     pub(super) mod gate {
@@ -1655,9 +1747,29 @@ mod tests {
         }
 
         pub(crate) async fn at_publish(reply: &str) {
+            at(&AT_PUBLISH, reply).await;
+        }
+
+        static AT_RECORD: Mutex<Vec<Stop>> = Mutex::new(Vec::new());
+
+        /// Stops the next `connect` on the link of `url` between taking its connection and
+        /// recording its side, answered as [`stop`] answers.
+        #[cfg_attr(not(feature = "integration"), allow(dead_code))]
+        pub(crate) fn stop_record(url: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+            let (arrived, stopped) = oneshot::channel();
+            let (release, released) = oneshot::channel();
+            lock(&AT_RECORD).push((url.to_owned(), arrived, released));
+            (stopped, release)
+        }
+
+        pub(crate) async fn at_record(url: &str) {
+            at(&AT_RECORD, url).await;
+        }
+
+        async fn at(stops: &Mutex<Vec<Stop>>, key: &str) {
             let stop = {
-                let mut stops = lock(&AT_PUBLISH);
-                stops.iter().position(|(stopped, _, _)| stopped == reply).map(|at| stops.remove(at))
+                let mut stops = lock(stops);
+                stops.iter().position(|(stopped, _, _)| stopped == key).map(|at| stops.remove(at))
             };
             if let Some((_, arrived, released)) = stop {
                 let _ = arrived.send(());
@@ -1871,7 +1983,7 @@ mod tests {
 
         use super::*;
 
-        async fn rabbitmq() -> (AMQPUri, ContainerAsync<GenericImage>) {
+        pub(super) async fn rabbitmq() -> (AMQPUri, ContainerAsync<GenericImage>) {
             let (container, addrs) = unshadowed("the RabbitMQ container", || async {
                 let container = GenericImage::new("rabbitmq", "4.1-alpine")
                     .with_exposed_port(5672.tcp())
@@ -2011,7 +2123,7 @@ mod tests {
                 tags: Vec::new(),
                 deliveries: Mutex::new(None),
             });
-            let (_id, path) = side.hold("call".to_owned(), reply.to_owned(), Some("call".to_owned()));
+            let (_id, path) = side.hold("call".to_owned(), reply.to_owned(), Some("call".to_owned())).expect("the table is open");
             let link = RabbitMq::url("amqp://127.0.0.1:1");
             lock(&link.state).server = Some((side, vec![consumer]));
             let (stopped, release) = gate::stop(reply);
@@ -2172,10 +2284,176 @@ mod tests {
                 .expect("the close outlived the grace by 10 s")
                 .expect("the close's task")
                 .expect_err("a close whose writer never published ended clean");
-            assert!(failed.to_string().contains("`CUT_GRACE`"), "the failure does not name the grace: {failed}");
+            assert!(failed.to_string().contains("had not closed 2 s after `close` began"), "the failure does not name the grace: {failed}");
             until_closed(&status).await;
             consumer_aborted(consumer_gone).await;
         }
     }
 
+    /// F523: `close` closes every client side's connection, whichever `connect` built it and
+    /// whenever `close` runs on another thread. Each test connects through the link to a broker in
+    /// a container and reads a side's connection as closed when its reply stream ends, or when the
+    /// broker's `rabbitmqctl list_connections` no longer lists it: a reply stream also ends when
+    /// its router's task is aborted, its connection open.
+    #[cfg(feature = "integration")]
+    mod client_close {
+        use std::time::Instant;
+
+        use testcontainers::{ContainerAsync, GenericImage};
+
+        use super::cut_close::rabbitmq;
+        use super::*;
+
+        fn link_on(uri: &AMQPUri) -> RabbitMq {
+            RabbitMq::url(format!("amqp://guest:guest@{}:{}/%2f", uri.authority.host, uri.authority.port))
+        }
+
+        /// Fails unless `side`'s reply stream ends within 10 s, which it does once its
+        /// connection has closed.
+        async fn ends(side: &mut Outbound, what: &str) {
+            match tokio::time::timeout(Duration::from_secs(10), side.replies.next()).await {
+                Ok(None) => {}
+                Ok(Some(_)) => panic!("{what}: a reply arrived on a side nothing called through"),
+                Err(_) => panic!("{what}: the side's connection was still open 10 s after `close`"),
+            }
+        }
+
+        /// Two `connect`s on one link build two sides, and `close` closes both connections.
+        /// Planted break: the second side's record replacing the first's.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn close_closes_every_side_a_connect_built() {
+            let (uri, _container) = rabbitmq().await;
+            let link = link_on(&uri);
+            let client: Arc<dyn Runtime> = Arc::new(Tokio::current());
+            let mut first = link.connect(&client).await.expect("the first connect");
+            let mut second = link.connect(&client).await.expect("the second connect");
+            link.close().await.expect("the link closes");
+            ends(&mut first, "the first side").await;
+            ends(&mut second, "the second side").await;
+        }
+
+        /// A `close` that runs to its end while a `connect` holds the connection it took, before
+        /// the connect records its side, leaves no connection open: the connect closes it and
+        /// answers that the client is closed. The connect is held at that point by a gate.
+        /// Planted break: the side recorded whatever `close` did meanwhile.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_close_between_a_connect_taking_its_connection_and_recording_it_closes_it() {
+            let (uri, _container) = rabbitmq().await;
+            let link = Arc::new(link_on(&uri));
+            let (stopped, release) = gate::stop_record(&link.url);
+            let connecting = tokio::spawn({
+                let link = Arc::clone(&link);
+                async move {
+                    let client: Arc<dyn Runtime> = Arc::new(Tokio::current());
+                    link.connect(&client).await
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(30), stopped).await.expect("the connect took no connection within 30 s").expect("the gate");
+            link.close().await.expect("the link closes");
+            release.send(()).expect("the connect waits at the gate");
+            let answered = tokio::time::timeout(Duration::from_secs(10), connecting).await.expect("the connect ended").expect("the connect's task");
+            match answered {
+                Ok(mut side) => {
+                    ends(&mut side, "the side recorded after `close`").await;
+                    panic!("a connect whose connection `close` passed over built a side");
+                }
+                Err(error) => assert_eq!(error.to_string(), CLOSED, "the connect's answer"),
+            }
+            assert!(lock(&link.state).clients.is_empty(), "the link holds a side after `close`");
+        }
+
+        /// The client connections the broker holds, as `rabbitmqctl` lists them. An exec that does
+        /// not end, which Docker's API does under load, fails the test at 30 s rather than holding it.
+        async fn client_connections(container: &ContainerAsync<GenericImage>) -> usize {
+            use testcontainers::core::{CmdWaitFor, ExecCommand};
+            let command = ExecCommand::new(["rabbitmqctl", "list_connections", "-q", "name"]).with_cmd_ready_condition(CmdWaitFor::exit_code(0));
+            let listed = async {
+                let mut ran = container.exec(command).await.expect("rabbitmqctl runs");
+                ran.stdout_to_vec().await.expect("rabbitmqctl's output")
+            };
+            let stdout = tokio::time::timeout(Duration::from_secs(30), listed).await.expect("`rabbitmqctl list_connections` did not end within 30 s");
+            String::from_utf8_lossy(&stdout).lines().filter(|line| line.contains(" -> ")).count()
+        }
+
+        /// Waits until the broker holds no client connection, failing after 15 s with the count.
+        async fn none_open(container: &ContainerAsync<GenericImage>, what: &str) {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let open = client_connections(container).await;
+                if open == 0 {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "{what}: the broker still holds {open} connection(s) 15 s after `close`");
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+
+        /// A second `connect` leaves the first side working: recording it lets go only of sides
+        /// whose connection has closed. Planted break: the record letting go of every earlier side.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_second_connect_leaves_the_first_side_working() {
+            let (uri, container) = rabbitmq().await;
+            let link = link_on(&uri);
+            let client: Arc<dyn Runtime> = Arc::new(Tokio::current());
+            let first = link.connect(&client).await.expect("the first connect");
+            let _second = link.connect(&client).await.expect("the second connect");
+            let event = Frame::Evt { pattern: "chk.live".to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"1")) };
+            let sent = tokio::time::timeout(Duration::from_secs(10), (first.send)(Pattern::from("chk.live"), event, None)).await.expect("the send ends");
+            if let Err(error) = sent {
+                assert_ne!(error.to_string(), CLOSED, "the first side was let go when the second was recorded");
+            }
+            assert_eq!(client_connections(&container).await, 2, "the broker's client connections before `close`");
+            link.close().await.expect("the link closes");
+            none_open(&container, "two sides").await;
+        }
+
+        /// Two `connect`s each holding the connection it took when `close` runs both answer that the
+        /// client is closed, and the broker is left no connection. Planted break: `close` not
+        /// counting itself.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn two_connects_past_their_take_both_answer_closed_at_a_close() {
+            let (uri, container) = rabbitmq().await;
+            let link = Arc::new(link_on(&uri));
+            let spawn_connect = |link: &Arc<RabbitMq>| {
+                let link = Arc::clone(link);
+                tokio::spawn(async move {
+                    let client: Arc<dyn Runtime> = Arc::new(Tokio::current());
+                    link.connect(&client).await
+                })
+            };
+            let (first_stopped, first_release) = gate::stop_record(&link.url);
+            let first = spawn_connect(&link);
+            tokio::time::timeout(Duration::from_secs(30), first_stopped).await.expect("the first connect took no connection").expect("the gate");
+            let (second_stopped, second_release) = gate::stop_record(&link.url);
+            let second = spawn_connect(&link);
+            tokio::time::timeout(Duration::from_secs(30), second_stopped).await.expect("the second connect took no connection").expect("the gate");
+            link.close().await.expect("the link closes");
+            first_release.send(()).expect("the first connect waits");
+            second_release.send(()).expect("the second connect waits");
+            for (what, connecting) in [("the first", first), ("the second", second)] {
+                match tokio::time::timeout(Duration::from_secs(10), connecting).await.expect("the connect ended").expect("the connect's task") {
+                    Ok(_) => panic!("{what} connect built a side after `close`"),
+                    Err(error) => assert_eq!(error.to_string(), CLOSED, "{what} connect's answer"),
+                }
+            }
+            assert!(lock(&link.state).clients.is_empty(), "the link holds a side after `close`");
+            none_open(&container, "two connects past their take").await;
+        }
+
+        /// A `connect` dropped while its connect runs leaves the connection to the link, which
+        /// `close` closes. Planted break: the untaken connection kept open rather than closed.
+        #[tokio::test(flavor = "multi_thread")]
+        async fn a_connect_dropped_while_it_waits_leaves_its_connection_to_close() {
+            use futures_util::FutureExt;
+            let (uri, container) = rabbitmq().await;
+            let link = link_on(&uri);
+            let client: Arc<dyn Runtime> = Arc::new(Tokio::current());
+            assert!(link.connect(&client).now_or_never().is_none(), "a connect answered at its first poll");
+            let mut done = lock(&link.state).connecting.as_ref().map(|connecting| connecting.done.clone()).expect("the connect left its connect running");
+            tokio::time::timeout(Duration::from_secs(30), done.wait_for(|done| *done)).await.expect("the connect ended").expect("the connect answered");
+            assert_eq!(client_connections(&container).await, 1, "the broker's client connections before `close`");
+            link.close().await.expect("the link closes");
+            none_open(&container, "an untaken connection").await;
+        }
+    }
 }
