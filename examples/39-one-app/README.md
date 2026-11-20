@@ -2,7 +2,7 @@
 
 HTTP, WebSocket, RPC and gRPC in one app: one configuration, one store, one set of health probes, one `close`. Each transport has a handler that writes a note to the store and a `hold` that waits on a gate, so a test can keep one execution in flight on every transport while the app closes.
 
-```
+```bash
 cargo test -p ex-39-one-app
 PORT=3000 APP_PORTS__WS=3001 APP_PORTS__RPC=7000 APP_PORTS__GRPC=50051 cargo run -p ex-39-one-app
 curl -X POST http://127.0.0.1:3000/notes/anvil

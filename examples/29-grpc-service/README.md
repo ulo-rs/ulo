@@ -5,7 +5,7 @@ method; handlers bind to the markers with `#[ulo_grpc::method]`. One unary metho
 server-streaming method, a guard that reads the call's metadata, and a domain error that reaches
 the caller as a status code plus `google.rpc` details.
 
-```
+```bash
 cargo run -p ex-29-grpc-service
 ```
 

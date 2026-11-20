@@ -3,7 +3,7 @@
 Every hook kind, in the order it runs, and a readiness check with retries and a backoff.
 A trait hook is an `impl OnModuleInit` (and the four others) on an injectable type. Closure hooks, `.ready(..)` and a module's own `on_init` hang off `ModuleDef`, so `LinkModule` is written against it. `main` connects, closes and prints the journal.
 
-```
+```bash
 cargo run -p ex-09-lifecycle
 ```
 

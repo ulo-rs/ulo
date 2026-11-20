@@ -49,10 +49,10 @@ const CLOSE_GRACE: Duration = Duration::from_millis(500);
 /// and a handler whose spec's route or shape is not its method marker's, builds the pre-dispatch
 /// stage from `PreDispatch<Grpc>`, refuses `Count::Max(0)` on each count and
 /// `Bound::After(Duration::ZERO)` on `handshake_timeout` and `timeout_grace`, resolves the
-/// endpoints and loads TLS with ALPN `h2`. Health reports SERVING for every known service after `bind` and NOT_SERVING
-/// from the drain on; it runs no scoped pre-dispatch entry. Reflection, `grpc.reflection.v1` and
-/// `v1alpha`, is served in debug builds and behind `reflection(true)` in release builds, after the
-/// scoped entries whose scope matches its path.
+/// endpoints and loads TLS with ALPN `h2`. Health reports SERVING for every known service after
+/// `bind` and NOT_SERVING from the drain on; it runs no scoped pre-dispatch entry. Reflection,
+/// `grpc.reflection.v1` and `v1alpha`, is served in debug builds and behind `reflection(true)` in
+/// release builds, after the scoped entries whose scope matches its path.
 ///
 /// A gRPC method's path is its proto's, so a controller's `.at(prefix)` does not apply to it, and
 /// `wire()` refuses a prefix on a controller whose handlers are all gRPC methods.
@@ -173,6 +173,11 @@ impl Server {
     /// before DEADLINE_EXCEEDED is sent instead: one second at `Bound::Default`, timed by the
     /// app's `Timer`; `Bound::Unbounded` waits for them. `Bound::After(Duration::ZERO)` is refused
     /// in `prepare`.
+    ///
+    /// A client that enforces its own deadline, a tonic `Channel` among them, ends the call at that
+    /// deadline and reads nothing the grace produces, so it sees only the failure its own deadline
+    /// gives it. The grace serves logging, counting and reshaping for a client that waits on the
+    /// server.
     pub fn timeout_grace(mut self, grace: Bound) -> Self {
         self.timeout_grace = grace;
         self

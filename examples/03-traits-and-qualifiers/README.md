@@ -3,7 +3,7 @@
 Two ways to bind more than one thing of a kind. `PgUserRepo as dyn UserRepo` binds a provider under a trait, and a qualifier (`Primary`, `Replica`) tells apart two instances of one type, read as `Dep<Db, Primary>`.
 `Db("primary") @ Primary` binds a value under a qualifier in `#[module]`, and `Db @ Primary` in `exports` lets it leave the module; the `@` is the one reports print for a key.
 
-```
+```bash
 cargo run -p ex-03-traits-and-qualifiers
 ```
 

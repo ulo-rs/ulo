@@ -2,7 +2,7 @@
 
 Probes for an orchestrator. `HealthModule` collects every `dyn Check` that any module contributes; `HealthHttp` serves `/health/live`, `/health/ready` and `/health/started` as `application/health+json`, and `HealthGrpc` writes the `grpc.health.v1` overall status from the same readiness. Here `CacheModule` contributes a check named `cache` that is down until the application warms the cache.
 
-```
+```bash
 cargo test -p ex-34-health
 PORT=7000 cargo run -p ex-34-health
 curl -i http://127.0.0.1:7000/health/ready

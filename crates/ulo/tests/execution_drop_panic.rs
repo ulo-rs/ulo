@@ -108,7 +108,8 @@ async fn a_panicking_drop_does_not_stop_the_other_instances_or_the_end_of_the_ex
     });
     let app = connected(root).await;
 
-    // Map order is unspecified, so the panicking instance lands at every position over the runs.
+    // Map order is unspecified, so the panicking instance may drop at a different position in
+    // each run; nothing asserts that every position is reached.
     const RUNS: usize = 12;
     for run in 1..=RUNS {
         app.execute(ExecOptions::new(), async |exec| {

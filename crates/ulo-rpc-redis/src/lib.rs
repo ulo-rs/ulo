@@ -8,6 +8,9 @@
 //! when the client's Pub/Sub connection drops; `rediss://` selects TLS
 //! under the crate's `tls` feature.
 //!
+//! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
+//! runtime or given one with `with_handle`.
+//!
 //! ```
 //! # fn f(app: ulo::App<ulo::Connected>) {
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_redis::Redis::url("redis://cache:6379")));

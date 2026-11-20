@@ -2,7 +2,7 @@
 
 The handlers of [25](../25-rpc-basics), served over TCP, NATS, Redis, MQTT, RabbitMQ or Kafka. The link is a URL: `bind` and `client` pick the link crate by its scheme, and nothing else in the app changes.
 
-```
+```bash
 cargo test -p ex-28-rpc-links
 RPC_LINK=nats://127.0.0.1:4222 cargo run -p ex-28-rpc-links
 ```
@@ -11,7 +11,7 @@ RPC_LINK=nats://127.0.0.1:4222 cargo run -p ex-28-rpc-links
 
 The broker tests start each broker in a container named `ulo-conf-ex28-<link>` and need Docker:
 
-```
+```bash
 cargo test -p ex-28-rpc-links --features integration --test brokers
 ```
 

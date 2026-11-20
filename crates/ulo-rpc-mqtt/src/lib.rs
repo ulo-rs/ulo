@@ -10,6 +10,9 @@
 //! client's `Timeout`; a call waiting when the client's connection drops is `Unavailable`, since a
 //! clean session loses what reached the reply topic meanwhile; `mqtts://` selects TLS.
 //!
+//! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
+//! runtime or given one with `with_handle`.
+//!
 //! Over `mqtts://` the link trusts the platform's root certificates, read once per link on its
 //! runtime's blocking pool, a server's in `prepare` and a client's at its first connect, and kept
 //! for every connection after. A store that cannot be read or holds no root is a misconfiguration

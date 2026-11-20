@@ -31,6 +31,13 @@ pub trait FromCall<T: Transport>: Sized + Send + 'static {
     /// What it reads from the container, if anything, for the wiring pass.
     fn dependencies(_d: &mut Dependencies) {}
 
+    /// Reads the parameter from the call. A failure is an [`ExtractError`]: every variant but
+    /// `Dependency` classifies as `BadRequest`, `Unprocessable`, `Internal` or `Unavailable`, and
+    /// none names `Unauthorized`, `Forbidden` or `NotFound`. `Dependency` takes the kind of the
+    /// lookup error it holds, so a parameter that must fail with one of those reads a
+    /// `FromContainer` type whose constructor returns a `CallError` of that kind: bare as the
+    /// handler's parameter, or read inside `from_call` through the call's execution and declared
+    /// in `dependencies`, its lookup error returned as `ExtractError::Dependency`.
     fn from_call(cx: &T::Cx) -> impl Future<Output = Result<Self, ExtractError>> + Send;
 }
 

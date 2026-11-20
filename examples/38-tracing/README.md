@@ -2,7 +2,7 @@
 
 W3C trace context across three transports. An HTTP edge calls an RPC service with `.within(&exec)`, which calls a gRPC service with `ulo_grpc::outgoing(&exec, request)`; each hop opens a server span as a child of the span that called it, and the trace id the caller sent arrives unchanged at the last hop. `ulo-otel` exports those spans; `ulo-otel-otlp` sends them to a collector over HTTP.
 
-```
+```bash
 cargo test -p ex-38-tracing
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 PORT=7000 cargo run -p ex-38-tracing
 curl -H 'traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' http://127.0.0.1:7000/quote/tea

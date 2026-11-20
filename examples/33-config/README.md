@@ -2,7 +2,7 @@
 
 Layered configuration. `ulo_config::Config` merges defaults, `config/app.toml`, `config/.env`, the environment and values set in code; each source overrides the ones before it. `ConfigModule<AppConfig>` registers the whole tree as one binding, and every problem in it is reported by `wire()` with its path and the file and line that supplied the value.
 
-```
+```bash
 cargo test -p ex-33-config
 PORT=7000 APP_GREETING=hi cargo run -p ex-33-config
 curl http://127.0.0.1:7000/settings

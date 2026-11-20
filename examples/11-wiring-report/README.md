@@ -2,7 +2,7 @@
 
 `wire()` collects every wiring problem and returns them together. `BrokenModule` has one of each of five kinds: a duplicate binding, a missing dependency, an ambiguous one, a dependency cycle and a singleton reading per-execution data.
 
-```
+```bash
 cargo run -p ex-11-wiring-report
 ```
 

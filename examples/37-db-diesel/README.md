@@ -2,7 +2,7 @@
 
 A synchronous driver beside an async runtime. Diesel's SQLite connection blocks its thread for as long as a query runs, so `DieselModule::<Sqlite>` runs each query on the blocking pool of the runtime the app was given. The application injects `Dep<SqlitePool>` and calls diesel-async's `RunQueryDsl`.
 
-```
+```bash
 cargo test -p ex-37-db-diesel
 PORT=7000 cargo run -p ex-37-db-diesel
 curl http://127.0.0.1:7000/count/1000000

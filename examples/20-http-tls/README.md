@@ -3,7 +3,7 @@
 HTTPS from a PEM certificate chain and key; `ulo-net` loads them into a rustls `ServerConfig` when the
 app listens, offering `h2` and `http/1.1`.
 
-```
+```bash
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
   -addext subjectAltName=DNS:localhost,IP:127.0.0.1 -keyout key.pem -out cert.pem
 TLS_CERT=cert.pem TLS_KEY=key.pem cargo run -p ex-20-http-tls

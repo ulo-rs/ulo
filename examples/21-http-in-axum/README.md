@@ -3,7 +3,7 @@
 A ulo app mounted inside an axum server: the host owns the socket and its own routes, the app answers
 under `/api`.
 
-```
+```bash
 cargo run -p ex-21-http-in-axum
 curl http://127.0.0.1:3000/health
 curl http://127.0.0.1:3000/api/hello

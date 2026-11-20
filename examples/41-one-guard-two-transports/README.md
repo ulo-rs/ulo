@@ -2,7 +2,7 @@
 
 One `impl<T: Transport> Guard<T>` guards an HTTP route and an RPC message. It reads the `#[meta(Shut)]` a handler declares through `AsRef<ExecutionRef>`, which every transport's context implements, and each transport renders the refusal its own way: a 403 `application/problem+json` over HTTP, a `Forbidden` error over RPC.
 
-```
+```bash
 cargo test -p ex-41-one-guard-two-transports
 cargo run -p ex-41-one-guard-two-transports
 curl -i http://127.0.0.1:3000/shop/stocktake

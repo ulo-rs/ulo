@@ -3,7 +3,7 @@
 A module built at runtime from a value (`DynamicModule`), and a module loaded after startup through `AppHandle::load`, which returns a `ModuleRef` limited to what that module sees.
 Controllers cannot be loaded lazily: the routes are already bound.
 
-```
+```bash
 cargo run -p ex-08-dynamic-and-lazy
 ```
 

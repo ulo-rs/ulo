@@ -24,6 +24,9 @@
 //! [`Nats::connect_within`], 30 s unset, its `INFO` included, and a wait that runs out fails with
 //! [`ulo_rpc::ConnectTimedOut`].
 //!
+//! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
+//! runtime or given one with `with_handle`.
+//!
 //! A server's `close` answers every call it still holds `unavailable` with the shutdown phrase in
 //! its first poll, and drops a reply sent after it. A reply finding async-nats's command channel
 //! full waits for room, so a long streamed reply is paced by the connection, and one still waiting
