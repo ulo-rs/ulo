@@ -146,3 +146,30 @@ fn a_node_id_that_is_not_32_hex_digits_is_malformed() {
         malformed(message.as_bytes(), node);
     }
 }
+
+fn reason_of(message: &[u8]) -> String {
+    match wire::decode(message) {
+        Err(Undecodable::Malformed(reason)) => reason,
+        other => panic!("a message decoded as {other:?}, not as malformed"),
+    }
+}
+
+/// A malformed message's reason repeats what the peer wrote at a bounded length, since the
+/// adapter logs it on every message: a node id at its first 64 bytes and a parser's reason, which
+/// quotes a field the peer named, at its first 256, each cut at a character boundary and marked
+/// (F573). Planted break: the node repeated whole.
+#[test]
+fn a_reason_repeats_a_long_peer_string_cut_and_marked() {
+    // "é" is two bytes, so byte 64 falls inside one and the cut moves back to byte 63.
+    let node = format!("{}{}", "a".repeat(63), "é".repeat(50_000));
+    let message = format!("\x01{{\"gateway\":null,\"audience\":{{\"kind\":\"all\"}},\"except\":[{{\"node\":\"{node}\",\"seq\":1}}]}}\n");
+    let reason = reason_of(message.as_bytes());
+    assert!(reason.contains(&format!("`{}…` is not a node id", "a".repeat(63))), "the reason does not repeat the node cut: {reason:.200}");
+    assert!(reason.len() < 200, "the reason carries {} bytes", reason.len());
+
+    let field = "f".repeat(100_000);
+    let message = format!("\x01{{\"gateway\":null,\"audience\":{{\"kind\":\"all\"}},\"except\":[],\"{field}\":1}}\n");
+    let reason = reason_of(message.as_bytes());
+    assert!(reason.contains("ffff") && reason.ends_with('…'), "the reason does not repeat the field cut: {reason:.300}");
+    assert!(reason.len() <= 256 + '…'.len_utf8(), "the reason carries {} bytes", reason.len());
+}

@@ -40,6 +40,7 @@ const COUNT: &str = "queue.count";
 const SUM: &str = "queue.sum";
 const ECHO: &str = "queue.echo";
 const HANDED: &str = "queue.handed";
+const EARLY: &str = "queue.early";
 const STRICT: &str = "queue.strict";
 const LENIENT: &str = "queue.lenient";
 const RELAY: &str = "queue.relay";
@@ -95,6 +96,9 @@ struct SeenState {
     handed: Mutex<Option<bool>>,
     /// Raised once `queue.handed` has handed its request over.
     handed_over: Notify,
+    /// How the task reading `queue.early`'s request saw it end: `None` until it ends, then the
+    /// failure its last item carried, `Some(None)` for a clean end.
+    early: Mutex<Option<Option<String>>>,
     /// Items the tasks reading `queue.strict`'s and `queue.lenient`'s requests have read.
     read: AtomicU64,
     /// The failures those tasks read, every one with its kind, as it read it.
@@ -184,6 +188,21 @@ impl Queues {
         });
         self.seen.0.handed_over.notify_one();
         std::future::pending().await
+    }
+
+    /// Hands its request to a spawned task and answers at once, before the caller's `in_end`.
+    #[ulo_rpc::message("queue.early")]
+    async fn early(&self, items: Inbound<u64>) -> Result<u64, Never> {
+        let seen = (*self.seen).clone();
+        tokio::spawn(async move {
+            let mut items = items;
+            let mut last = None;
+            while let Some(item) = items.next().await {
+                last = item.err().map(|failed| failed.to_string());
+            }
+            *lock(&seen.0.early) = Some(last);
+        });
+        Ok(0)
     }
 
     /// Hands its request to a spawned task and answers with what that task read: the sum of the
@@ -488,6 +507,23 @@ async fn a_request_read_on_another_task_ends_failing_at_its_overflow() {
     let seen = running.seen.clone();
     eventually("the reading task's end", || lock(&seen.0.handed).is_some()).await;
     assert_eq!(*lock(&running.seen.0.handed), Some(true), "the reading task saw its request end cleanly");
+    running.stop().await;
+}
+
+/// A request handed to another task by a handler that answers before the caller's `in_end` ends
+/// there failing once the call has ended, not cleanly: the task read part of the request, which
+/// is not the whole (F573). The caller sends one item and never `in_end`. Planted break: the
+/// call's registration dropping the request's queue rather than cutting it.
+#[tokio::test]
+async fn a_request_read_on_another_task_ends_failing_when_its_call_ends_first() {
+    let running = start(Count::Default).await;
+    let source = stream::iter([0u64]).chain(stream::pending());
+    let answer = tokio::time::timeout(PATIENCE, running.client.send_stream::<_, u64>(EARLY, source)).await.expect("answered in time");
+    assert_eq!(answer.expect("the handler answers"), 0);
+    let seen = running.seen.clone();
+    eventually("the reading task's end", || lock(&seen.0.early).is_some()).await;
+    let ended = lock(&running.seen.0.early).clone().flatten();
+    assert_eq!(ended.as_deref(), Some("`payload` was cut short: its call ended before the caller's last item"), "how the reading task saw its request end");
     running.stop().await;
 }
 

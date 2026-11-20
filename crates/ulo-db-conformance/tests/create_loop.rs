@@ -134,6 +134,7 @@ ulo_db_conformance::conformance_suite!(Host<true>; not_applicable {
     malformed_url_is_refused: "the options are no URL",
     health_goes_down_in_an_outage_and_recovers: "covered by the stores; this host exists for the loop around `create`",
     pool_closes_after_the_drain: "covered by the stores",
+    a_closed_pool_refuses_queries: "covered by the stores",
     connecting_does_not_stall_the_thread: "covered by the stores",
     unsupported_runtime_is_refused: "covered by the stores",
     two_keyed_instances_stay_separate: "covered by the stores",

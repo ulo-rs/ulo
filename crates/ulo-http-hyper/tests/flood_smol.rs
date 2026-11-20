@@ -76,7 +76,8 @@ async fn run_an_http2_frame_flood_does_not_hold_the_close(probe: Probe) {
     let written = Arc::new(AtomicU64::new(0));
     let (flood, ended) = flooding_client(addr, Arc::clone(&stop), Arc::clone(&written));
     probe.until("the client beginning its flood", probe.budget().boot, || flood.try_recv().is_ok()).await;
-    probe.until("the connection's loop taking the flood", probe.budget().boot, || written.load(Ordering::Acquire) > FLOODED).await;
+    // Bounded on progress: a loaded machine slows the flood without stopping it.
+    probe.until_reaches("the connection's loop taking the flood", probe.budget().settle * 4, || written.load(Ordering::Acquire), FLOODED + 1).await;
 
     let closing = ulo::spawn_with(&*runtime, async move { handle.close(Signal::new("flood")).await });
     probe.within(&format!("the app's close, a {DRAIN:?} drain included"), DRAIN + probe.budget().recovery, closing).await.expect("the close task ends").expect("the app closes");

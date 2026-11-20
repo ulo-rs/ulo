@@ -79,6 +79,8 @@ struct State {
     halted: AtomicBool,
     /// The bound a refused offer passed, recorded before the caller halts the queue.
     overflow: Mutex<Option<Overflow>>,
+    /// Set by [`Feed::cut_with_call`] before it halts the queue.
+    cut_with_call: AtomicBool,
 }
 
 impl State {
@@ -101,6 +103,7 @@ pub(crate) fn queue<T>(limits: Limits) -> (Feed<T>, Drain<T>) {
         limits,
         halted: AtomicBool::new(false),
         overflow: Mutex::new(None),
+        cut_with_call: AtomicBool::new(false),
     });
     (Feed { sender, state: Arc::clone(&state) }, Drain { receiver, state })
 }
@@ -176,6 +179,14 @@ impl<T> Feed<T> {
         self.sender.close_channel();
     }
 
+    /// Ends the queue as halted because its call ended before the producer's last item: the
+    /// reader's next read ends it, and [`Drain::cut_with_call`] tells that end from a clean one
+    /// and from an overflow.
+    pub(crate) fn cut_with_call(&self) {
+        self.state.cut_with_call.store(true, Ordering::Release);
+        self.halt();
+    }
+
     /// Whether the reader has gone.
     pub(crate) fn is_closed(&self) -> bool {
         self.sender.is_closed()
@@ -221,6 +232,11 @@ impl<T> Drain<T> {
     /// and after a clean end.
     pub(crate) fn halted_at(&self) -> Option<Overflow> {
         if self.state.halted.load(Ordering::Acquire) { self.state.overflow() } else { None }
+    }
+
+    /// Whether [`Feed::cut_with_call`] ended the queue.
+    pub(crate) fn cut_with_call(&self) -> bool {
+        self.state.cut_with_call.load(Ordering::Acquire)
     }
 
     /// Closes the queue and lets go of every item it holds unread; an offer after this is dropped

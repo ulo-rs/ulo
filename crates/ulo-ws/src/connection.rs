@@ -426,7 +426,7 @@ impl Tracker {
         self.live.wait_for(|live| *live == 0).await;
     }
 
-    fn abort_all(&self) {
+    pub(crate) fn abort_all(&self) {
         // Taken out of the lock before aborting: an abort may drop a task's future on this
         // thread, and its guard takes the same lock.
         let tasks = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(PoisonError::into_inner));
@@ -851,7 +851,8 @@ fn has_token(headers: &HeaderMap, name: &HeaderName, token: &str) -> bool {
 struct Admitted {
     conn: Connection,
     instance: Option<Instance>,
-    slot: Slot,
+    /// Freed as it drops, after the rooms are left.
+    _slot: Slot,
 }
 
 impl Admitted {
@@ -860,8 +861,15 @@ impl Admitted {
     /// `on_disconnect`.
     async fn end(self, accept: &Accept, why: DisconnectReason) {
         disconnect(&self.conn, why, accept).await;
-        accept.hub.unregister(self.conn.id());
-        drop(self.slot);
+        drop(self);
+    }
+}
+
+/// Out of the rooms, then the slot freed as the fields drop: after `end`, and for a connection
+/// whose task was aborted before `end` ran, by the table's close or its drop.
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        self.conn.inner.hub.unregister(self.conn.id());
     }
 }
 
@@ -974,9 +982,9 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
                 return Connected::Full;
             }
             Some(slot) => match &gateway.handler.messages {
-                Messages::Envelope => return Connected::Admitted(Admitted { conn, instance: None, slot }),
+                Messages::Envelope => return Connected::Admitted(Admitted { conn, instance: None, _slot: slot }),
                 Messages::Raw { instance, .. } => match instance(handle).await {
-                    Ok(instance) => return Connected::Admitted(Admitted { conn, instance: Some(instance), slot }),
+                    Ok(instance) => return Connected::Admitted(Admitted { conn, instance: Some(instance), _slot: slot }),
                     Err(error) => {
                         tracing::error!(%error, gateway = %gateway.path, "a hand-written gateway could not be resolved for a connection");
                         ConnectRefused::kind(ErrorKind::Internal, "internal error")

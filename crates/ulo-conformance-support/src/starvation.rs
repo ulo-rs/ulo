@@ -221,6 +221,28 @@ impl Probe {
         }
     }
 
+    /// Waits until `read` reaches `target`, failing, naming the loop and `what`, only when `read`
+    /// stays where it is across `stall`'s worth of looks: the bound is on progress, not on the
+    /// total, so a load that slows a flood without stopping it does not fail the wait, as a
+    /// [`until`](Self::until) bounding the whole of it does. The looks are counted rather than
+    /// timed, so a look a busy machine delays stretches the bound with it.
+    pub async fn until_reaches(&self, what: &str, stall: Duration, mut read: impl FnMut() -> u64, target: u64) {
+        let looks = u64::try_from(stall.as_nanos().div_ceil(LOOK.as_nanos())).unwrap_or(u64::MAX).max(1);
+        let (mut last, mut still) = (read(), 0);
+        while last < target {
+            self.runtime.sleep(LOOK).await;
+            let now = read();
+            if now == last {
+                still += 1;
+                if still >= looks {
+                    panic!("{}: {what} stopped at {now} of {target} for {stall:?}", self.loop_name);
+                }
+            } else {
+                (last, still) = (now, 0);
+            }
+        }
+    }
+
     /// [`until`](Self::until) for a one-way effect to show, bounded by [`Budget::settle`].
     pub async fn settles(&self, what: &str, ready: impl FnMut() -> bool) {
         self.until(what, self.budget.settle, ready).await;
