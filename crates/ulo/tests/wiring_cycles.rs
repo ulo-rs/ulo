@@ -99,7 +99,7 @@ fn a_cycle_entry_names_each_step_and_how_to_cut_it() {
             "dependency cycle: SA → SB → SA\n\
              ├─ `SA` in {root}\n\
              ├─ `SB` in {root}\n\
-             └─ help: remove one of these reads, or read one of them through `ModuleRef` when it is used rather than at construction"
+             └─ help: remove one of these reads, or read one of them through `ModuleRef` when it is used rather than at construction: `get` for one binding, `execute` and `exec.resolver().many()` for a collection"
         )
     );
 }

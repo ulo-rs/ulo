@@ -72,28 +72,35 @@ pub struct Mount<'a> {
     pub(crate) handlers: &'a mut Vec<HandlerDecl>,
     /// The `K`s [`once`](Self::once) has run for during this controller's mount.
     pub(crate) once: HashSet<TypeId>,
-    /// What [`served_by`](Self::served_by) declared, applied to every handler of the controller
-    /// once its mount returns.
-    pub(crate) served: Option<Served>,
+    /// What [`served_by`](Self::served_by) declared, by the transport of the handlers it covers,
+    /// applied to those handlers once the controller's mount returns.
+    pub(crate) served: Vec<(TypeName, Served)>,
 }
 
 impl<'a> Mount<'a> {
     pub(crate) fn new(handlers: &'a mut Vec<HandlerDecl>) -> Self {
-        Mount { handlers, once: HashSet::new(), served: None }
+        Mount { handlers, once: HashSet::new(), served: Vec::new() }
     }
 
-    /// Declares this controller a `T` controller served by a server whose transport is `S`, for
-    /// every handler it mounts, whatever marker each mounts under. Without it, each handler is
-    /// served by a server of its own transport.
+    /// Declares the handlers this controller mounts under `H` those of a `T` controller, served
+    /// by a server whose transport is `S`. A handler under a transport no declaration names is
+    /// served by a server of its own transport, so a gateway that also carries an HTTP route
+    /// needs the HTTP server for that route.
     ///
     /// `listen()` refuses a controller no bound server serves (transports DESIGN §2.7, X6), and
     /// reads this declaration to decide which server that is and which transport the refusal
-    /// names: `ulo-ws` declares `served_by::<Ws, Http>()` for a gateway on the HTTP server's port
-    /// and `served_by::<Ws, Ws>()` for one declared `port = own`, so the connect handler it mounts
-    /// under `WsConnect` counts as the gateway's, and `AppBuilder::unserved::<Ws>()` covers both.
-    /// A later call replaces an earlier one.
-    pub fn served_by<T: Transport, S: Transport>(&mut self) {
-        self.served = Some(Served { transport: TypeName::of::<T>(), server: TypeName::of::<S>() });
+    /// names: `ulo-ws` declares `served_by::<Ws, Ws, Http>()` and `served_by::<WsConnect, Ws,
+    /// Http>()` for a gateway on the HTTP server's port, and the same with `Ws` as the server for
+    /// one declared `port = own`, so the connect handler counts as the gateway's and
+    /// `AppBuilder::unserved::<Ws>()` covers both. A later call for the same `H` replaces an
+    /// earlier one.
+    pub fn served_by<H: Transport, T: Transport, S: Transport>(&mut self) {
+        let under = TypeName::of::<H>();
+        let served = Served { transport: TypeName::of::<T>(), server: TypeName::of::<S>() };
+        match self.served.iter_mut().find(|(transport, _)| *transport == under) {
+            Some((_, declared)) => *declared = served,
+            None => self.served.push((under, served)),
+        }
     }
 
     /// One handler, declared through its [`HandlerSpec`]. Records the three role keys of `T`,
@@ -226,8 +233,8 @@ pub(crate) struct ControllerRecord {
 #[derive(Clone)]
 pub(crate) struct HandlerDecl {
     pub(crate) transport: TypeName,
-    /// The controller's [`Mount::served_by`] declaration, set on each of its handlers once its
-    /// mount returns.
+    /// The controller's [`Mount::served_by`] declaration for this handler's transport, set once
+    /// its mount returns.
     pub(crate) served: Option<Served>,
     /// `Transport::KEY`.
     pub(crate) key: &'static str,
@@ -262,7 +269,8 @@ pub(crate) struct Served {
 }
 
 impl HandlerDecl {
-    /// What serves this handler: its controller's declaration, or its own transport's server.
+    /// What serves this handler: its controller's declaration for its transport, or its own
+    /// transport's server.
     pub(crate) fn served(&self) -> Served {
         self.served.unwrap_or(Served { transport: self.transport, server: self.transport })
     }

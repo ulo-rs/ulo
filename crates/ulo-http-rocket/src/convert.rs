@@ -29,6 +29,18 @@ pub(crate) fn head(request: &rocket::Request<'_>) -> Result<http::request::Parts
     Ok(builder.body(())?.into_parts().0)
 }
 
+/// `value` as the `str` rocket 0.5 carries a header value as, or `None` for a value holding
+/// obs-text bytes that are no UTF-8, which RFC 9110 §5.5 admits and a `str` cannot hold: that
+/// header is left out of the response and logged at `warn`, never written with U+FFFD in place of
+/// a byte.
+fn as_text<'v>(name: &http::HeaderName, value: &'v http::HeaderValue) -> Option<&'v str> {
+    let text = std::str::from_utf8(value.as_bytes()).ok();
+    if text.is_none() {
+        tracing::warn!(header = name.as_str(), "a response header value holds bytes that are no UTF-8, which rocket cannot carry; the header is left out");
+    }
+    text
+}
+
 /// The app's response as rocket's. A body of known length is collected and handed over sized, so
 /// rocket writes its `Content-Length`; any other streams. A 101 carries `handoff` as the I/O
 /// handler for the protocol its `Upgrade` header names, and rocket then writes the switch itself.
@@ -46,7 +58,9 @@ pub(crate) async fn response<'r>(response: ulo_http::Response, handoff: Option<H
         if name == CONTENT_LENGTH {
             continue;
         }
-        builder.raw_header_adjoin(name.as_str().to_owned(), String::from_utf8_lossy(value.as_bytes()).into_owned());
+        if let Some(value) = as_text(name, value) {
+            builder.raw_header_adjoin(name.as_str().to_owned(), value.to_owned());
+        }
     }
     if parts.status == StatusCode::SWITCHING_PROTOCOLS {
         let protocol = parts.headers.get(UPGRADE).and_then(|value| value.to_str().ok());
@@ -112,5 +126,25 @@ impl AsyncRead for BodyReader {
         let n = this.chunk.len().min(buf.remaining());
         buf.put_slice(&this.chunk.split_to(n));
         Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use http::HeaderValue;
+    use ulo_http::HttpBody;
+
+    /// A UTF-8 value crosses unchanged and one holding a byte that is no UTF-8 is left out, rather
+    /// than crossing with U+FFFD in its place.
+    #[tokio::test]
+    async fn a_header_value_crosses_unchanged_or_not_at_all() {
+        let mut app = ulo_http::Response::new(HttpBody::from("obs-text"));
+        app.headers_mut().insert("x-utf8", HeaderValue::from_bytes("café".as_bytes()).expect("a valid value"));
+        app.headers_mut().insert("x-latin1", HeaderValue::from_bytes(b"caf\xe9").expect("obs-text is a valid value"));
+        app.headers_mut().append("x-latin1", HeaderValue::from_static("plain"));
+
+        let rocket = super::response(app, None, false).await;
+        assert_eq!(rocket.headers().get("x-utf8").collect::<Vec<_>>(), ["café"]);
+        assert_eq!(rocket.headers().get("x-latin1").collect::<Vec<_>>(), ["plain"], "the value that is no UTF-8 is left out, the other kept");
     }
 }

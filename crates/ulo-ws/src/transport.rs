@@ -9,6 +9,7 @@ use futures_util::StreamExt;
 use http::request::Parts;
 use http::{HeaderMap, Uri};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use ulo::{AppHandle, BoxError, ExecutionRef, Ext, Extensions, Inputs, LookupError, Timer, Transport};
 use ulo_transport::{CallError, ErrorKind, ExtractError, FromCall, IntoReply, IntoReplyError};
 
@@ -316,16 +317,34 @@ impl ConnectionInfo {
 
 /// The upgrade request's head as the client sent it, as an execution input: a session factory
 /// reads a token from it, `session_with = |head: Dep<UpgradeHead>| ..`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct UpgradeHead {
     pub(crate) parts: Arc<Parts>,
     /// The name the handshake echoed in `Sec-WebSocket-Protocol`.
     pub(crate) subprotocol: Option<Arc<str>>,
+    /// Redacts a query that does not decode, as HTTP's `Query<T>` does.
+    pub(crate) app: AppHandle,
+}
+
+impl fmt::Debug for UpgradeHead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UpgradeHead").field("parts", &self.parts).field("subprotocol", &self.subprotocol).finish_non_exhaustive()
+    }
 }
 
 impl UpgradeHead {
     pub fn uri(&self) -> &Uri {
         &self.parts.uri
+    }
+
+    /// The handshake's query string as `T`, decoded as `application/x-www-form-urlencoded` by the
+    /// rules of HTTP's `Query<T>`: percent-decoded, `+` read as a space, a missing query read as an
+    /// empty one, a name written more than once filling a `Vec` field and refused into any other.
+    /// A required field the query lacks is `ExtractError::Missing` naming it, a value that does
+    /// not parse `Malformed` naming it, its source redacted through the app.
+    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
+    pub fn query<T: DeserializeOwned>(&self) -> Result<T, ExtractError> {
+        ulo_http::__private::query(self.parts.uri.query(), &self.app)
     }
 
     pub fn headers(&self) -> &HeaderMap {

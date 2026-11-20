@@ -593,10 +593,14 @@ pub(crate) fn mount<G: GatewayConfig>(m: &mut Mount<'_>, handler: ConnectHandler
     let mut dependencies = handler.session.dependencies();
     match handler.settings.port {
         Port::Http => {
-            m.served_by::<Ws, ulo_http::Http>();
+            m.served_by::<Ws, Ws, ulo_http::Http>();
+            m.served_by::<WsConnect, Ws, ulo_http::Http>();
             dependencies.param::<ReadsHandoff>("upgrade");
         }
-        Port::Own => m.served_by::<Ws, Ws>(),
+        Port::Own => {
+            m.served_by::<Ws, Ws, Ws>();
+            m.served_by::<WsConnect, Ws, Ws>();
+        }
     }
     let mut guards = EnhancerSpec::<WsConnect>::new();
     G::connect_guards(&mut guards);

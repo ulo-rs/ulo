@@ -3,6 +3,7 @@ use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use http::request::Parts;
@@ -92,6 +93,15 @@ impl ConnInfo {
 pub struct TlsInfo {
     pub alpn: Option<Vec<u8>>,
     pub server_name: Option<String>,
+    /// The certificate chain the client presented, DER, leaf first, as the TLS session holds it
+    /// once the server's client verifier accepted it: `None` when the client presented none or the
+    /// server verifies no client, a rustls configuration given to `Tls::from_config` with
+    /// `with_client_cert_verifier` being what verifies one. A guard reading a client's identity
+    /// reads it here, `cx.conn().tls`, never from a request header, which any client can write.
+    /// Behind a proxy that terminates TLS it is `None`: the proxy holds the session, and a
+    /// certificate header it forwards is trustworthy only where the proxy overwrites the client's
+    /// own copy and nothing reaches the app around the proxy.
+    pub peer_certificates: Option<Arc<[Vec<u8>]>>,
 }
 
 impl TlsInfo {
@@ -105,6 +115,10 @@ impl TlsInfo {
 
     pub fn server_name(self, name: impl Into<String>) -> Self {
         TlsInfo { server_name: Some(name.into()), ..self }
+    }
+
+    pub fn peer_certificates(self, chain: impl Into<Arc<[Vec<u8>]>>) -> Self {
+        TlsInfo { peer_certificates: Some(chain.into()), ..self }
     }
 }
 

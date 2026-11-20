@@ -9,9 +9,10 @@
 //! refusal the capability declares instead: a streamed shape on UDP is refused at startup, and the
 //! scenarios below the server that open a streamed request are declared not applicable there, a
 //! binary payload on a JSON link before any I/O and its handler at startup, a miss on a link without
-//! `miss_signal` is the client's `Timeout`, the two-instance scenarios run one instance on an
-//! `Addressed` link, where a second cannot share the address, a request runs on both instances on a
-//! link without `single_delivery`, and an event declared `every_instance` is refused at startup on
+//! `miss_signal` is the client's `Timeout`, the two-instance event scenario runs one instance on an
+//! `Addressed` link, where a second cannot share the address, and the request one runs two there
+//! with the caller addressing the first, which alone runs each request, a request runs on both
+//! instances on a link without `single_delivery`, and an event declared `every_instance` is refused at startup on
 //! a link without `every_instance`. A scenario that needs a capability to run at all,
 //! `cancel_follows_its_request` on `ordered_control` and `an_event_reaches_one_instance` on
 //! `single_delivery`, is skipped on a link declared without it, writing the declared reason to

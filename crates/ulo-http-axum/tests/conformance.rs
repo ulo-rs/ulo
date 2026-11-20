@@ -118,4 +118,6 @@ impl Host for AxumHost {
     }
 }
 
-ulo_http_conformance::http_conformance_suite!(AxumHost);
+ulo_http_conformance::http_conformance_suite!(AxumHost; not_applicable {
+    double_slash_is_no_route: "axum's `nest_service` hands the app `/api//hit` as `/hit`, so in the nested mode the app routes the path every entry of it reads; the fallback mode answers 404",
+});

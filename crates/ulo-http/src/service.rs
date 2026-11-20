@@ -56,8 +56,8 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 ///    instead, before any entry, so the host routes it as the client sent it. A path an unscoped
 ///    entry rewrites to a refused one is answered 400 at routing, logged at `warn`. Otherwise the
 ///    unscoped pre-dispatch entries, in order, inside `AppHandle::catch_panic`.
-/// 5. An `Upgrade` request on an upgrade path goes to its `UpgradeHandler`, after the scoped
-///    entries whose scope matches its path. Otherwise routing: a miss runs the scoped entries
+/// 5. An `Upgrade` request on an upgrade path, inside an embedding's prefix, goes to its
+///    `UpgradeHandler`, after the scoped entries whose scope matches its path. Otherwise routing: a miss runs the scoped entries
 ///    whose scope matches its path, then is offered to the global error handlers through
 ///    `ulo::recover(None, ..)` as a `CallError` whose source is [`NoRoute`],
 ///    [`MethodNotAllowed`] or [`MethodNotImplemented`], rendered 404, 405 with `Allow`, or 501,
@@ -82,8 +82,9 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 ///    `CancelReason::Disconnected`. The request counts against the in-flight bound, and its
 ///    execution stays open, until the backend drops that body. A stream the backend never writes,
 ///    on a `HEAD` answer or a 1xx, 204 or 304, reports `Completed` instead, when the service
-///    answers: the outcome concerns the body, and such a response owes the client none. A status
-///    that forbids a body carrying a stream is logged at `warn`.
+///    answers: the outcome concerns the body, and such a response owes the client none. A 1xx,
+///    204 or 304 reaches the backend with an empty body whatever body the handler gave it, and
+///    one carrying a stream is logged at `warn`.
 ///
 /// The future [`call`](AppService::call) answers cancels the execution with
 /// `CancelReason::Disconnected` when it is dropped before it answers: a backend drops it when the
@@ -261,7 +262,9 @@ impl ServiceInner {
         response.map(|body| {
             let body = if unwritten {
                 call_span.in_scope(|| owes_nothing(&body, status, &handle));
-                body
+                // A backend that writes what it is handed would put this body on the wire after the
+                // head, where a client reads it as the start of the next response.
+                if forbids_body(status) { HttpBody::empty() } else { body }
             } else {
                 body.tracked(handle.clone())
             };
@@ -317,7 +320,8 @@ impl ServiceInner {
                 tracing::warn!(path = req.path(), "an unscoped pre-dispatch entry rewrote the path to one refused before routing; answered 400");
                 return refused;
             }
-            if req.headers().contains_key(UPGRADE) {
+            let outside = req.head.extensions.get::<crate::embed::OutsidePrefix>().is_some();
+            if !outside && req.headers().contains_key(UPGRADE) {
                 let taker = self.upgrades.iter().find(|(path, _)| path.matches(req.path()).is_some()).map(|(_, taker)| Arc::clone(taker));
                 if let Some(taker) = taker {
                     let serving = ServingConfig(Arc::clone(&self.config));
@@ -328,7 +332,6 @@ impl ServiceInner {
                     return self.unrouted(&exec.handle(), req, end).await;
                 }
             }
-            let outside = req.head.extensions.get::<crate::embed::OutsidePrefix>().is_some();
             let routed = match self.router.route(req.method(), req.path()) {
                 _ if outside => Err(Miss::NotFound),
                 Routed::Found { target, params, head_from_get } => Ok((Arc::clone(target), params, head_from_get)),

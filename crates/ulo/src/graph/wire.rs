@@ -447,10 +447,9 @@ fn freeze(
             let mut decls = Vec::new();
             let mut mount = Mount::new(&mut decls);
             (controller.mount)(&mut mount);
-            if let Some(served) = mount.served {
-                for decl in &mut decls {
-                    decl.served = Some(served);
-                }
+            let served = std::mem::take(&mut mount.served);
+            for decl in &mut decls {
+                decl.served = served.iter().find(|(under, _)| *under == decl.transport).map(|(_, served)| *served);
             }
             for decl in &decls {
                 declare_transport_inputs(graph, decl, &mut transports_seen, &mut declared.transport_inputs);
