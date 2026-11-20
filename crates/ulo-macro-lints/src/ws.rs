@@ -30,6 +30,11 @@ pub struct Chat;
 #[error_handlers(Relay)]
 #[meta(Tag("chat"))]
 impl Chat {
+    #[ulo_ws::message("gated")]
+    fn gated(&self, #[cfg(any())] cx: WsCx, #[cfg(not(any()))] line: Payload<Line>) -> Echoed {
+        Echoed { text: line.0.text }
+    }
+
     #[ulo_ws::message("echo")]
     fn echo(&self, line: Payload<Line>) -> Echoed {
         Echoed { text: line.0.text }

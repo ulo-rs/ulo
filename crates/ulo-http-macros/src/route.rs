@@ -77,8 +77,11 @@ fn handler_value(method: &str, sig: &HandlerSig, paths: &Paths) -> TokenStream {
     let handler = Ident::new("__ulo_h", Span::mixed_site());
     let checks = sig.params.iter().map(|param| {
         let ty = &param.ty;
+        let gates = &param.gates;
         quote_spanned! {param.span=>
+            #(#gates)*
             let #handler = (&&#this::__private::PathProbe::<#ty>::new()).__ulo_path(#handler);
+            #(#gates)*
             let #handler = (&&#this::__private::HostProbe::<#ty>::new()).__ulo_host(#handler);
         }
     });

@@ -26,6 +26,16 @@ pub struct Orders;
 #[error_handlers(value = Relay)]
 #[meta(Tag("orders"))]
 impl Orders {
+    #[ulo_rpc::message("orders.gated")]
+    fn gated(&self, #[cfg(any())] ids: Inbound<u64>, #[cfg(not(any()))] id: Payload<u64>) -> u64 {
+        id.0
+    }
+
+    #[ulo_rpc::message("orders.none")]
+    fn none(&self, #[cfg(any())] ids: Inbound<u64>) -> u64 {
+        0
+    }
+
     #[ulo_rpc::message("orders.get")]
     fn get(&self, id: Payload<u64>) -> Order {
         Order { id: id.0 }

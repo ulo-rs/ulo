@@ -1,6 +1,8 @@
 //! The suite's client: it writes each upgrade request itself over the host's stream, so a scenario
 //! can send one RFC 6455 refuses and read the status, headers and body exactly as the server wrote
-//! them, then speaks WebSocket through `async-tungstenite` on the same stream after a 101.
+//! them, then speaks WebSocket through `async-tungstenite` on the same stream after a 101, or
+//! writes and reads frames byte for byte through [`Raw`], for a frame the library would refuse to
+//! send or would answer itself.
 
 use std::sync::Arc;
 
@@ -123,6 +125,16 @@ pub(crate) async fn read_answer<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S
         answer.body = read_body(&mut stream, &answer.headers).await;
     }
     answer
+}
+
+/// Reads the server's 101 to an upgrade request whose key was `key`, checked as [`read_answer`]
+/// checks it, and hands back the stream, positioned at the first frame.
+pub(crate) async fn read_switch<S: AsyncRead + Unpin>(mut stream: S, key: &str) -> S {
+    let (status, headers) = read_head(&mut stream).await;
+    assert_eq!(status, 101, "expected the upgrade to switch protocols: {headers:?}");
+    let accept = headers.iter().find(|(name, _)| name == "sec-websocket-accept").map(|(_, value)| value.as_str());
+    assert_eq!(accept, Some(derive_accept_key(key.as_bytes()).as_str()), "the 101 carries the wrong `Sec-WebSocket-Accept`");
+    stream
 }
 
 /// Reads one response that switches no protocol, its body as [`read_body`] reads it, and leaves
@@ -291,4 +303,144 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Conn<S> {
     pub(crate) async fn hang_up(self) {
         self.hang_up_with(1000, "").await;
     }
+}
+
+/// One frame as the server wrote it (RFC 6455 §5.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RawFrame {
+    pub(crate) fin: bool,
+    pub(crate) opcode: u8,
+    pub(crate) payload: Vec<u8>,
+}
+
+impl RawFrame {
+    pub(crate) const TEXT: u8 = 0x1;
+    pub(crate) const CONTINUATION: u8 = 0x0;
+    pub(crate) const CLOSE: u8 = 0x8;
+    pub(crate) const PING: u8 = 0x9;
+    pub(crate) const PONG: u8 = 0xA;
+
+    /// A Close frame's status code, `None` for one without a body (§5.5.1).
+    pub(crate) fn close_code(&self) -> Option<u16> {
+        (self.opcode == Self::CLOSE && self.payload.len() >= 2).then(|| u16::from_be_bytes([self.payload[0], self.payload[1]]))
+    }
+
+    /// `opcode` and what the frame carries, as a failure message shows it.
+    fn shown(&self) -> String {
+        format!("opcode {:#x} fin {} {:?}", self.opcode, self.fin, String::from_utf8_lossy(&self.payload))
+    }
+}
+
+/// `frames` as a failure message shows them.
+pub(crate) fn shown(frames: &[RawFrame]) -> Vec<String> {
+    frames.iter().map(RawFrame::shown).collect()
+}
+
+/// A client frame, masked with a fixed key unless `masked` is false, which §5.1 forbids a client.
+pub(crate) fn client_frame(fin: bool, opcode: u8, payload: &[u8], masked: bool) -> Vec<u8> {
+    const KEY: [u8; 4] = [0x37, 0xfa, 0x21, 0x3d];
+    let mut bytes = vec![if fin { 0x80 } else { 0x00 } | opcode];
+    let mask_bit = if masked { 0x80 } else { 0x00 };
+    match payload.len() {
+        len @ 0..=125 => bytes.push(mask_bit | len as u8),
+        len @ 126..=0xffff => {
+            bytes.push(mask_bit | 126);
+            bytes.extend_from_slice(&(len as u16).to_be_bytes());
+        }
+        len => {
+            bytes.push(mask_bit | 127);
+            bytes.extend_from_slice(&(len as u64).to_be_bytes());
+        }
+    }
+    if masked {
+        bytes.extend_from_slice(&KEY);
+        bytes.extend(payload.iter().enumerate().map(|(i, byte)| byte ^ KEY[i % 4]));
+    } else {
+        bytes.extend_from_slice(payload);
+    }
+    bytes
+}
+
+/// A Close frame's body: the code, then the reason (§5.5.1).
+pub(crate) fn close_body(code: u16, reason: &str) -> Vec<u8> {
+    let mut body = code.to_be_bytes().to_vec();
+    body.extend_from_slice(reason.as_bytes());
+    body
+}
+
+/// An upgraded connection spoken byte for byte, every read bounded by the app's clock.
+pub(crate) struct Raw<S> {
+    stream: S,
+    timer: Arc<dyn Timer>,
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> Raw<S> {
+    pub(crate) fn new(stream: S, timer: Arc<dyn Timer>) -> Self {
+        Raw { stream, timer }
+    }
+
+    /// Writes `bytes`, one or more frames, at once.
+    pub(crate) async fn write(&mut self, bytes: &[u8]) {
+        self.stream.write_all(bytes).await.unwrap_or_else(|error| panic!("writing a frame failed: {error}"));
+        self.stream.flush().await.unwrap_or_else(|error| panic!("flushing a frame failed: {error}"));
+    }
+
+    /// Writes `bytes` where the server may already have ended the connection, as after a fault.
+    pub(crate) async fn write_unless_ended(&mut self, bytes: &[u8]) {
+        if self.stream.write_all(bytes).await.is_ok() {
+            let _ = self.stream.flush().await;
+        }
+    }
+
+    /// The next frame the server wrote, `None` once the connection has ended.
+    pub(crate) async fn next_frame(&mut self, what: &str) -> Option<RawFrame> {
+        let timer = Arc::clone(&self.timer);
+        within(&*timer, what, read_frame(&mut self.stream)).await
+    }
+
+    /// Every frame the server writes until it ends the connection.
+    pub(crate) async fn frames_to_end(&mut self, what: &str) -> Vec<RawFrame> {
+        let timer = Arc::clone(&self.timer);
+        within(&*timer, what, async {
+            let mut frames = Vec::new();
+            while let Some(frame) = read_frame(&mut self.stream).await {
+                frames.push(frame);
+            }
+            frames
+        })
+        .await
+    }
+}
+
+/// One frame off `stream`, `None` at the end of the connection, a reset included. A server frame
+/// carries no mask (§5.1); one that does is unmasked here, so the scenario sees its payload.
+async fn read_frame<S: AsyncRead + Unpin>(stream: &mut S) -> Option<RawFrame> {
+    let mut head = [0u8; 2];
+    stream.read_exact(&mut head).await.ok()?;
+    let len = match head[1] & 0x7f {
+        126 => {
+            let mut ext = [0u8; 2];
+            stream.read_exact(&mut ext).await.ok()?;
+            u64::from(u16::from_be_bytes(ext))
+        }
+        127 => {
+            let mut ext = [0u8; 8];
+            stream.read_exact(&mut ext).await.ok()?;
+            u64::from_be_bytes(ext)
+        }
+        len => u64::from(len),
+    };
+    let mask = if head[1] & 0x80 != 0 {
+        let mut key = [0u8; 4];
+        stream.read_exact(&mut key).await.ok()?;
+        Some(key)
+    } else {
+        None
+    };
+    let mut payload = vec![0u8; usize::try_from(len).ok()?];
+    stream.read_exact(&mut payload).await.ok()?;
+    if let Some(key) = mask {
+        payload.iter_mut().enumerate().for_each(|(i, byte)| *byte ^= key[i % 4]);
+    }
+    Some(RawFrame { fin: head[0] & 0x80 != 0, opcode: head[0] & 0x0f, payload })
 }

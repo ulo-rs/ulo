@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: `note` and `count` both consume the body; a handler reads the body once
+  --> tests/ui/body_pair_ws_payload_beside_payload.rs:13:50
+   |
+13 |     fn call(&self, note: Payload<String>, count: Payload<u32>) {
+   |                                                  ^^^^^^^ evaluation of `Calls::__ULO_CHECKS_call` failed here
+
+note: erroneous constant encountered
+ --> tests/ui/body_pair_ws_payload_beside_payload.rs:9:1
+  |
+9 | #[handlers]
+  | ^^^^^^^^^^^
+  |
+  = note: this note originates in the attribute macro `handlers` (in Nightly builds, run with -Z macro-backtrace for more info)

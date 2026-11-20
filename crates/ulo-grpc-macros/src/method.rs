@@ -93,15 +93,21 @@ fn hidden_method(item: &ImplItemFn, sig: &HandlerSig, marker: &Type, ident: &Ide
         Receiver::Arc => quote!(self: ::std::sync::Arc<Self>),
     };
     let args: Vec<Ident> = sig.params.iter().map(|param| Ident::new(&format!("__ulo_p{}", param.index), Span::mixed_site())).collect();
-    let types: Vec<&Type> = sig.params.iter().map(|param| &param.ty).collect();
+    let declared = sig.params.iter().zip(&args).map(|(param, arg)| {
+        let (gates, ty) = (&param.gates, &param.ty);
+        quote!(#(#gates)* #arg: #ty)
+    });
     let checks = sig.params.iter().map(|param| {
         let ty = &param.ty;
+        let gates = &param.gates;
         quote_spanned! {param.span=>
+            #(#gates)*
             (&&::ulo_grpc::__private::ParamProbe::<#marker, #ty>::new())
                 .__ulo_body::<{ ::ulo_grpc::__private::streams_request(<#marker as ::ulo_grpc::Method>::SHAPE) }>()
                 .__ulo_matches();
         }
     });
+    let args = emit::gated_args(sig, &args);
     let method = &sig.ident;
     let awaited = sig.is_async.then(|| quote!(.await));
     let out = Ident::new("__ulo_out", Span::mixed_site());
@@ -118,7 +124,7 @@ fn hidden_method(item: &ImplItemFn, sig: &HandlerSig, marker: &Type, ident: &Ide
     quote! {
         #(#cfgs)*
         #[doc(hidden)]
-        async fn #ident(#receiver, #(#args: #types),*)
+        async fn #ident(#receiver, #(#declared),*)
             -> ::core::result::Result<::ulo_grpc::__private::Answer, ::ulo::BoxError>
         {
             {

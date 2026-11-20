@@ -22,7 +22,7 @@ pub struct LintsService;
 #[meta(Tag("lints"))]
 impl LintsService {
     #[ulo_grpc::method(lints::lints::Unary)]
-    async fn unary(&self, req: Request<Number>, cx: GrpcCx) -> Result<Response<Number>, Refusal> {
+    async fn unary(&self, req: Request<Number>, cx: GrpcCx, #[cfg(any())] metadata: GrpcMetadata) -> Result<Response<Number>, Refusal> {
         let _ = cx.path();
         Ok(Response::new(*req.message()).metadata("x-lint", "unary"))
     }

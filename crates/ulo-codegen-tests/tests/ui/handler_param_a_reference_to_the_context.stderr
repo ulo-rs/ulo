@@ -1,0 +1,22 @@
+error[E0277]: `&HttpCx` cannot be built from a `Http` call
+  --> tests/ui/handler_param_a_reference_to_the_context.rs:13:24
+   |
+13 |     fn read(&self, cx: &HttpCx) -> String {
+   |                        ^^^^^^^ a handler parameter is read from the call or from the container
+   |
+   = help: the trait `ulo_http::__private::ulo_transport::__private::Param<Http, _>` is not implemented for `&HttpCx`
+   = note: a transport implements `FromCall` for its own extractors; `FromContainer` types (`Dep`, `Ext`, ...) are accepted on every transport
+help: consider removing the leading `&`-reference
+   |
+13 -     fn read(&self, cx: &HttpCx) -> String {
+13 +     fn read(&self, cx: HttpCx) -> String {
+   |
+
+error[E0277]: `&HttpCx` cannot be built from a `Http` call
+  --> tests/ui/handler_param_a_reference_to_the_context.rs:13:24
+   |
+13 |     fn read(&self, cx: &HttpCx) -> String {
+   |                        ^ a handler parameter is read from the call or from the container
+   |
+   = help: the trait `ulo_http::__private::ulo_transport::__private::Param<Http, _>` is not implemented for `&HttpCx`
+   = note: a transport implements `FromCall` for its own extractors; `FromContainer` types (`Dep`, `Ext`, ...) are accepted on every transport

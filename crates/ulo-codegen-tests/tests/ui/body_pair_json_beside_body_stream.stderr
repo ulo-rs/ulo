@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: `note` and `chunks` both consume the body; a handler reads the body once
+  --> tests/ui/body_pair_json_beside_body_stream.rs:12:50
+   |
+12 |     fn create(&self, note: Json<String>, chunks: BodyStream) -> &'static str {
+   |                                                  ^^^^^^^^^^ evaluation of `Notes::__ULO_CHECKS_create` failed here
+
+note: erroneous constant encountered
+ --> tests/ui/body_pair_json_beside_body_stream.rs:9:1
+  |
+9 | #[handlers]
+  | ^^^^^^^^^^^
+  |
+  = note: this note originates in the attribute macro `handlers` (in Nightly builds, run with -Z macro-backtrace for more info)

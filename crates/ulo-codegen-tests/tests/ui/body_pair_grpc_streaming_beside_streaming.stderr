@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: `numbers` and `again` both consume the body; a handler reads the body once
+  --> tests/ui/body_pair_grpc_streaming_beside_streaming.rs:13:55
+   |
+13 |     fn call(&self, numbers: Streaming<Number>, again: Streaming<Number>) -> Sum {
+   |                                                       ^^^^^^^^^ evaluation of `Calls::__ULO_CHECKS_call` failed here
+
+note: erroneous constant encountered
+  --> tests/ui/body_pair_grpc_streaming_beside_streaming.rs:10:1
+   |
+10 | #[handlers]
+   | ^^^^^^^^^^^
+   |
+   = note: this note originates in the attribute macro `handlers` (in Nightly builds, run with -Z macro-backtrace for more info)

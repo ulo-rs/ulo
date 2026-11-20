@@ -10,6 +10,7 @@ against 0.1.0-alpha.3
 break ulo-http feature_missing 1  # the `tokio-io` feature is removed, so a build enabling it on the hub cannot put tokio there for every crate beside it; a backend on tokio writes `Upgraded::from_futures(io.compat())` through `tokio-util`'s `compat`
 break ulo-http inherent_method_missing 1  # `Upgraded::from_tokio`, the removed feature's constructor; `Upgraded::from_futures(io.compat())` is the same conversion
 break ulo-http trait_method_added 1  # `WithHttpStatus::http_status`, the read-back beside `with_http_status`; a type of a user's own implementing the trait adds it
+break ulo-handler-codegen constructible_struct_adds_field 1  # `Param::gates`, the parameter's `cfg` attributes every item written for it carries, so a parameter compiled out leaves nothing naming it; a transport macro crate building a `Param` by literal adds the field
 
 # Breaks cargo-semver-checks does not lint, listed for the release notes (RELEASING.md, step 3).
 # unchecked ulo App::listen  # refuses, as one `StartupError::Configure` entry per controller naming it and its transport, every controller no queued server serves, a WebSocket gateway declared `port = own` with no standalone server among them, where it bound and never served it; a binary serving no `T` declares it with `AppBuilder::unserved::<T>()`
