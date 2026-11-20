@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: `login` and `parts` both consume the body; a handler reads the body once
+  --> tests/ui/body_pair_form_beside_multipart.rs:12:50
+   |
+12 |     fn create(&self, login: Form<String>, parts: Multipart) -> &'static str {
+   |                                                  ^^^^^^^^^ evaluation of `Notes::__ULO_CHECKS_create` failed here
+
+note: erroneous constant encountered
+ --> tests/ui/body_pair_form_beside_multipart.rs:9:1
+  |
+9 | #[handlers]
+  | ^^^^^^^^^^^
+  |
+  = note: this note originates in the attribute macro `handlers` (in Nightly builds, run with -Z macro-backtrace for more info)

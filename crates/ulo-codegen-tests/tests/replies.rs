@@ -2,7 +2,7 @@
 //! covers: well-known types on both sides, a proto with no `package`, `Response<S>` around a
 //! stream, the stream arms under a `Result`, a `tonic::Status` returned as the error by a handler
 //! or by an error handler, an error handler answering a domain error with a message or a stream of
-//! its own, and `GrpcMetadata` as a parameter.
+//! its own, `GrpcMetadata` as a parameter, and a return type spelled through aliases.
 
 mod support;
 
@@ -36,6 +36,10 @@ impl fmt::Display for Refusal {
 }
 
 impl Error for Refusal {}
+
+/// `Result` and `Response` under names of their own.
+type Outcome<T> = Result<T, Refusal>;
+type Answered<T> = Response<T>;
 
 #[controller]
 struct KnownTypes;
@@ -178,6 +182,12 @@ impl ShapesService {
     #[error_handlers(value = SubstituteStream)]
     async fn substituted_stream(&self, req: Message<Ticks>) -> Result<impl Stream<Item = Result<Tick, Refusal>>, Refusal> {
         if req.0.fail { Err(Refusal) } else { Ok(ticks(req.0.count)) }
+    }
+
+    #[ulo_grpc::method(probe::shapes::Aliased)]
+    #[error_handlers(value = Substitute)]
+    fn aliased(&self, req: Message<Ticks>) -> Outcome<Answered<Tick>> {
+        if req.0.fail { Err(Refusal) } else { Ok(Response::new(Tick { n: req.0.count }).metadata("x-shape", "aliased")) }
     }
 
     /// The `x-user` metadata the caller sent.
@@ -353,5 +363,21 @@ async fn grpc_metadata_as_a_parameter_is_what_the_caller_sent() {
     assert_eq!(reply.into_inner(), "ada");
     let reply = client.whoami(()).await.unwrap_or_else(|status| panic!("Whoami failed: {status:?}"));
     assert_eq!(reply.into_inner(), "nobody");
+    app.stop().await;
+}
+
+/// A return type read by its type: an `Ok` through an alias of `Response` writes its metadata, and
+/// an `Err` through an alias of `Result` reaches the error handlers as the error it carries.
+#[tokio::test]
+async fn a_return_type_spelled_through_aliases_answers_as_the_types_it_names() {
+    let (app, _) = start().await;
+    let mut client = ShapesClient::new(app.channel().await);
+    let reply = client.aliased(request(3, false)).await.unwrap_or_else(|status| panic!("Aliased failed: {status:?}"));
+    assert_eq!(reply.metadata().get("x-shape").and_then(|value| value.to_str().ok()), Some("aliased"));
+    assert_eq!(reply.into_inner(), Tick { n: 3 });
+
+    let claimed = client.aliased(request(3, true)).await.unwrap_or_else(|status| panic!("the refusal was not claimed: {status:?}"));
+    assert_eq!(claimed.metadata().get("x-substituted").and_then(|value| value.to_str().ok()), Some("yes"));
+    assert_eq!(claimed.into_inner(), SUBSTITUTE, "the error handler matched the `Refusal` the alias carries");
     app.stop().await;
 }

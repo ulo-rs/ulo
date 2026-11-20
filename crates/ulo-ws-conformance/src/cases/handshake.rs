@@ -1,7 +1,7 @@
 //! The upgrade handshake: the 101 and its `Sec-WebSocket-Accept`, the refusals RFC 6455 §4.2.1
 //! names and the drain's 503, the default `Origin` check, the subprotocol the 101 echoes, and the
 //! connection phase refusing before the upgrade under `refuse = handshake`, with the status and
-//! headers HTTP answers the refusal's error with.
+//! headers HTTP answers the refusal's error with, and an extension offer declined.
 //!
 //! A request that carries no `Upgrade` header at all is no upgrade request: on the HTTP server's
 //! port the HTTP application answers it, so no refusal scenario sends one. Each refusal here keeps
@@ -252,6 +252,23 @@ pub async fn subprotocol<H: Host>() {
         assert_eq!(which, json!({ "id": 1, "data": chosen }), "{what}: the subprotocol the connection's `UpgradeHead` carries");
         conn.hang_up().await;
     }
+    app.stop().await;
+}
+
+/// RFC 6455 §9.1: a server accepts an extension by listing it in its own
+/// `Sec-WebSocket-Extensions`; none listed, none is in use. The server negotiates none, so it
+/// answers an offer of `permessage-deflate` (RFC 7692) without the header, and the connection
+/// speaks uncompressed frames, whose reserved bits the client's library refuses when set.
+pub async fn extension_declined<H: Host>() {
+    let app = Served::<H>::start().await;
+    let request = Request::upgrade("/echo").header("Sec-WebSocket-Extensions", "permessage-deflate; client_max_window_bits");
+    let answer = app.upgrade(&request).await;
+    assert_eq!(answer.status, 101, "{}", answer.body);
+    assert_eq!(answer.header("sec-websocket-extensions"), None, "the server accepted an extension");
+    let mut conn = app.conn(answer, "/echo");
+    let long = "z".repeat(512);
+    assert_eq!(conn.exchange(json!({ "event": "echo", "id": 1, "data": long })).await, json!({ "id": 1, "data": long }));
+    conn.hang_up().await;
     app.stop().await;
 }
 

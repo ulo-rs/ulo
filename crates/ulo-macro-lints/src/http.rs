@@ -39,6 +39,11 @@ impl Pages {
         "index"
     }
 
+    #[ulo_http::post("/gated")]
+    fn gated(&self, #[cfg(any())] raw: ulo_http::Bytes, #[cfg(not(any()))] page: Query<Page>) -> String {
+        page.0.page.to_string()
+    }
+
     #[ulo_http::get("/items/{id}")]
     async fn item(&self, id: Path<u32>, page: Query<Page>) -> Result<String, Lookup> {
         if id.0 == 0 { Err(Lookup::Missing) } else { Ok(format!("{}:{}", id.0, page.0.page)) }

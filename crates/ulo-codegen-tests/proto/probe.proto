@@ -25,6 +25,7 @@ service Shapes {
   rpc Whoami(google.protobuf.Empty) returns (google.protobuf.StringValue);
   rpc Substituted(Ticks) returns (Tick);
   rpc SubstitutedStream(Ticks) returns (stream Tick);
+  rpc Aliased(Ticks) returns (Tick);
 }
 
 // Handlers that outlive a caller's deadline, each with a different error handler.
@@ -58,6 +59,7 @@ service Vault {
   rpc Open(Ticks) returns (Tick);
   rpc Sealed(Ticks) returns (Tick);
   rpc Fragile(Ticks) returns (Tick);
+  rpc Claimed(Ticks) returns (Tick);
 }
 
 // Trailing metadata in each position a reply carries it: after a unary reply's message, in a

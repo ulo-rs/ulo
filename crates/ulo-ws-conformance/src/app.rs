@@ -74,6 +74,10 @@ const fn protocol_code(code: u16) -> CloseCode {
 /// `/small`'s `max_message`, in bytes.
 pub(crate) const MAX_MESSAGE: usize = 128;
 
+/// The reason `/echo`'s `leave` closes its connection with, and what it sends after the close.
+pub(crate) const LEAVING: &str = "leaving";
+pub(crate) const AFTER_THE_CLOSE: &str = "after the close";
+
 /// The two `/streams` events whose stream end a scenario reads.
 pub(crate) const WRITTEN: &str = "written";
 pub(crate) const DISCARDED: &str = "discarded";
@@ -340,9 +344,9 @@ macro_rules! gateways {
 
         use futures_util::Stream;
         use ulo::{Dep, ExecutionRef, ModuleDef, controller, handlers};
-        use ulo_ws::{ConnectCx, ConnectRefused, Connection, DisconnectReason, OnConnect, OnDisconnect, Payload, UpgradeHead, WsCx};
+        use ulo_ws::{CloseCode, ConnectCx, ConnectRefused, Connection, DisconnectReason, Frame, OnConnect, OnDisconnect, Payload, UpgradeHead, WsCx};
 
-        use super::{AnswerOne, Fault, HeaderIs, NotRefusedByGuard, Probe, RefusedByError, TOKEN};
+        use super::{AFTER_THE_CLOSE, AnswerOne, Fault, HeaderIs, LEAVING, NotRefusedByGuard, Probe, RefusedByError, TOKEN};
 
         /// The plain gateway: a round trip, a stream, and every `on_disconnect` recorded.
         #[controller]
@@ -361,6 +365,14 @@ macro_rules! gateways {
             #[ulo_ws::message("count")]
             fn count(&self, up_to: Payload<u32>) -> impl Stream<Item = Result<u32, Fault>> {
                 futures_util::stream::iter((1..=up_to.0).map(Ok))
+            }
+
+            /// Closes the connection, then sends a frame and answers, neither of which is written.
+            #[ulo_ws::message("leave")]
+            async fn leave(&self, cx: WsCx) -> &'static str {
+                let _ = cx.conn().close(CloseCode::NORMAL, LEAVING).await;
+                let _ = cx.conn().send(Frame::text(AFTER_THE_CLOSE)).await;
+                AFTER_THE_CLOSE
             }
         }
 

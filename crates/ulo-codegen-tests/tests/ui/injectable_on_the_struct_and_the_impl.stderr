@@ -1,0 +1,10 @@
+error[E0119]: conflicting implementations of trait `ulo::Construct` for type `Orders`
+  --> tests/ui/injectable_on_the_struct_and_the_impl.rs:13:1
+   |
+ 8 | #[injectable]
+   | ------------- first implementation here
+...
+13 | #[injectable]
+   | ^^^^^^^^^^^^^ conflicting implementation for `Orders`
+   |
+   = note: this error originates in the attribute macro `injectable` (in Nightly builds, run with -Z macro-backtrace for more info)

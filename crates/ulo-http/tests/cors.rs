@@ -1,16 +1,22 @@
 //! `Cors` beyond the single conformance preflight: the allow-list echoes the matching origin,
 //! credentials ride with it, a preflight carries the configured lists and `Max-Age` and advertises
 //! the matched route's methods, and every response, a miss included, is decorated and varies on
-//! `Origin`.
+//! `Origin`, as are the failure of an entry written after `Cors`, a handler's error rendered, and
+//! the answer a global error handler claims in its place.
 
 mod o1_support;
 
+use std::error::Error;
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 use http::{HeaderName, Method, StatusCode};
 use o1_support::{Call, Running, refused, refusals, start};
-use ulo::{ModuleDef, controller, handlers};
-use ulo_http::{Cors, PreDispatch, Routing, WithHeaders};
+use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
+use ulo_http::middleware::{Middleware, Next};
+use ulo_http::{Cors, Http, HttpBody, HttpCx, PreDispatch, Request, Response, Routing, WithHeaders};
+use ulo_transport::{CallError, Classify};
 
 const FIRST: &str = "https://first.example";
 const SECOND: &str = "https://second.example";
@@ -18,6 +24,41 @@ const STRANGER: &str = "https://stranger.example";
 /// `FIRST` in another case, and `FIRST` with more after it: an origin matches byte for byte.
 const FIRST_UPPER: &str = "HTTPS://FIRST.EXAMPLE";
 const FIRST_EXTENDED: &str = "https://first.example.evil";
+
+/// What `/fail` and `/claimed` fail with.
+#[derive(Debug, Classify)]
+#[classify(conflict)]
+struct Clash;
+
+impl fmt::Display for Clash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("clash")
+    }
+}
+
+impl Error for Clash {}
+
+/// Fails a request carrying `x-fail: unauthorized` with `Unauthorized`.
+struct Gatekeeper;
+
+impl Middleware for Gatekeeper {
+    async fn handle(&self, req: Request, next: Next<'_>) -> Result<Response, BoxError> {
+        if req.headers().get("x-fail").is_some_and(|value| value == "unauthorized") {
+            return Err(CallError::unauthorized("Bearer").into());
+        }
+        next.run(req).await
+    }
+}
+
+/// Answers `/claimed`'s `Clash` with 200 `claimed`; hands any other error on.
+struct ClaimClash;
+
+impl ErrorHandler<Http> for ClaimClash {
+    async fn handle(&self, err: BoxError, cx: &HttpCx) -> Result<Response, BoxError> {
+        let clash = err.downcast_ref::<CallError>().and_then(|error| error.source_as::<Clash>()).is_some();
+        if clash && cx.uri().path() == "/claimed" { Ok(Response::new(HttpBody::from("claimed"))) } else { Err(err) }
+    }
+}
 
 #[controller]
 struct Pages;
@@ -48,6 +89,16 @@ impl Pages {
     fn submit(&self) -> &'static str {
         "submitted"
     }
+
+    #[ulo_http::get("/fail")]
+    fn fail(&self) -> Result<&'static str, Clash> {
+        Err(Clash)
+    }
+
+    #[ulo_http::get("/claimed")]
+    fn claimed(&self) -> Result<&'static str, Clash> {
+        Err(Clash)
+    }
 }
 
 fn list_config(m: &mut ModuleDef<'_>) {
@@ -61,6 +112,14 @@ fn list_config(m: &mut ModuleDef<'_>) {
             .expose_headers([HeaderName::from_static("x-total")])
             .max_age(Duration::from_secs(600)),
     );
+}
+
+/// `Cors` outside a failing entry, and a global error handler claiming one handler's error.
+fn outside_the_chain(m: &mut ModuleDef<'_>) {
+    m.controller::<Pages>();
+    m.meta::<PreDispatch>().apply_value(Cors::new().allow_origin(FIRST)).apply_value(Gatekeeper);
+    let claim: Arc<AnyErrorHandler<Http>> = Arc::new(ClaimClash);
+    m.enhancer::<AnyErrorHandler<Http>>().value(claim);
 }
 
 fn credentials_config(m: &mut ModuleDef<'_>) {
@@ -288,5 +347,28 @@ async fn an_actual_response_is_decorated_with_exposed_headers_and_so_are_a_miss_
     let unknown = app.send(Call::new(Method::DELETE, "/hit").header("origin", FIRST)).await;
     assert_eq!(unknown.status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(unknown.header("access-control-allow-origin"), Some(FIRST));
+    app.stop().await;
+}
+
+/// `Cors` sits outside the error chain and outside every entry written after it: what an inner
+/// entry's failure, a handler's error and a global error handler's claim each become passes back
+/// through it.
+#[tokio::test]
+async fn a_failure_below_cors_and_an_answer_an_error_handler_claims_are_decorated() {
+    let app = start(outside_the_chain).await;
+
+    let refused = app.send(Call::get("/hit").header("origin", FIRST).header("x-fail", "unauthorized")).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "the inner entry's failure, rendered");
+    assert_eq!(refused.header("www-authenticate"), Some("Bearer"));
+    assert_eq!(refused.header("access-control-allow-origin"), Some(FIRST));
+
+    let failed = app.send(Call::get("/fail").header("origin", FIRST)).await;
+    assert_eq!(failed.status, StatusCode::CONFLICT, "the handler's error, unclaimed");
+    assert_eq!(failed.header("access-control-allow-origin"), Some(FIRST));
+
+    let claimed = app.send(Call::get("/claimed").header("origin", FIRST)).await;
+    assert_eq!((claimed.status, claimed.text()), (StatusCode::OK, "claimed".to_owned()), "the error handler's answer");
+    assert_eq!(claimed.header("access-control-allow-origin"), Some(FIRST));
+    assert_eq!(claimed.tokens("vary"), ["origin"]);
     app.stop().await;
 }

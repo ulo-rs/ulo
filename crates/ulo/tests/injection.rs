@@ -163,6 +163,45 @@ async fn a_site_reads_each_of_the_four_shapes() {
     assert_eq!(shapes.user, "ann");
 }
 
+/// `Tr`, `Plugin` and `User` implement no `Debug`, so the derive compiles only because each handle
+/// writes its key rather than its value.
+#[tokio::test]
+async fn a_struct_holding_handles_derives_debug_writing_their_keys() {
+    struct Replica;
+
+    #[derive(Debug)]
+    #[expect(dead_code, reason = "the fields are read only through the derived `Debug`")]
+    struct Held {
+        tr: Dep<dyn Tr>,
+        replica: Dep<Cfg, Replica>,
+        plugins: Many<dyn Plugin>,
+        user: Ext<User>,
+    }
+
+    let app = connects(Mod::<A>::new(|m| {
+        m.provide::<Impl>().also_as::<dyn Tr>(|a| a);
+        m.contribute::<dyn Plugin>().value(Arc::new(Named("first")));
+        m.execution(|tr: Dep<dyn Tr>, plugins: Many<dyn Plugin>, user: Ext<User>| async move {
+            Held { tr, replica: Dep::from_arc(Arc::new(Cfg(1))), plugins, user }
+        });
+    }))
+    .await;
+
+    let held = app
+        .execute(ExecOptions::new(), async |exec| {
+            exec.extensions().insert(User("ann"));
+            exec.get::<Held>().await
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        format!("{:?}", *held),
+        "Held { tr: Dep<dyn Tr>, replica: Dep<Cfg @ Replica>, plugins: Many<dyn Plugin>, user: Ext<User> }"
+    );
+    assert_eq!(format!("{:#?}", held.user), format!("Ext<{}>", std::any::type_name::<User>()), "`{{:#?}}` writes full paths");
+}
+
 #[tokio::test]
 async fn an_optional_dependency_is_none_when_unbound_and_some_when_bound() {
     struct Missing;
