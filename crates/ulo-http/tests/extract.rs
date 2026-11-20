@@ -1,7 +1,9 @@
 //! The HTTP extractors: each one's success and the `ExtractError` variant and parameter it fails
 //! with, and the status that variant renders. Every case runs against two apps: one that renders
 //! the failure as the framework does, and one whose global error handler reports the variant and
-//! the parameter it saw, so a failure naming the wrong parameter shows.
+//! the parameter it saw, so a failure naming the wrong parameter shows. A parameter is read by its
+//! type, so every spelling of a type reads what the type reads, and a parameter its `#[cfg]`
+//! compiles out is neither read nor passed.
 
 mod o1_support;
 
@@ -13,7 +15,7 @@ use http::{Method, StatusCode};
 use o1_support::{Call, Running, start};
 use serde::Deserialize;
 use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
-use ulo_http::{BodyStream, Bytes, Form, Header, Host, Http, HttpBody, HttpCx, Json, MaxBody, Multipart, Path, Query, Response};
+use ulo_http::{BodyStream, Bytes, Form, Header, Host, Http, HttpBody, HttpCx, Json, Json as Document, MaxBody, Multipart, Path, Query, Response};
 use ulo_transport::{CallError, ErrorKind, ExtractError, Valid, Validate};
 
 #[derive(Deserialize)]
@@ -58,6 +60,13 @@ struct Item {
 /// What a host put in the request's extensions.
 #[derive(Clone)]
 struct Who(&'static str);
+
+/// `Json` under a name of its own.
+type Body<T> = Json<T>;
+
+/// A type no module binds, read only by a parameter compiled out.
+#[expect(dead_code, reason = "named only by a parameter its `cfg` compiles out")]
+struct Unbound;
 
 #[controller]
 struct Inputs;
@@ -210,6 +219,54 @@ impl Inputs {
     fn valid(&self, item: Valid<Json<Item>>) -> String {
         format!("{}|{}", item.0.0.name, item.0.0.qty)
     }
+
+    /// `raw` would be a second body consumer beside `ids` and `unbound` a dependency no module
+    /// binds, so either one compiled in fails the build or the wiring.
+    #[ulo_http::post("/gated")]
+    fn gated(
+        &self,
+        #[cfg(any())] raw: Bytes,
+        Json(ids): Json<Ids>,
+        #[cfg(any())] unbound: ulo::Dep<Unbound>,
+        #[cfg(test)] Query(search): Query<Search>,
+    ) -> String {
+        format!("{}|{}", ids.id, search.page)
+    }
+
+    #[ulo_http::post("/spelled/alias")]
+    fn alias(&self, note: Body<Ids>) -> String {
+        note.0.id.to_string()
+    }
+
+    #[ulo_http::post("/spelled/renamed")]
+    fn renamed(&self, note: Document<Ids>) -> String {
+        note.0.id.to_string()
+    }
+
+    #[ulo_http::post("/spelled/qualified")]
+    fn qualified(&self, note: ::ulo_http::Json<Ids>) -> String {
+        note.0.id.to_string()
+    }
+
+    #[ulo_http::post("/spelled/optional")]
+    fn optional(&self, note: std::option::Option<Json<Ids>>) -> String {
+        note.map_or("none".to_owned(), |note| note.0.id.to_string())
+    }
+
+    #[ulo_http::post("/spelled/ignored")]
+    fn ignored(&self, _: Json<Ids>) -> &'static str {
+        "read"
+    }
+
+    #[ulo_http::get("/spelled/destructured/{id}")]
+    fn destructured(&self, Path(Ids { id }): Path<Ids>) -> String {
+        id.to_string()
+    }
+
+    #[ulo_http::post("/spelled/valid-query")]
+    fn valid_query(&self, item: Valid<Query<Item>>, note: Json<Ids>) -> String {
+        format!("{}|{}|{}", item.0.0.name, item.0.0.qty, note.0.id)
+    }
 }
 
 fn describe(error: &ExtractError) -> String {
@@ -332,9 +389,14 @@ async fn json_needs_a_json_media_type_and_a_body_and_names_what_failed() {
     apps.succeeds(json("application/json", r#"{"n":5}"#), "5").await;
     apps.succeeds(json("application/json; charset=utf-8", r#"{"n":6}"#), "6").await;
     apps.succeeds(json("application/vnd.api+json", r#"{"n":7}"#), "7").await;
+    apps.succeeds(json("application/problem+json", r#"{"n":8}"#), "8").await;
 
     let wrong = apps.fails(json("text/plain", r#"{"n":1}"#), StatusCode::UNSUPPORTED_MEDIA_TYPE, "UnsupportedMediaType|body|application/json").await;
     assert_eq!(wrong.header("accept"), Some("application/json"), "a 415 names what is accepted");
+    // RFC 9110 §8.3 lets a recipient without a `Content-Type` either assume a type or refuse; a
+    // JSON body without one is refused as of no JSON type.
+    let unlabelled = || Call::new(Method::POST, "/json").body(r#"{"n":1}"#);
+    apps.fails(unlabelled, StatusCode::UNSUPPORTED_MEDIA_TYPE, "UnsupportedMediaType|body|application/json").await;
     apps.fails(json("application/json", "{not json"), BAD, "Malformed|body").await;
     apps.fails(|| Call::new(Method::POST, "/json").header("content-type", "application/json"), BAD, "Missing|body").await;
     apps.stop().await;
@@ -398,6 +460,8 @@ async fn form_needs_the_urlencoded_media_type_and_names_the_field_that_failed() 
     apps.succeeds(form(urlencoded, "user=ann&pw=x%21"), "ann|x!").await;
     let wrong = apps.fails(form("application/json", "user=ann&pw=x"), StatusCode::UNSUPPORTED_MEDIA_TYPE, &format!("UnsupportedMediaType|body|{urlencoded}")).await;
     assert_eq!(wrong.header("accept"), Some(urlencoded));
+    let unlabelled = || Call::new(Method::POST, "/form").body("user=ann&pw=x");
+    apps.fails(unlabelled, StatusCode::UNSUPPORTED_MEDIA_TYPE, &format!("UnsupportedMediaType|body|{urlencoded}")).await;
     // Every byte sequence parses as a form, so a field it lacks is content that does not fit.
     apps.fails(form(urlencoded, "user=ann"), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|pw").await;
     apps.stop().await;
@@ -562,5 +626,48 @@ async fn a_multipart_read_error_that_is_not_the_limit_is_malformed_and_answers_4
         let seen = apps.reporting.send(call()).await;
         assert_eq!(seen.text(), "Malformed|body", "{name}: the error handlers see `Malformed` naming `body`");
     }
+    apps.stop().await;
+}
+
+/// The `#[cfg(any())]` parameters exist in the source alone: the body reaches `ids`, the wiring
+/// asks for no `Unbound`, and the `#[cfg(test)]` parameter is read and passed.
+#[tokio::test]
+async fn a_parameter_compiled_out_is_neither_read_nor_passed_and_one_compiled_in_is_both() {
+    let apps = Apps::start().await;
+    let gated = |path: &'static str| move || Call::new(Method::POST, path).header("content-type", "application/json").body(r#"{"id":3}"#);
+
+    apps.succeeds(gated("/gated?page=8"), "3|8").await;
+    apps.fails(gated("/gated"), BAD, "Missing|page").await;
+    apps.stop().await;
+}
+
+/// An alias, a renamed import, a qualified path and a qualified `Option` read what `Json` reads
+/// and fail as it fails; a wildcard pattern and a destructuring one are read as a named binding is.
+#[tokio::test]
+async fn every_spelling_of_an_extractor_reads_what_its_type_reads() {
+    let apps = Apps::start().await;
+    let json = |route: &'static str, body: &'static str| move || Call::new(Method::POST, route).header("content-type", "application/json").body(body);
+
+    for route in ["/spelled/alias", "/spelled/renamed", "/spelled/qualified", "/spelled/optional"] {
+        apps.succeeds(json(route, r#"{"id":5}"#), "5").await;
+        apps.fails(json(route, r#"{"id":"five"}"#), StatusCode::UNPROCESSABLE_ENTITY, "Mismatched|body").await;
+    }
+    apps.succeeds(|| Call::new(Method::POST, "/spelled/optional"), "none").await;
+    apps.succeeds(json("/spelled/ignored", r#"{"id":5}"#), "read").await;
+    apps.fails(json("/spelled/ignored", "{not json"), BAD, "Malformed|body").await;
+    apps.succeeds(|| Call::get("/spelled/destructured/6"), "6").await;
+    apps.fails(|| Call::get("/spelled/destructured/six"), BAD, "Malformed|id").await;
+    apps.stop().await;
+}
+
+/// `Valid` reads only what it wraps, so a validated query beside a JSON body leaves the body to
+/// the body extractor.
+#[tokio::test]
+async fn a_validated_query_beside_a_json_body_reads_each_from_its_own_part() {
+    let apps = Apps::start().await;
+    let call = |path: &'static str| move || Call::new(Method::POST, path).header("content-type", "application/json").body(r#"{"id":2}"#);
+
+    apps.succeeds(call("/spelled/valid-query?name=pen&qty=3"), "pen|3|2").await;
+    apps.fails(call("/spelled/valid-query?name=pen&qty=0"), StatusCode::UNPROCESSABLE_ENTITY, "Invalid|Query|1").await;
     apps.stop().await;
 }

@@ -165,7 +165,9 @@ fn handler_value(kind: Kind, every_instance: bool, sig: &HandlerSig, paths: &Pat
     let reach = every_instance.then(|| quote!(.every_instance()));
     let probes = sig.params.iter().map(|param| {
         let ty = &param.ty;
+        let gates = &param.gates;
         quote_spanned! {param.span=>
+            #(#gates)*
             let #handler = (&&&#this::__private::PayloadKindProbe::<#ty>::new()).__ulo_payload(#handler);
         }
     });
@@ -186,10 +188,15 @@ fn handler_value(kind: Kind, every_instance: bool, sig: &HandlerSig, paths: &Pat
 /// `__ulo_event_reply` answer `StreamedReplyOnEvent`, which `let (): ()` refuses.
 fn shape(kind: Kind, sig: &HandlerSig, output_span: Span, paths: &Paths) -> TokenStream {
     let this = &paths.this;
+    let streams_request = Ident::new("__ulo_streams_request", Span::mixed_site());
     let probes = sig.params.iter().map(|param| {
         let ty = &param.ty;
+        let gates = &param.gates;
         quote_spanned! {param.span=>
-            || (&&#this::__private::InboundProbe::<#ty>::new()).__ulo_streams()
+            #(#gates)*
+            {
+                #streams_request |= (&&#this::__private::InboundProbe::<#ty>::new()).__ulo_streams();
+            }
         }
     });
     let reply = Ident::new("__ulo_reply", Span::mixed_site());
@@ -206,7 +213,10 @@ fn shape(kind: Kind, sig: &HandlerSig, output_span: Span, paths: &Paths) -> Toke
             use #this::__private::{NotInbound as _, StreamsBare as _, StreamsInResult as _, StreamsNot as _, ViaInbound as _};
             #probe
             #event_check
-            #this::__private::shape(false #(#probes)*, #streams)
+            #[allow(unused_mut)]
+            let mut #streams_request = false;
+            #(#probes)*
+            #this::__private::shape(#streams_request, #streams)
         }
     }
 }
@@ -227,8 +237,10 @@ fn reply_probe(sig: &HandlerSig, reply: &Ident, paths: &Paths) -> TokenStream {
         sig.params.iter().map(|param| Ident::new(&format!("__ulo_arg{}", param.index), Span::mixed_site())).collect();
     let bindings = sig.params.iter().zip(&args).map(|(param, arg)| {
         let ty = &param.ty;
-        quote_spanned! {param.span=> let #arg: #ty = ::core::unreachable!(); }
+        let gates = &param.gates;
+        quote_spanned! {param.span=> #(#gates)* let #arg: #ty = ::core::unreachable!(); }
     });
+    let args = emit::gated_args(sig, &args);
     let method = &sig.ident;
     let awaited = sig.is_async.then(|| quote!(.await));
     quote! {

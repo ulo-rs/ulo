@@ -23,7 +23,8 @@ use crate::params::Param;
 use crate::paths::Paths;
 
 /// The initializer of `__ULO_CHECKS_<name>`: a block of every pairwise assertion, each spanned on
-/// the pair's second parameter; `()` for fewer than two parameters.
+/// the pair's second parameter and compiled under both parameters' gates; `()` for fewer than two
+/// parameters.
 pub fn consumer_checks(params: &[Param], paths: &Paths) -> TokenStream {
     if params.len() < 2 {
         return quote!(());
@@ -39,7 +40,9 @@ pub fn consumer_checks(params: &[Param], paths: &Paths) -> TokenStream {
                 escape_braces(&second.name),
             );
             let (first_ty, second_ty) = (&first.ty, &second.ty);
+            let gates = first.gates.iter().chain(&second.gates);
             assertions.push(quote_spanned! {second.span=>
+                #(#gates)*
                 ::core::assert!(
                     !(<#first_ty as #transport::__private::Param<#marker, _>>::CONSUMES_BODY
                         && <#second_ty as #transport::__private::Param<#marker, _>>::CONSUMES_BODY),

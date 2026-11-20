@@ -1,3 +1,4 @@
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -37,6 +38,19 @@ impl<T: ?Sized, Q> Clone for Dep<T, Q> {
     fn clone(&self) -> Self {
         Dep { inner: Arc::clone(&self.inner), _q: PhantomData }
     }
+}
+
+/// Writes the key, `Dep<PgPool @ Replica>`, never the value: a struct holding `Dep<dyn Repo>`
+/// derives `Debug` without `Repo: Debug`, and a service's `Debug` prints no configuration it holds.
+impl<T: ?Sized + 'static, Q: 'static> fmt::Debug for Dep<T, Q> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_key(f, "Dep", Key::of::<T, Q>())
+    }
+}
+
+/// `{:#?}` writes the key's full paths, as `{:#}` does on a [`Key`].
+pub(super) fn write_key(f: &mut fmt::Formatter<'_>, handle: &str, key: Key) -> fmt::Result {
+    if f.alternate() { write!(f, "{handle}<{key:#}>") } else { write!(f, "{handle}<{key}>") }
 }
 
 impl<T: ?Sized, Q> Deref for Dep<T, Q> {

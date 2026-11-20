@@ -1,0 +1,8 @@
+error[E0277]: `u32` cannot be built from a `Http` call
+  --> tests/ui/handler_param_not_from_call.rs:12:23
+   |
+12 |     fn read(&self, n: u32) -> String {
+   |                       ^^^ a handler parameter is read from the call or from the container
+   |
+   = help: the trait `ulo_http::__private::ulo_transport::__private::Param<Http, _>` is not implemented for `u32`
+   = note: a transport implements `FromCall` for its own extractors; `FromContainer` types (`Dep`, `Ext`, ...) are accepted on every transport

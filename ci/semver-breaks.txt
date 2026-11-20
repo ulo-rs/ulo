@@ -7,6 +7,8 @@
 
 against 0.1.0-alpha.3
 
+break ulo-handler-codegen constructible_struct_adds_field 1  # `Param::gates`, the parameter's `cfg` attributes every item written for it carries, so a parameter compiled out leaves nothing naming it; a transport macro crate building a `Param` by literal adds the field
+
 # Breaks cargo-semver-checks does not lint, listed for the release notes (RELEASING.md, step 3).
 # unchecked ulo App::listen  # refuses, as one `StartupError::Configure` entry per controller naming it and its transport, every controller no queued server serves, a WebSocket gateway declared `port = own` with no standalone server among them, where it bound and never served it; a binary serving no `T` declares it with `AppBuilder::unserved::<T>()`
 # unchecked ulo-http routes  # a route segment beginning with `:` or `*`, `/raw/:id` or `/files/*rest`, is a compile error on a route literal and a `Configure` entry naming the handler for a pattern joined at runtime, and a pre-dispatch scope or exclusion holding one fails `prepare`, where each matched as literal text; a scope's final `*` stays its wildcard
