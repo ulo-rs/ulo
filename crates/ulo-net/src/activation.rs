@@ -25,8 +25,9 @@ use crate::endpoint::ListenerName;
 /// at most once: a server takes its listener in `bind`, after checking in `prepare` that it is
 /// there.
 ///
-/// Every inherited descriptor must be a listening TCP socket; one that is not fails the whole
-/// activation with [`ActivationError::NotListening`], and none is adopted. Nothing else in the
+/// A descriptor that is not a listening TCP socket, a datagram socket among them, is not adopted
+/// and not closed; it fails only a server whose endpoint names it, with
+/// [`ActivationError::NotListening`], and the sockets beside it are served. Nothing else in the
 /// process may adopt the descriptors as well, since each is closed when its listener drops.
 pub struct Activation {
     sockets: Mutex<Vec<Inherited>>,
@@ -38,6 +39,8 @@ struct Inherited {
     index: usize,
     name: Option<String>,
     listener: Option<TcpListener>,
+    /// Not a listening TCP socket: left open and unowned, and refused to whoever names it.
+    foreign: bool,
 }
 
 impl Inherited {
@@ -91,6 +94,17 @@ impl Activation {
         self.sockets().iter().filter(|socket| socket.listener.is_some() && socket.answers_to(name)).count()
     }
 
+    /// Why `name` has no socket to take: [`ActivationError::NotListening`] when a descriptor it
+    /// answers for is not a listening TCP socket, [`ActivationError::Missing`] when none is, or
+    /// all were taken. For a server's `prepare`, where [`count`](Self::count) is zero.
+    pub fn unavailable(&self, name: &ListenerName) -> ActivationError {
+        let sockets = self.sockets();
+        match sockets.iter().find(|socket| socket.foreign && socket.answers_to(name)) {
+            Some(socket) => ActivationError::NotListening { index: socket.index },
+            None => ActivationError::Missing(name.clone()),
+        }
+    }
+
     /// Takes the inherited socket `name`, non-blocking: the first not yet taken among those the
     /// name answers for.
     pub fn take(&self, name: &ListenerName) -> Result<TcpListener, ActivationError> {
@@ -98,8 +112,8 @@ impl Activation {
             .sockets()
             .iter_mut()
             .filter(|socket| socket.answers_to(name))
-            .find_map(|socket| socket.listener.take())
-            .ok_or_else(|| ActivationError::Missing(name.clone()))?;
+            .find_map(|socket| socket.listener.take());
+        let Some(listener) = listener else { return Err(self.unavailable(name)) };
         listener.set_nonblocking(true).map_err(|error| ActivationError::Io(Arc::new(error)))?;
         Ok(listener)
     }
@@ -155,10 +169,11 @@ mod unix {
             None => vec![None; count],
         };
 
-        // Every descriptor is vetted before any is adopted, so a set the variables misdescribe
-        // leaves each descriptor open and unowned rather than closing one that belongs to
-        // something else in the process.
-        let mut refused = None;
+        // A descriptor that is not a listening TCP socket is neither adopted nor closed, since
+        // variables that misdescribe the set can reach a descriptor something else in the process
+        // owns. It stays unowned for good: no server is handed it, and the listeners beside it are
+        // adopted.
+        let mut listening = Vec::with_capacity(count);
         for index in 0..count {
             // SAFETY: the descriptor is at least 3, so never -1, and the borrow lasts for the
             // check alone. With `LISTEN_PID` naming this process the protocol's descriptors were
@@ -166,23 +181,21 @@ mod unix {
             // process under `Activation::get`'s `OnceLock`. A descriptor the variables misdescribe
             // fails the check and is neither adopted nor closed.
             let borrowed = unsafe { BorrowedFd::borrow_raw(fd(index)) };
-            if !vet(index, borrowed) && refused.is_none() {
-                refused = Some(index);
-            }
-        }
-        if let Some(index) = refused {
-            return Err(ActivationError::NotListening { index });
+            listening.push(vet(index, borrowed));
         }
 
         Ok(names
             .into_iter()
             .enumerate()
             .map(|(index, name)| {
+                if !listening[index] {
+                    return Inherited { index, name, listener: None, foreign: true };
+                }
                 // SAFETY: the descriptor passed `vet`, so it is open and a listening socket,
                 // which needs no cleanup but `close`; it is adopted once, here, and by nothing
                 // else in the process (see `Activation`).
                 let owned = unsafe { OwnedFd::from_raw_fd(fd(index)) };
-                Inherited { index, name, listener: Some(TcpListener::from(owned)) }
+                Inherited { index, name, listener: Some(TcpListener::from(owned)), foreign: false }
             })
             .collect())
     }
@@ -384,7 +397,7 @@ pub enum ActivationError {
     Malformed { variable: &'static str },
     /// No inherited socket answers to this name or index.
     Missing(ListenerName),
-    /// An inherited descriptor that is not a listening TCP socket.
+    /// An inherited descriptor the endpoint names that is not a listening TCP socket.
     NotListening { index: usize },
     /// Socket activation is Unix-only.
     Unsupported,

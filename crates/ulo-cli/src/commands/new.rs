@@ -647,3 +647,60 @@ async fn write_files(root: &Path, files: &[(String, String)]) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::ValueEnum;
+
+    use super::{Db, Plan, Transport, validate_project_name};
+
+    fn file<'a>(plan: &'a Plan, path: &str) -> &'a str {
+        plan.files.iter().find(|(name, _)| name == path).map(|(_, text)| text.as_str()).expect("the file is written")
+    }
+
+    #[test]
+    fn every_project_in_the_matrix_is_written_with_no_slot_left() {
+        for &transport in Transport::value_variants() {
+            let dbs: Vec<Option<Db>> = std::iter::once(None).chain(Db::value_variants().iter().copied().map(Some)).collect();
+            for db in dbs {
+                let plan = Plan::build("demo", transport, db).unwrap_or_else(|error| panic!("{transport:?} {db:?}: {error}"));
+                for (path, text) in &plan.files {
+                    assert!(!text.contains("@@"), "{transport:?} {db:?}: {path} holds an unfilled slot");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_manifest_pins_the_framework_exactly_and_names_the_package() {
+        let plan = Plan::build("demo", Transport::Http, None).expect("a plan");
+        let manifest = file(&plan, "Cargo.toml");
+        assert!(manifest.contains("name = \"demo\""), "{manifest}");
+        let pin = format!("ulo = \"={}\"", env!("CARGO_PKG_VERSION"));
+        assert!(manifest.contains(&pin), "{manifest}");
+    }
+
+    #[test]
+    fn the_logger_shows_info_when_rust_log_is_unset() {
+        let plan = Plan::build("demo", Transport::Http, None).expect("a plan");
+        let main = file(&plan, "src/main.rs");
+        assert!(main.contains("EnvFilter::new(\"info\")"), "the default filter is not info:\n{main}");
+        assert!(!main.contains("fmt::init();"), "`fmt::init()` hides the \"listening\" line:\n{main}");
+    }
+
+    #[test]
+    fn a_grpc_project_writes_the_proto_and_build_script() {
+        let plan = Plan::build("demo", Transport::Grpc, None).expect("a plan");
+        file(&plan, "proto/greeter.proto");
+        file(&plan, "build.rs");
+    }
+
+    #[test]
+    fn a_name_cargo_or_rust_would_refuse_is_refused() {
+        let taken = vec!["ulo-http".to_owned()];
+        for name in ["", "9app", "my app", "fn", "ulo-http", "ulo_http", "std", "a/b"] {
+            assert!(validate_project_name(name, &taken).is_err(), "{name:?} was accepted");
+        }
+        assert!(validate_project_name("my-app_2", &taken).is_ok());
+    }
+}

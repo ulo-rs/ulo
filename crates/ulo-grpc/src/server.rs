@@ -18,7 +18,7 @@ use ulo_http::stage::{Stage, shares_path, unreached_scope};
 use ulo_server_hyper::{Accepted, RuntimeExecutor, RuntimeTimer, Serve, ServeConfig};
 use ulo_listener_tokio::TokioListener;
 use ulo_net::rustls::ServerConfig;
-use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
+use ulo_net::{Activation, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{Admission, Count, ShedLog};
 
@@ -255,7 +255,7 @@ fn check_inherited(endpoints: &[Endpoint], failures: &mut Failures) {
     };
     for (name, listed) in names {
         match activation.count(name) {
-            0 => failures.push(ActivationError::Missing(name.clone()).to_string()),
+            0 => failures.push(activation.unavailable(name).to_string()),
             inherited if listed > inherited => failures.push(format!(
                 "{} is listed {listed} times, and {inherited} inherited sockets answer to it",
                 Endpoint::Inherited(name.clone())

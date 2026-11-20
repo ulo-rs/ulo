@@ -16,7 +16,7 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::{AsyncReadExt, AsyncWriteExt, FutureExt, SinkExt, StreamExt, select_biased};
 use ulo::{BoundAddr, BoxError, BoxFuture, Runtime, Spawn, TaskHandle, Timer};
 use ulo_net::rustls::ServerConfig;
-use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, Tls};
+use ulo_net::{Activation, BoundListener, Endpoint, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
 use ulo_transport::sync::{Watch, ordered};
@@ -236,7 +236,7 @@ impl Core {
         if let Some(Endpoint::Inherited(name)) = &endpoint {
             match Activation::get() {
                 Ok(activation) if activation.contains(name) => {}
-                Ok(_) => problems.push(ActivationError::Missing(name.clone()).to_string()),
+                Ok(activation) => problems.push(activation.unavailable(name).to_string()),
                 Err(error) => problems.push(error.to_string()),
             }
         }
