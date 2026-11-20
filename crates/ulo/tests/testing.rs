@@ -4,6 +4,8 @@
 //! Capabilities pinned: 48 (an override replaces the recipe and keeps the origin module and its
 //! visibility; factories and try-factories; a whole collection; qualified keys; scoping to a module
 //! by type, key or configuration, or everywhere; `replace_module` with a superset of exports).
+//! An override drops the replaced binding's readiness check and hooks and keeps the bindings it
+//! read; `replace_module` removes the original's whole subgraph.
 
 #[macro_use]
 mod common;
@@ -12,7 +14,11 @@ use std::sync::Arc;
 
 use common::*;
 use ulo::testing::TestApp;
-use ulo::{ConnectError, Dep, ExecOptions, FailureReason, LookupError, Module, ModuleDef, ModuleIdentity, StartupError};
+use ulo::scope::Singleton;
+use ulo::{
+    BoxError, ConnectError, Construct, ConstructError, Dep, Dependencies, ExecOptions, FailureReason, Hooks, LookupError, Module,
+    ModuleDef, ModuleIdentity, OnModuleDestroy, OnModuleInit, Resolver, Signal, StartupError,
+};
 
 struct Root;
 struct Db;
@@ -297,5 +303,185 @@ async fn replace_module_swaps_an_import_for_a_superset_of_its_exports() {
     assert_eq!(app.get::<Cfg>().await.unwrap().0, 7);
     assert_eq!(app.get::<Svc>().await.unwrap().0, 8, "the replacement may export more");
     assert_eq!(built.get(), 0, "the original module's factory is never run");
+    close(app).await;
+}
+
+/// A closure hook writing `text` to `log`, for a binding's `.on_init(..)`.
+fn init_hook(log: &Log, text: &'static str) -> impl Fn() -> std::future::Ready<Result<(), Boom>> + Send + Sync + 'static {
+    let log = log.clone();
+    move || {
+        log.push(text);
+        std::future::ready(Ok(()))
+    }
+}
+
+/// A closure hook writing `text` to `log`, for a binding's `.on_destroy(..)`.
+fn destroy_hook(log: &Log, text: &'static str) -> impl Fn() -> std::future::Ready<()> + Send + Sync + 'static {
+    let log = log.clone();
+    move || {
+        log.push(text);
+        std::future::ready(())
+    }
+}
+
+/// A mail client whose readiness check fails, as one against an unreachable host does, with the
+/// configuration it reads built by a factory of its own and every closure hook written.
+fn mailer(log: &Log) -> Mod<Root> {
+    let log = log.clone();
+    Mod::<Root>::new(move |m| {
+        let built = log.clone();
+        m.singleton(move || {
+            built.push("cfg built");
+            std::future::ready(Cfg(1))
+        });
+        let (before, after) = (log.clone(), log.clone());
+        m.singleton(|cfg: Dep<Cfg>| std::future::ready(Svc(cfg.0)))
+            .ready(|| std::future::ready(Err::<(), _>(Boom::new("the mail host is unreachable"))))
+            .on_init(init_hook(&log, "svc init"))
+            .on_destroy(destroy_hook(&log, "svc destroy"))
+            .before_shutdown(move |_s: Signal| {
+                before.push("svc before-shutdown");
+                std::future::ready(())
+            })
+            .on_shutdown(move |_s: Signal| {
+                after.push("svc on-shutdown");
+                std::future::ready(())
+            });
+    })
+}
+
+#[tokio::test]
+async fn an_override_drops_the_replaced_binding_s_readiness_check_and_hooks_and_keeps_what_it_read() {
+    let production = connect_err(mailer(&Log::new())).await;
+    assert!(production.to_string().contains("the mail host is unreachable"), "the check runs without the override:\n{production}");
+
+    let log = Log::new();
+    let app = TestApp::of(mailer(&log))
+        .override_value::<Svc>(Arc::new(Svc(9)))
+        .connect()
+        .await
+        .unwrap_or_else(|e| panic!("the replaced binding's check must not run:\n{e}"));
+    assert_eq!(app.get::<Svc>().await.unwrap().0, 9);
+    assert_eq!(app.get::<Cfg>().await.unwrap().0, 1, "the configuration the replaced factory read stays bound");
+    close(app).await;
+    assert_eq!(log.events(), ["cfg built"], "the dependency is built and no hook of the replaced binding ran");
+}
+
+/// Two `.ready(..)` checks on one binding are a mistake in the module as written, which the test
+/// graph reports as the production graph does, whatever overrides the binding.
+#[test]
+fn an_override_leaves_a_duplicate_readiness_check_reported() {
+    let module = || {
+        Mod::<Root>::new(|m| {
+            m.singleton(|| std::future::ready(Svc(1)))
+                .ready(|| std::future::ready(Ok::<(), Boom>(())))
+                .ready(|| std::future::ready(Ok::<(), Boom>(())));
+        })
+    };
+    let duplicate = |outcome: Result<ulo::App<ulo::Wired>, StartupError>| match outcome {
+        Err(StartupError::Wiring(errors)) => errors.iter().any(|e| matches!(e, ulo::WiringError::DuplicateReadiness { .. })),
+        _ => false,
+    };
+    assert!(duplicate(ulo::App::builder(module()).wire()), "the production graph refuses the second check");
+    assert!(duplicate(TestApp::of(module()).override_value::<Svc>(Arc::new(Svc(9))).wire()), "and so does the test graph overriding it");
+}
+
+/// A `Construct` type with an init and a destroy hook of its own, each writing to the `Log` it reads.
+struct Hooked(Log);
+
+impl Construct for Hooked {
+    type Scope = Singleton;
+
+    fn hooks(h: &mut Hooks<Self>) {
+        h.on_module_init();
+        h.on_module_destroy();
+    }
+
+    fn dependencies(d: &mut Dependencies) {
+        d.field::<Dep<Log>>("log");
+    }
+
+    async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+        Ok(Hooked(r.dep::<Log>().await?.arc().as_ref().clone()))
+    }
+}
+
+impl OnModuleInit for Hooked {
+    async fn on_module_init(&self) -> Result<(), BoxError> {
+        self.0.push("hooked init");
+        Ok(())
+    }
+}
+
+impl OnModuleDestroy for Hooked {
+    async fn on_module_destroy(&self) {
+        self.0.push("hooked destroy");
+    }
+}
+
+#[tokio::test]
+async fn an_override_of_a_construct_type_drops_the_type_s_own_hooks() {
+    let log = Log::new();
+    let l = log.clone();
+    let app = TestApp::of(Mod::<Root>::new(move |m| {
+        m.value(l.clone());
+        m.provide::<Hooked>();
+    }))
+    .override_value::<Hooked>(Arc::new(Hooked(log.clone())))
+    .connect()
+    .await
+    .unwrap_or_else(|e| panic!("{e}"));
+    close(app).await;
+    assert!(log.events().is_empty(), "no hook of the replaced type ran, on the override's value either: {:?}", log.events());
+}
+
+#[tokio::test]
+async fn an_override_of_an_also_as_key_leaves_the_original_binding_its_hooks() {
+    let log = Log::new();
+    let l = log.clone();
+    let app = TestApp::of(Mod::<Root>::new(move |m| {
+        m.value(Pg).also_as::<dyn Repo>(|a| a).on_init(init_hook(&l, "pg init"));
+    }))
+    .override_value::<dyn Repo>(Arc::new(Mem))
+    .connect()
+    .await
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(app.get::<dyn Repo>().await.unwrap().name(), "mem");
+    close(app).await;
+    assert_eq!(log.events(), ["pg init"], "`Pg` is still built and is still the binding the hook was written on");
+}
+
+#[tokio::test]
+async fn replace_module_removes_the_original_s_whole_subgraph() {
+    let built = Count::new();
+    let inner_built = built.clone();
+    let original = move || {
+        let inner_built = inner_built.clone();
+        Mod::<Db>::new(move |m| {
+            let inner_built = inner_built.clone();
+            m.import(Mod::<Inner>::new(move |m| {
+                let inner_built = inner_built.clone();
+                m.singleton(move || {
+                    inner_built.bump();
+                    std::future::ready(Svc(1))
+                });
+            }));
+            m.value(Cfg(1));
+            m.export::<Cfg>();
+        })
+    };
+    let fake = Mod::<Fake>::new(|m| {
+        m.value(Cfg(7));
+        m.export::<Cfg>();
+    });
+    let o = original.clone();
+    let app = TestApp::of(Mod::<Root>::new(move |m| m.import(o())))
+        .replace_module(original(), fake)
+        .connect()
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(app.get::<Cfg>().await.unwrap().0, 7);
+    assert!(app.module::<Mod<Inner>>().is_err(), "the module only the original imported is not in the graph");
+    assert_eq!(built.get(), 0, "and its singleton is never built");
     close(app).await;
 }

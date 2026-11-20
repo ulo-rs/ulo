@@ -11,6 +11,7 @@ use axum::Router;
 use axum::serve::{Listener, ListenerExt};
 use tokio::net::{TcpListener, TcpStream};
 use tower::Layer;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use ulo::app::{Bound, Connected};
 use ulo::{App, BoundAddr, Signal};
 use ulo_http::Upgraded;
@@ -100,7 +101,7 @@ impl Host for AxumHost {
     }
 
     async fn connect(addresses: &[BoundAddr]) -> io::Result<Upgraded> {
-        TcpStream::connect(addresses[0].addr).await.map(Upgraded::from_tokio)
+        TcpStream::connect(addresses[0].addr).await.map(|stream| Upgraded::from_futures(stream.compat()))
     }
 }
 

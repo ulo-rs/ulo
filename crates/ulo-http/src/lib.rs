@@ -118,7 +118,7 @@ pub use limits::{KB, MB, MaxBody, Timeout};
 pub use middleware::Middleware;
 pub use miss::{MethodNotAllowed, MethodNotImplemented, NoRoute, NotAcceptable};
 pub use pre_dispatch::PreDispatch;
-pub use render::WithHttpStatus;
+pub use render::{WithHttpStatus, status_for};
 pub use request::{ConnInfo, OnUpgrade, Request, TlsInfo, Upgraded};
 pub use response::{Created, NoContent, Response, WithHeaders};
 pub use routing::Routing;

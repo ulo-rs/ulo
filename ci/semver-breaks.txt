@@ -7,6 +7,9 @@
 
 against 0.1.0-alpha.3
 
+break ulo-http feature_missing 1  # the `tokio-io` feature is removed, so a build enabling it on the hub cannot put tokio there for every crate beside it; a backend on tokio writes `Upgraded::from_futures(io.compat())` through `tokio-util`'s `compat`
+break ulo-http inherent_method_missing 1  # `Upgraded::from_tokio`, the removed feature's constructor; `Upgraded::from_futures(io.compat())` is the same conversion
+break ulo-http trait_method_added 1  # `WithHttpStatus::http_status`, the read-back beside `with_http_status`; a type of a user's own implementing the trait adds it
 break ulo-handler-codegen constructible_struct_adds_field 1  # `Param::gates`, the parameter's `cfg` attributes every item written for it carries, so a parameter compiled out leaves nothing naming it; a transport macro crate building a `Param` by literal adds the field
 
 # Breaks cargo-semver-checks does not lint, listed for the release notes (RELEASING.md, step 3).
@@ -34,4 +37,6 @@ break ulo-handler-codegen constructible_struct_adds_field 1  # `Param::gates`, t
 # unchecked ulo-http-rocket Embedded  # a response header whose value holds bytes that are no UTF-8 is left out of rocket's response and logged at `warn`, where it was written with U+FFFD in place of each such byte
 # unchecked ulo-graphql-http GraphqlConfig  # `subscriptions` and `connection_init_timeout` and the `ulo-graphql-ws` dependency are behind the default `subscriptions` feature, so a dependent with `default-features = false` no longer has them
 # unchecked ulo-rpc-conformance conformance_suite  # `two_instances_answering_requests` runs two servers on an `Addressed` link, the caller addressing the first, and fails a link there that declares `single_delivery: false` or runs a request on the instance it did not address, where it ran one server and passed both
+# unchecked ulo-http Upgraded  # implements `futures-io`'s `AsyncRead` and `AsyncWrite` alone, where the `tokio-io` feature implemented tokio's on it too; an upgrade handler reading it through tokio's traits wraps it with `tokio-util`'s `FuturesAsyncReadCompatExt::compat`
+# unchecked ulo TestApp::override_value  # an override, `override_factory` and `override_try_factory` too, drops the replaced binding's readiness check and every lifecycle hook written on it, closure hooks and its type's own, where it kept them and ran them against the replacement; the bindings the replaced recipe read are still built, and `replace_module` removes a module's whole subgraph
 # unchecked ulo-net Activation::get  # a descriptor that is not a listening TCP socket is left open and unadopted and fails only a server whose endpoint names it, with `ActivationError::NotListening`, the listeners beside it adopted and served, where `get` answered `NotListening` to every server and adopted none

@@ -14,7 +14,7 @@ pub(crate) mod next;
 pub(crate) mod pipeline;
 pub(crate) mod server;
 
-use std::any::type_name;
+use std::any::{Any, type_name};
 use std::future::Future;
 
 use crate::timer::{BoxError, BoxFuture};
@@ -66,6 +66,15 @@ pub trait Transport: 'static {
     /// own `m.input::<T>().seeded_by::<Tr>()` with the same key and seeder is the same
     /// declaration, not a duplicate. A transport whose handlers mount nowhere declares nothing.
     fn inputs(_d: &mut Inputs) {}
+
+    /// The request method a handler of this transport answers, read off the value its controller
+    /// passed to [`HandlerSpec::new`](crate::HandlerSpec::new) when the handler mounts, for
+    /// [`HandlerInfo::method`](crate::HandlerInfo::method). `None` unless the transport says
+    /// otherwise: `ulo_http::Http` answers its `HttpHandler`'s method, and a transport that routes
+    /// by a pattern, a gRPC path or an event alone has none.
+    fn request_method(_handler: &dyn Any) -> Option<&str> {
+        None
+    }
 }
 
 /// Decides whether a call proceeds. `Ok(true)` admits it. `Ok(false)` refuses a caller the guard

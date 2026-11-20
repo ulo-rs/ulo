@@ -184,7 +184,7 @@ impl AppHandle {
     /// Every mounted handler, of every transport, with its transport key, route or pattern and
     /// metadata, in the order the controllers mounted them (transports DESIGN §2.5, X3).
     pub fn handlers(&self) -> Vec<Arc<HandlerInfo>> {
-        self.shared.graph().handlers.iter().map(|handler| Arc::clone(&handler.info)).collect()
+        handler_infos(&self.shared)
     }
 
     /// The mounted handlers of transport `T`, with their modules, enhancer tiers and handler
@@ -230,4 +230,9 @@ pub enum Phase {
     /// From the first destroy hook on: singleton lookups answer `LookupError::Closed`.
     Destroying,
     Closed,
+}
+
+/// The `HandlerInfo` of every handler in `shared`'s graph, in mount order.
+pub(crate) fn handler_infos(shared: &AppShared) -> Vec<Arc<HandlerInfo>> {
+    shared.graph().handlers.iter().map(|handler| Arc::clone(&handler.info)).collect()
 }

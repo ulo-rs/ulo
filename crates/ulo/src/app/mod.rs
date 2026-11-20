@@ -43,6 +43,7 @@ use crate::signal::Signal;
 use crate::testing::TestPlan;
 use crate::timer::{BoxError, BoxFuture, Defaults, Timer};
 use crate::transport::Transport;
+use crate::transport::handler::HandlerInfo;
 use crate::transport::server::{BoundAddr, ErasedServer, Server, unserved_controllers};
 use crate::type_name::TypeName;
 
@@ -331,6 +332,16 @@ impl<S> App<S> {
 }
 
 impl App<Wired> {
+    /// Every mounted handler, of every transport, as
+    /// [`AppHandle::handlers`](crate::AppHandle::handlers) lists them, read from the wired graph:
+    /// no singleton is built and no readiness check runs, so a routes dump or a generated API
+    /// document is produced without reaching a database. `HandlerInfo::method`,
+    /// `HandlerInfo::route` and `HandlerInfo::prefix` name an HTTP operation, and
+    /// `HandlerInfo::module` the module that registers it.
+    pub fn handlers(&self) -> Vec<Arc<HandlerInfo>> {
+        handle::handler_infos(&self.shared)
+    }
+
     /// Builds the singletons in dependency order, running each one's readiness check right after
     /// it, then every `OnModuleInit` hook, then every `OnApplicationBootstrap` hook (§9.2).
     ///

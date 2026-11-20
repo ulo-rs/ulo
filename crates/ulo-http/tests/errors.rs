@@ -2,7 +2,7 @@
 //! own status from `WithHttpStatus` replaces its kind's, a derived `Classify` maps each variant to
 //! its kind, details travel in the document and in `Retry-After`, an error nothing classified is
 //! withheld, a panic is a 500, and the error chain lets a handler claim, pass on or reshape an
-//! error.
+//! error, reword it keeping everything else, or answer it with the status it would have had.
 
 mod o1_support;
 
@@ -15,7 +15,7 @@ use std::time::Duration;
 use http::StatusCode;
 use o1_support::{Call, start};
 use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
-use ulo_http::{Http, HttpBody, HttpCx, Path, Response, WithHttpStatus};
+use ulo_http::{Http, HttpBody, HttpCx, Path, Response, WithHttpStatus, status_for};
 use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind};
 
 /// A domain error whose variants are classified by the derive.
@@ -164,6 +164,57 @@ impl Faults {
     fn reshaped(&self) -> Result<&'static str, Shop> {
         Err(Shop::Taken)
     }
+
+    /// A `Throttled` sent as a 503, reworded by its error handler.
+    #[ulo_http::get("/reworded")]
+    #[error_handlers(value = Reword)]
+    fn reworded(&self) -> Result<&'static str, CallError> {
+        Err(CallError::from(Throttled).with_http_status(StatusCode::SERVICE_UNAVAILABLE))
+    }
+
+    /// An unauthorized error whose challenge the rewording keeps.
+    #[ulo_http::get("/reworded-challenge")]
+    #[error_handlers(value = Reword)]
+    fn reworded_challenge(&self) -> Result<&'static str, CallError> {
+        Err(CallError::unauthorized("Basic realm=\"shop\""))
+    }
+
+    /// A `Conflict` sent as a 412, or with no status of its own for `0`, answered by a handler
+    /// writing its own body with the status the error would have had.
+    #[ulo_http::get("/own-body/{code}")]
+    #[error_handlers(value = OwnBody)]
+    fn own_body(&self, Path(code): Path<u16>) -> Result<&'static str, CallError> {
+        let error = CallError::new(ErrorKind::Conflict, "the version changed");
+        Err(match code {
+            0 => error,
+            code => error.with_http_status(StatusCode::from_u16(code).expect("the test names a valid status")),
+        })
+    }
+}
+
+/// Rewords the error's public message, then names the source the reworded error still reaches.
+struct Reword;
+
+impl ErrorHandler<Http> for Reword {
+    async fn handle(&self, err: BoxError, _cx: &HttpCx) -> Result<Response, BoxError> {
+        let reworded = CallError::from_boxed(err).with_message("reworded");
+        let source = if reworded.source_as::<Throttled>().is_some() { "throttled" } else { "none" };
+        let text = format!("{}, source {source}", reworded.message());
+        Err(Box::new(reworded.with_message(text)))
+    }
+}
+
+/// Answers with a body of its own and the status the error renders with.
+struct OwnBody;
+
+impl ErrorHandler<Http> for OwnBody {
+    async fn handle(&self, err: BoxError, _cx: &HttpCx) -> Result<Response, BoxError> {
+        let call = CallError::from_boxed(err);
+        let status = call.http_status().unwrap_or_else(|| status_for(call.kind()));
+        let mut response = Response::new(HttpBody::from(format!("own body {}", status.as_u16())));
+        *response.status_mut() = status;
+        Ok(response)
+    }
 }
 
 /// Claims every error as 200 `method`.
@@ -236,6 +287,7 @@ async fn every_error_kind_renders_its_status_as_a_problem_document_of_that_statu
 
     for (name, status, title) in table {
         assert_eq!(kind_named(name).as_str(), name, "the table names the kind it claims to");
+        assert_eq!(status_for(kind_named(name)), status, "{name}: `status_for` is the table the renderer reads");
         let reply = app.send(Call::get(&format!("/kind/{name}"))).await;
         assert_eq!(reply.status, status, "{name}");
         assert_eq!(reply.header("content-type"), Some("application/problem+json"), "{name}");
@@ -367,5 +419,34 @@ async fn an_error_no_handler_claims_falls_through_to_its_own_rendering() {
     let reply = app.send(Call::get("/shop/gone")).await;
     assert_eq!(reply.status, StatusCode::NOT_FOUND);
     assert_eq!(reply.header("content-type"), Some("application/problem+json"));
+    app.stop().await;
+}
+
+/// `with_message` changes the text alone: the status override, the details with the
+/// `Retry-After` they produce, the challenge and the source all survive it.
+#[tokio::test]
+async fn a_reworded_error_keeps_its_status_details_challenge_and_source() {
+    let app = start(plain).await;
+
+    let reply = app.send(Call::get("/reworded")).await;
+    assert_eq!((reply.status, reply.header("retry-after")), (StatusCode::SERVICE_UNAVAILABLE, Some("2")));
+    let problem = reply.json();
+    assert_eq!(problem["detail"], "reworded, source throttled");
+    assert_eq!(problem["details"][0]["type"], "retry_after");
+
+    let challenged = app.send(Call::get("/reworded-challenge")).await;
+    assert_eq!((challenged.status, challenged.header("www-authenticate")), (StatusCode::UNAUTHORIZED, Some("Basic realm=\"shop\"")));
+    assert_eq!(challenged.json()["detail"], "reworded, source none");
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn an_error_handler_reads_the_status_an_error_would_render_with() {
+    let app = start(plain).await;
+
+    let own = app.send(Call::get("/own-body/412")).await;
+    assert_eq!((own.status, own.text()), (StatusCode::PRECONDITION_FAILED, "own body 412".to_owned()), "the error's own status");
+    let kind = app.send(Call::get("/own-body/0")).await;
+    assert_eq!((kind.status, kind.text()), (StatusCode::CONFLICT, "own body 409".to_owned()), "its kind's, with none of its own");
     app.stop().await;
 }

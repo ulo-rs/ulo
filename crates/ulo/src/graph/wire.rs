@@ -24,7 +24,7 @@ use crate::scope::ScopeKind;
 use crate::testing::{CollectionOverride, Override, OverrideTarget, Replacement, TestPlan};
 use crate::runtime::Runtime;
 use crate::timer::{Bound, Timer};
-use crate::transport::controller::{EnhancerDep, HandlerDecl, HandlerRecord, Mount};
+use crate::transport::controller::{EnhancerDep, HandlerDecl, HandlerModule, HandlerRecord, Mount};
 use crate::transport::inputs::Inputs;
 use crate::type_name::TypeName;
 
@@ -473,7 +473,10 @@ fn freeze(
             }
             let prefix = controller.prefix.as_ref().map(|(prefix, _)| prefix.clone());
             graph.handlers.extend(
-                decls.into_iter().map(|decl| HandlerRecord::new(binding, controller_key, id, prefix.clone(), decl)),
+                decls.into_iter().map(|decl| {
+                    let module = HandlerModule { id, identity: identity.clone(), name: names[index].clone() };
+                    HandlerRecord::new(binding, controller_key, module, prefix.clone(), decl)
+                }),
             );
         }
 
@@ -539,9 +542,13 @@ fn freeze(
 }
 
 /// Step 2, tests: each override replaces the recipe and dependencies of the bindings it matches,
-/// which keep their origin module, scope, visibility, exports, hooks and readiness check. An
-/// override of an `also_as` key splits that key off into a binding of its own in the same module,
-/// since the override's value is not the type the original builds.
+/// which keep their origin module, scope, visibility and exports. The readiness check and every
+/// lifecycle hook written on the binding, closure and trait hooks alike, belong to the
+/// implementation the override replaces and are dropped with it; the bindings the replaced recipe
+/// read stay in the graph, and a second `.ready(..)` written on the binding is still reported as
+/// `DuplicateReadiness`. An override of an `also_as` key splits that key off into a binding of
+/// its own in the same module, since the override's value is not the type the original builds,
+/// and the original keeps its check and hooks.
 fn apply_overrides(registry: &mut Registry, names: &[ModuleName], overrides: Vec<Override>, errors: &mut Vec<WiringError>) {
     let timer = Key::of::<dyn Timer, ()>();
     let runtime = Key::of::<dyn Runtime, ()>();
@@ -687,6 +694,14 @@ fn replace_recipe(node: &mut ModuleNode, position: usize, ov: &Override) {
     if record_key(record) == ov.key {
         record.recipe = ov.recipe.clone();
         record.dependencies = ov.dependencies.clone();
+        // A second `.ready(..)` on the binding stays a wiring error: it is a mistake in the
+        // module as written, which the override does not change.
+        if let Some(ready) = record.ready.take()
+            && !record.replaced_ready.is_empty()
+        {
+            record.replaced_ready.push(ready.location);
+        }
+        record.hooks.clear();
         return;
     }
     let qualifier = record.qualifier;

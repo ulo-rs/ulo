@@ -45,9 +45,10 @@ ulo-runtime-conformance       runtime-free           --all-features
 # Certificates generated with `rcgen` for the TLS tests, reached through dev-dependencies alone.
 ulo-test-certs                runtime-free           --all-features
 
-# The HTTP hub, which spawns nothing, at default features: its `tokio-io` feature brings tokio's
-# I/O traits for `Upgraded`, and with them `tokio` with `sync`.
-ulo-http                      runtime-free
+# The HTTP hub, which spawns nothing. Read with every feature, so a feature that brought tokio
+# into it, which Cargo's feature unification would turn on for every crate in a build beside one
+# enabling it, fails here.
+ulo-http                      runtime-free           --all-features
 
 # The HTTP route attributes.
 ulo-http-macros               runtime-free           --all-features
@@ -211,7 +212,7 @@ ulo-config                    runtime-free           --all-features
 # The check, the probes and the readiness state; its bounds run on the app's `Timer`.
 ulo-health                    runtime-free           --all-features
 
-# The three probe routes at `ulo-http`'s default features, without its `tokio-io` feature.
+# The three probe routes over `ulo-http`.
 ulo-health-http               runtime-free           --all-features
 
 # The `grpc.health.v1` bridge, on `ulo-grpc`, which is on tonic.
