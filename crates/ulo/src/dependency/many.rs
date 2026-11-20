@@ -1,3 +1,4 @@
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -32,6 +33,13 @@ impl<T: ?Sized, Q> Many<T, Q> {
 impl<T: ?Sized, Q> Clone for Many<T, Q> {
     fn clone(&self) -> Self {
         Many { items: Arc::clone(&self.items), _q: PhantomData }
+    }
+}
+
+/// Writes the collection's key, `Many<dyn Plugin>`, never its contributions.
+impl<T: ?Sized + 'static, Q: 'static> fmt::Debug for Many<T, Q> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        super::dep::write_key(f, "Many", Key::of::<T, Q>())
     }
 }
 

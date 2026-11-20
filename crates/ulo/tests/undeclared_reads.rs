@@ -361,7 +361,7 @@ async fn an_execution_scoped_provider_is_refused_at_its_first_construction_in_ea
 
     for round in 1..=2 {
         let error = app
-            .execute(ExecOptions::new(), async |exec| exec.get::<PerExecUndeclared>().await.err().expect("refused"))
+            .execute(ExecOptions::new(), async |exec| exec.get::<PerExecUndeclared>().await.expect_err("refused"))
             .await
             .unwrap();
         let (key, found) = construct_refusal(error);
@@ -381,7 +381,7 @@ async fn a_transient_is_refused_at_every_construction() {
     .await;
     for round in 1..=2 {
         let error = app
-            .execute(ExecOptions::new(), async |exec| exec.get::<TransientUndeclared>().await.err().expect("refused"))
+            .execute(ExecOptions::new(), async |exec| exec.get::<TransientUndeclared>().await.expect_err("refused"))
             .await
             .unwrap();
         let (key, found) = construct_refusal(error);
@@ -402,7 +402,7 @@ async fn an_extension_read_must_be_declared_too() {
     let (refused, declared) = app
         .execute(ExecOptions::new(), async |exec| {
             exec.extensions().insert(Cfg(3));
-            (exec.get::<ExtUndeclared>().await.err().expect("refused"), exec.get::<ExtDeclared>().await.unwrap().0)
+            (exec.get::<ExtUndeclared>().await.expect_err("refused"), exec.get::<ExtDeclared>().await.unwrap().0)
         })
         .await
         .unwrap();
@@ -458,7 +458,7 @@ async fn declaring_one_extension_does_not_cover_another() {
         .execute(ExecOptions::new(), async |exec| {
             exec.extensions().insert(Cfg(3));
             exec.extensions().insert(Other);
-            (exec.get::<ExtWrongType>().await.err().expect("refused"), exec.get::<ExtOptionalDeclared>().await.unwrap().0)
+            (exec.get::<ExtWrongType>().await.expect_err("refused"), exec.get::<ExtOptionalDeclared>().await.unwrap().0)
         })
         .await
         .unwrap();

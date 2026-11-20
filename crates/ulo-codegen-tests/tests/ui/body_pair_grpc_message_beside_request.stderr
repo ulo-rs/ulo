@@ -1,0 +1,13 @@
+error[E0080]: evaluation panicked: `req` and `again` both consume the body; a handler reads the body once
+  --> tests/ui/body_pair_grpc_message_beside_request.rs:13:53
+   |
+13 |     fn call(&self, req: Message<AddRequest>, again: Request<AddRequest>) -> Sum {
+   |                                                     ^^^^^^^ evaluation of `Calls::__ULO_CHECKS_call` failed here
+
+note: erroneous constant encountered
+  --> tests/ui/body_pair_grpc_message_beside_request.rs:10:1
+   |
+10 | #[handlers]
+   | ^^^^^^^^^^^
+   |
+   = note: this note originates in the attribute macro `handlers` (in Nightly builds, run with -Z macro-backtrace for more info)

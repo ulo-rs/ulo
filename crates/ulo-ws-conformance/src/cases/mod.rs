@@ -11,7 +11,7 @@ use ulo::app::Connected;
 use ulo::{App, AppHandle, BoundAddr, Runtime, Signal, TaskHandle, Timer};
 
 use crate::app::{Probe, SuiteModule, within};
-use crate::client::{Answer, Conn, Request, read_answer, write};
+use crate::client::{Answer, Conn, Raw, Request, read_answer, read_switch, write};
 use crate::{DRAIN, Host, Serving, report};
 
 pub mod close_codes;
@@ -20,6 +20,7 @@ pub mod hooks;
 pub mod keep_alive;
 pub mod limits;
 pub mod messages;
+pub mod protocol;
 pub mod stream_end;
 
 /// How often [`Served::read_past`] reads the server's count.
@@ -116,6 +117,18 @@ impl<H: Host> Served<H> {
         let request = headers.iter().fold(Request::upgrade(path), |request, (name, value)| request.header(name, value));
         let answer = self.upgrade(&request).await;
         self.conn(answer, path)
+    }
+
+    /// An upgrade to `path` that the server answered 101, spoken byte for byte.
+    pub(crate) async fn raw(&self, path: &str) -> Raw<H::Stream> {
+        let request = Request::upgrade(path);
+        let mut stream = self.stream().await;
+        let stream = within(self.timer(), &format!("the 101 to the upgrade request for {path}"), async {
+            write(&mut stream, &request.head(&self.host())).await;
+            read_switch(stream, request.sent_key()).await
+        })
+        .await;
+        Raw::new(stream, Arc::clone(&self.timer))
     }
 
     /// The socket a 101 carries.

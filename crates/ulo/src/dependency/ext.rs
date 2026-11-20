@@ -1,8 +1,10 @@
+use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 
 use crate::dependency::{FromContainer, Requirement};
 use crate::error::LookupError;
+use crate::key::Key;
 use crate::resolver::Resolver;
 use crate::scope::{AllowedIn, Auto, PerExecution, Transient};
 
@@ -22,6 +24,13 @@ impl<T> Ext<T> {
 impl<T> Clone for Ext<T> {
     fn clone(&self) -> Self {
         Ext(Arc::clone(&self.0))
+    }
+}
+
+/// Writes the extension's type, `Ext<RequestId>`, never its value.
+impl<T: 'static> fmt::Debug for Ext<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        super::dep::write_key(f, "Ext", Key::of::<T, ()>())
     }
 }
 

@@ -1,7 +1,8 @@
 //! A gRPC call's execution ends when the server drops it with the reply body (DESIGN §3.8): a
 //! streaming reply keeps its execution, its instances and its lookups, until the stream ends, and
 //! the drain waits for it; an execution-scoped service holding its own `ExecutionRef` drops as the
-//! reply finishes.
+//! reply finishes. A caller leaving a call before it answers, a unary one or a stream, cancels its
+//! execution as `ClientCancelled`.
 //!
 //! The app's clock holds every sleep as long as the drain window, which the drain asks for as the
 //! window's end less the runtime's clock, so a close that waited out the window would never return.
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 use futures_util::{Stream, StreamExt, stream};
 use tokio::sync::Notify;
 use ulo::{App, BoxFuture, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Signal, Timer, controller, handlers, injectable};
+use ulo_codegen_tests::probe::clock_client::ClockClient;
 use ulo_codegen_tests::probe::ends_client::EndsClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
 use ulo_grpc::Message;
@@ -132,6 +134,23 @@ impl Leaving {
     }
 }
 
+#[controller]
+struct Stalled {
+    probe: Dep<Shared>,
+}
+
+#[handlers]
+impl Stalled {
+    /// Hands the test its execution, then waits for a cancellation nothing but the caller fires.
+    #[ulo_grpc::method(probe::clock::Stall)]
+    async fn stall(&self, _req: Message<Ticks>, exec: ExecutionRef) -> Tick {
+        *self.probe.0.exec.lock().unwrap_or_else(PoisonError::into_inner) = Some(exec.clone());
+        self.probe.0.waiting.notify_one();
+        exec.cancelled().await;
+        Tick { n: 0 }
+    }
+}
+
 struct Root(Shared);
 
 impl Module for Root {
@@ -144,6 +163,7 @@ impl Module for Root {
         m.provide::<Audit>();
         m.controller::<Streams>();
         m.controller::<Leaving>();
+        m.controller::<Stalled>();
     }
 }
 
@@ -249,5 +269,43 @@ async fn a_caller_resetting_a_streaming_reply_ends_its_execution() {
     // The window's sleep never ends, so a close that returns waited for nothing.
     let shutdown = within("the close", handle.close(Signal::new("test"))).await.expect("a clean shutdown");
     assert_eq!(shutdown.abandoned, 0);
+    let _ = within("serve ending", serving).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_caller_leaving_a_unary_call_before_it_answers_cancels_its_execution() {
+    let probe = Shared::default();
+    let app = App::builder(Root(probe.clone()))
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .drain_timeout(DRAIN)
+        .wire()
+        .unwrap_or_else(|error| panic!("the gRPC app did not wire: {error}"))
+        .connect()
+        .await
+        .unwrap_or_else(|error| panic!("the gRPC app did not connect: {error}"))
+        .bind(ulo_grpc::Server::new("127.0.0.1:0"))
+        .listen()
+        .await
+        .unwrap_or_else(|error| panic!("the gRPC app did not listen: {error}"));
+    let addr = app.addresses().first().expect("one address").addr;
+    let handle = app.handle();
+    let serving = tokio::spawn(async move {
+        let _ = app.serve(std::future::pending::<Signal>()).await;
+    });
+    let http2: PlainHttp2 =
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new()).http2_only(true).build_http::<tonic::body::Body>();
+    let mut client = ClockClient::with_origin(http2, format!("http://{addr}").parse().expect("an origin"));
+
+    let call = tokio::spawn(async move { client.stall(Ticks::default()).await });
+    within("the handler holding the call", probe.0.waiting.notified()).await;
+    let exec = probe.0.exec.lock().unwrap_or_else(PoisonError::into_inner).take().expect("the handler kept its execution");
+    assert_eq!(exec.cancel_reason(), None, "the execution is cancelled before the caller leaves");
+    // Dropping the client's future resets its stream.
+    call.abort();
+    within("the execution's cancellation once the caller left", exec.cancelled()).await;
+    assert_eq!(exec.cancel_reason(), Some(ulo::CancelReason::ClientCancelled));
+
+    let shutdown = within("the close", handle.close(Signal::new("test"))).await.expect("a clean shutdown");
+    assert_eq!(shutdown.abandoned, 0, "the left call's execution ended with it");
     let _ = within("serve ending", serving).await;
 }

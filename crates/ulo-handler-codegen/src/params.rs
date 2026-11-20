@@ -9,7 +9,7 @@
 use proc_macro2::Span;
 use quote::ToTokens;
 use syn::spanned::Spanned;
-use syn::{FnArg, GenericArgument, GenericParam, Ident, Pat, PathArguments, Signature, Type};
+use syn::{Attribute, FnArg, GenericArgument, GenericParam, Ident, Pat, PathArguments, Signature, Type};
 
 /// How the handler takes its controller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +35,10 @@ pub struct Param {
     pub ty: Type,
     /// The parameter's type, where an assertion about it points.
     pub span: Span,
+    /// The parameter's `#[cfg]`s, from [`crate::cfg::presence_gates`]. Rustc evaluates them after
+    /// the attribute has expanded, so every statement, argument and assertion written for the
+    /// parameter carries them, and a parameter compiled out leaves nothing that names it.
+    pub gates: Vec<Attribute>,
 }
 
 /// A handler's signature as the transport attribute reads it.
@@ -71,6 +75,7 @@ pub fn analyze(sig: &Signature) -> syn::Result<HandlerSig> {
                 ident: param_ident(&typed.pat),
                 ty: (*typed.ty).clone(),
                 span: typed.ty.span(),
+                gates: crate::cfg::presence_gates(&typed.attrs),
             }),
             FnArg::Receiver(receiver) => Err(syn::Error::new_spanned(receiver, "a second receiver")),
         })

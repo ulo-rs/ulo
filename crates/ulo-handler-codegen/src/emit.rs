@@ -196,10 +196,13 @@ pub fn call_body(sig: &HandlerSig, cx: &Ident, paths: &Paths) -> TokenStream {
         sig.params.iter().map(|param| Ident::new(&format!("__ulo_arg{}", param.index), Span::mixed_site())).collect();
     let extractions = sig.params.iter().zip(&args).map(|(param, arg)| {
         let ty = &param.ty;
+        let gates = &param.gates;
         quote_spanned! {param.span=>
+            #(#gates)*
             let #arg: #ty = <#ty as #transport::__private::Param<#marker, _>>::extract(&#cx).await?;
         }
     });
+    let args = gated_args(sig, &args);
     let this = Ident::new("__ulo_this", Span::mixed_site());
     let out = Ident::new("__ulo_out", Span::mixed_site());
     let receiver = match sig.receiver {
@@ -218,6 +221,20 @@ pub fn call_body(sig: &HandlerSig, cx: &Ident, paths: &Paths) -> TokenStream {
         let #out = #call;
         #reply
     }
+}
+
+/// Each of `args`, one per parameter of `sig`, under its parameter's gates: a call argument takes a
+/// `#[cfg]` as a statement does, so a call written with these passes what the compiled signature
+/// takes.
+pub fn gated_args(sig: &HandlerSig, args: &[Ident]) -> Vec<TokenStream> {
+    sig.params
+        .iter()
+        .zip(args)
+        .map(|(param, arg)| {
+            let gates = &param.gates;
+            quote!(#(#gates)* #arg)
+        })
+        .collect()
 }
 
 /// `let mut dependencies = ::ulo::Dependencies::default();` followed by each parameter's
@@ -241,7 +258,9 @@ pub fn dependencies(sig: &HandlerSig, paths: &Paths) -> TokenStream {
                 quote!(#core::__private::HandlerParam::At(#index))
             }
         };
+        let gates = &param.gates;
         quote_spanned! {param.span=>
+            #(#gates)*
             <#ty as #transport::__private::Param<#marker, _>>::dependencies(&mut #dependencies, #label);
         }
     });

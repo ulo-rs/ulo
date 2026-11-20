@@ -96,15 +96,15 @@ pub struct Dep<T: ?Sized, Q = ()> {
     inner: Arc<T>,
     _q: PhantomData<fn() -> Q>,
 }
-// Deref<Target = T>, Clone, Dep::from_arc, Dep::into_arc, Dep::arc
+// Deref<Target = T>, Clone, Dep::from_arc, Dep::into_arc, Dep::arc; Debug writes the key, `Dep<PgPool @ Replica>`
 
 pub struct Many<T: ?Sized, Q = ()> {
     items: Arc<[Arc<T>]>,
     _q: PhantomData<fn() -> Q>,
 }
-// Deref<Target = [Arc<T>]>, iter()
+// Deref<Target = [Arc<T>]>, iter(); Debug writes the key, `Many<dyn Plugin>`
 
-pub struct Ext<T>(Arc<T>);   // a typed view of per-execution data [12]
+pub struct Ext<T>(Arc<T>);   // a typed view of per-execution data [12]; Debug writes `Ext<T>`
 pub struct ModuleRef { /* graph + module id + optional execution */ }
 pub struct ExecutionRef { /* a cheap-clone handle to the current execution (§3.8) */ }
 ```
