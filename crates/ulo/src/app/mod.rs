@@ -495,8 +495,18 @@ impl App<Connected> {
     /// returns, and a read it makes afterwards answers `LookupError::ExecutionEnded`.
     ///
     /// ```
-    /// # use ulo::{App, Connected, Dep, ExecOptions, ExecutionRef, LookupError};
+    /// # use ulo::{App, Dep, ExecOptions, ExecutionRef, LookupError, Module, ModuleDef, ModuleIdentity};
+    /// # use ulo_runtime_tokio::Tokio;
     /// # struct Clock;
+    /// # struct Root;
+    /// # impl Module for Root {
+    /// #     fn identity(&self) -> ModuleIdentity {
+    /// #         ModuleIdentity::of_type::<Self>()
+    /// #     }
+    /// #     fn register(&self, m: &mut ModuleDef<'_>) {
+    /// #         m.singleton(|| async { Clock });
+    /// #     }
+    /// # }
     /// /// A reply source reading through its execution on every item.
     /// struct Ticks(ExecutionRef);
     ///
@@ -505,7 +515,9 @@ impl App<Connected> {
     ///         self.0.get::<Clock>().await
     ///     }
     /// }
-    /// # async fn f(app: App<Connected>) -> Result<(), Box<dyn std::error::Error>> {
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let app = App::builder(Root).runtime(Tokio::current()).wire()?.connect().await?;
     /// // Consumed inside the closure: the execution is alive for every read.
     /// app.execute(ExecOptions::new(), async |exec| {
     ///     let ticks = Ticks(exec.handle());

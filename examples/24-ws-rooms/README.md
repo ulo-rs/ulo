@@ -2,7 +2,7 @@
 
 Rooms and broadcast: a connection joins a room, and a `Rooms` broadcast reaches every member of it and no one else. In one process the broadcast stays in memory; with `ulo-ws-redis` it reaches the members held by every process on the same Redis.
 
-```
+```bash
 cargo run -p ex-24-ws-rooms                                                # one process, in memory
 REDIS_URL=redis://127.0.0.1:6379 PORT=3000 cargo run -p ex-24-ws-rooms    # two processes on one Redis:
 REDIS_URL=redis://127.0.0.1:6379 PORT=3001 cargo run -p ex-24-ws-rooms    # a shout on either reaches both

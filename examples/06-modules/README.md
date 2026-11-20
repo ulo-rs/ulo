@@ -2,7 +2,7 @@
 
 Imports, exports and visibility. `BillingModule` imports `UsersModule` and reads `UserService`, which it exports. `PasswordHasher` is bound there and not exported, so no other module can read it.
 
-```
+```bash
 cargo run -p ex-06-modules
 ```
 

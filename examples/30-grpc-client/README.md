@@ -4,7 +4,7 @@ A generated client used as an ordinary provider, and a deadline that travels wit
 `Front` is a gRPC service that calls `Clock`; it injects the `ClockClient` that
 `GrpcClientModule` binds, and forwards its own deadline with `ulo_grpc::outgoing`.
 
-```
+```bash
 cargo run -p ex-30-grpc-client
 ```
 

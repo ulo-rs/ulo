@@ -3,7 +3,7 @@
 What a handler takes from a request and what it answers with: `Path`, `Query`, `Valid<Json<T>>`,
 `Header<H>`, `Form`, `BodyStream` and a custom `FromCall` in; `Json`, `Created`, `WithHeaders` and a `Classify` error (also spelled through a `Result` alias) out.
 
-```
+```bash
 cargo run -p ex-15-http-requests
 curl -i -d '{"title":"milk"}' -H 'content-type: application/json' http://127.0.0.1:3000/notes
 curl -i 'http://127.0.0.1:3000/notes?limit=1'

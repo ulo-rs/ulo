@@ -3,7 +3,7 @@
 A global module, a module that takes a value (`StoreModule::for_root(url)`), and one module imported twice under two qualifiers with `.keyed::<Q>()`.
 A module is identified by its type and its value: the same value imported twice is one module, and two values of one type are two.
 
-```
+```bash
 cargo run -p ex-07-configured-modules
 ```
 

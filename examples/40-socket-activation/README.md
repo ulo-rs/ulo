@@ -7,7 +7,7 @@ test) binds and listens, then starts the process with the socket as file descrip
 so no `listenfd` crate is needed. The point: connections made before the app exists wait in the
 kernel's backlog and are answered once it is up, so a restart drops none.
 
-```
+```bash
 PORT=3000 cargo run -p ex-40-socket-activation              # no LISTEN_FDS: binds 127.0.0.1:PORT as 01 does
 ulo dev --listen 127.0.0.1:3000 -p ex-40-socket-activation  # ulo dev holds the socket across rebuilds
 ```

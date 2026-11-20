@@ -2,7 +2,7 @@
 
 Two databases of one kind. One store module is read from two configuration sections, `primary` and `replica`, and keyed twice with `.keyed::<Primary>()` and `.keyed::<Replica>()`: the application injects `Dep<PgPool, Primary>` and `Dep<PgPool, Replica>`, and the two health checks are named apart, `postgres@primary @ Primary` and `postgres@replica @ Replica`. Only the primary migrates.
 
-```
+```bash
 docker run --rm --name pg -p 5432:5432 -e POSTGRES_PASSWORD=pw postgres:18     # in a terminal of its own
 docker exec pg psql -U postgres -c 'create database replica'
 docker exec -i pg psql -U postgres -d replica < examples/36-db-two-instances/migrations/0001_notes.sql
@@ -12,7 +12,7 @@ APP_REPLICA__URL=postgres://postgres:pw@127.0.0.1/replica PORT=7000 cargo run -p
 
 The `replica` database stands in for a replica, so its table is created by hand where replication would bring it. `POST /notes` writes to the primary; `GET /primary/notes` and `GET /replica/notes` each read their own database. A replica outage turns `/health/ready` 503 with the replica's check failing and the primary's passing.
 
-```
+```bash
 cargo test -p ex-36-db-two-instances
 cargo test -p ex-36-db-two-instances --features integration  # one Postgres container, two databases; needs Docker
 ```

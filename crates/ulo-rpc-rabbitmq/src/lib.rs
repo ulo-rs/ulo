@@ -19,6 +19,9 @@
 //! a spent shutdown cap still delivers them; the task lets go of the connection at the latest 2 s
 //! after the close began, on the app's `Timer`.
 //!
+//! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
+//! runtime or given one with `with_handle`.
+//!
 //! ```
 //! # fn f(app: ulo::App<ulo::Connected>) {
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_rabbitmq::RabbitMq::url("amqp://guest:guest@mq:5672/%2f")));

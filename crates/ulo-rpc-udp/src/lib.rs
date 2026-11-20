@@ -6,6 +6,9 @@
 //! `Timeout` (declared without `confirmed_drain`). No TLS: DTLS is not supported, so `Udp::tls` does not
 //! exist.
 //!
+//! The crate is tokio-bound: the link spawns through `ulo-runtime-tokio`, so it is built inside a tokio
+//! runtime or given one with `with_handle`.
+//!
 //! ```
 //! # fn f(app: ulo::App<ulo::Connected>) {
 //! app.bind(ulo_rpc::Server::new(ulo_rpc_udp::Udp::new("0.0.0.0:7001")));

@@ -4,7 +4,7 @@ A gateway calls a pricing service through a keyed `RpcClientModule` (`Dep<RpcCli
 
 The callee is given the shorter of the caller's time and the client's timeout (five seconds unless set), so a caller with a longer deadline than that reaches the callee with five seconds.
 
-```
+```bash
 cargo test -p ex-27-rpc-deadlines
 PORT=7000 cargo run -p ex-27-rpc-deadlines
 ```

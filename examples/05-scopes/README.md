@@ -3,7 +3,7 @@
 How long an instance lives: `singleton`, `execution` (once per request), `transient` (fresh at each injection point), and no scope written (`Auto`, a singleton for a provider).
 Each request reads every scope twice, through two services, and prints the id of the instance each read reached.
 
-```
+```bash
 cargo run -p ex-05-scopes
 ```
 
