@@ -234,9 +234,19 @@ macro_rules! startup_failed {
 /// });
 /// ```
 ///
-/// A declared name that is no scenario fails to compile. A scenario run on a host it does not apply
-/// to fails rather than passing, so a host leaving out a declaration it needs fails too;
-/// `cargo test -- --ignored` runs the declared ones, which then fail the same way.
+/// A declared name that is no scenario fails to compile, and so does a name declared twice:
+///
+/// ```compile_fail,E0428
+/// # struct SmolServer;
+/// ulo_ws_conformance::ws_conformance_suite!(SmolServer; not_applicable {
+///     subprotocol_choice: "the server drops `Sec-WebSocket-Protocol` from the 101",
+///     subprotocol_choice: "a second reason for the same scenario",
+/// });
+/// ```
+///
+/// A scenario run on a host it does not apply to fails rather than passing, so a host leaving out
+/// a declaration it needs fails too; `cargo test -- --ignored` runs the declared ones, which then
+/// fail the same way.
 ///
 /// On a host whose [`Host::why_not_upgrades`] names a reason, every scenario but
 /// `handshake_upgrades_as_the_host_declares`, which requires `listen()`'s refusal of the suite's
@@ -264,8 +274,16 @@ macro_rules! ws_conformance_suite {
                 $d($d test)*
             };
         }
-        // A declared name that is no scenario names no function here.
-        $(const _: fn() = $skip;)*
+        // A declared name that is no scenario names no constant in `__ulo_ws_conformance_scenarios`,
+        // a test build or any other: the stamped functions exist in a test build alone, and a
+        // doctest is none.
+        $(const _: () = __ulo_ws_conformance_scenarios::$skip;)*
+        // A name declared twice is defined twice here (E0428). The stamper would match the first
+        // declaration alone and drop the second's reason.
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_ws_conformance_declared {
+            $(pub(super) const $skip: () = ();)*
+        }
         $crate::ws_conformance_suite!(@list $host);
     };
     (@list $host:ty) => {
@@ -308,6 +326,10 @@ macro_rules! ws_conformance_suite {
     };
     (@cases $host:ty; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
         static __ULO_WS_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_ws_conformance_scenarios {
+            $(pub(super) const $name: () = ();)*
+        }
         const _: () = ::core::assert!(
             $crate::__private::lists_declaration(&[$(::core::stringify!($name)),*]),
             "the stamped scenarios do not include the upgrades declaration, which `__private::skips` never skips"

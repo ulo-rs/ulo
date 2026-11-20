@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
 use serde::de::DeserializeOwned;
+use ulo::AppHandle;
 use ulo_transport::{ExtractError, FieldViolation, FromCall, Validate};
 
 use crate::cx::HttpCx;
@@ -32,10 +33,16 @@ impl<T> Deref for Query<T> {
 
 impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Query<T> {
     async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
-        let decoded = parse_form(cx.uri().query().unwrap_or("").as_bytes());
-        let pairs: Vec<(&str, &str)> = decoded.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
-        from_pairs::<T>(&pairs, Source::Form).map(Query).map_err(|error| error.into_extract("query", cx))
+        decode(cx.uri().query(), cx.app()).map(Query)
     }
+}
+
+/// `query`, absent read as empty, as `T` by [`Query`]'s rules, a failure redacted through `app`.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
+pub(crate) fn decode<T: DeserializeOwned>(query: Option<&str>, app: &AppHandle) -> Result<T, ExtractError> {
+    let decoded = parse_form(query.unwrap_or("").as_bytes());
+    let pairs: Vec<(&str, &str)> = decoded.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();
+    from_pairs::<T>(&pairs, Source::Form).map_err(|error| error.into_extract_in("query", app))
 }
 
 impl<T: Validate> Validate for Query<T> {

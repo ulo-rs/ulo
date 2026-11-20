@@ -20,6 +20,7 @@ use std::fmt;
 
 use percent_encoding::percent_decode;
 use serde::de::{self, DeserializeOwned, DeserializeSeed, Deserializer, IntoDeserializer, MapAccess, SeqAccess, Visitor};
+use ulo::AppHandle;
 use ulo_transport::ExtractError;
 
 use crate::cx::HttpCx;
@@ -81,11 +82,16 @@ impl ParamsError {
     /// The extraction failure: `Missing` for a field serde reported missing, `Malformed` otherwise,
     /// the error redacted through the app. `whole` names the parameter when no field is named.
     pub(crate) fn into_extract(self, whole: &'static str, cx: &HttpCx) -> ExtractError {
+        self.into_extract_in(whole, cx.app())
+    }
+
+    /// [`into_extract`](Self::into_extract) with the error redacted through `app`.
+    pub(crate) fn into_extract_in(self, whole: &'static str, app: &AppHandle) -> ExtractError {
         let param = self.field.unwrap_or(whole);
         if self.missing {
             ExtractError::Missing { param }
         } else {
-            ExtractError::Malformed { param, source: cx.app().redact(Box::new(self)) }
+            ExtractError::Malformed { param, source: app.redact(Box::new(self)) }
         }
     }
 

@@ -18,7 +18,7 @@ use ulo::{
 use ulo_http::embed::EmbedLimits;
 use ulo_http::{
     Cors, Event, Host, Http, HttpBody, HttpCx, Json, MaxBody, Path, PreDispatch, Query, Request, Response, Sse,
-    StatusCode, UpgradeHandler, Upgrades,
+    StatusCode, UpgradeHandler, Upgrades, WithHeaders,
 };
 use ulo_transport::{CallError, Classify, ErrorKind, IntoReply, Valid, Validate};
 
@@ -224,7 +224,61 @@ impl Suite {
     fn host_value(&self, value: Host<HostValue>) -> String {
         value.0.0
     }
+
+    /// Two `Set-Cookie` values, each its own field line.
+    #[ulo_http::get("/cookies")]
+    fn cookies(&self) -> WithHeaders<&'static str> {
+        WithHeaders::new("cookies").header("set-cookie", "a=1; Path=/").header("set-cookie", "b=2; Path=/")
+    }
+
+    /// 204 carrying a body of known length, which the client must never read.
+    #[ulo_http::get("/no-content")]
+    fn no_content(&self) -> Response {
+        let mut response = Response::new(HttpBody::from(LEAK));
+        *response.status_mut() = StatusCode::NO_CONTENT;
+        response
+    }
+
+    /// 204 carrying a streaming body, which the client must never read either.
+    #[ulo_http::get("/no-content/stream")]
+    fn no_content_stream(&self) -> Response {
+        let chunks = stream::iter([Ok::<_, std::io::Error>(bytes::Bytes::from_static(LEAK.as_bytes()))]);
+        let mut response = Response::new(HttpBody::stream(chunks));
+        *response.status_mut() = StatusCode::NO_CONTENT;
+        response
+    }
+
+    /// The status `code` names, with the text `status`.
+    #[ulo_http::get("/status/{code}")]
+    fn status(&self, code: Path<u16>) -> Result<(StatusCode, &'static str), SuiteError> {
+        StatusCode::from_u16(code.0).map(|status| (status, "status")).map_err(|_| SuiteError)
+    }
+
+    /// A header value holding CR LF, which the reply refuses where it is built.
+    #[ulo_http::get("/crlf")]
+    fn crlf(&self) -> WithHeaders<&'static str> {
+        WithHeaders::new("split").header("x-split", "a\r\ninjected: yes")
+    }
+
+    /// Two header values beyond ASCII: [`UTF8_VALUE`], valid UTF-8, and [`LATIN1_VALUE`], a byte
+    /// RFC 9110 §5.5 admits as obs-text that is no UTF-8.
+    #[ulo_http::get("/obs-text")]
+    fn obs_text(&self) -> Response {
+        let mut response = Response::new(HttpBody::from("obs-text"));
+        response.headers_mut().insert("x-utf8", http::HeaderValue::from_bytes(UTF8_VALUE).expect("obs-text is a valid value"));
+        response.headers_mut().insert("x-latin1", http::HeaderValue::from_bytes(LATIN1_VALUE).expect("obs-text is a valid value"));
+        response
+    }
 }
+
+/// The body `GET /no-content` carries.
+pub(crate) const LEAK: &str = "LEAK";
+
+/// `café` as UTF-8.
+pub(crate) const UTF8_VALUE: &[u8] = b"caf\xc3\xa9";
+
+/// `café` as Latin-1, `0xE9` being obs-text and no UTF-8.
+pub(crate) const LATIN1_VALUE: &[u8] = b"caf\xe9";
 
 /// The header [`KeyGate`] admits a request on.
 pub(crate) const KEY_HEADER: &str = "x-suite-key";

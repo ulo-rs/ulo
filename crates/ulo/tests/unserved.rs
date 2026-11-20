@@ -24,8 +24,16 @@ controller!(OnB, Singleton, [], |m| m.handler::<TB, _>(HandlerSpec::new("only", 
 // Mounted under `TA` and served by `TB`'s server, as a WebSocket gateway on the HTTP server's
 // port is a `Ws` controller served by the HTTP server.
 controller!(ServedByB, Singleton, [], |m| {
-    m.served_by::<TA, TB>();
+    m.served_by::<TA, TA, TB>();
     m.handler::<TA, _>(HandlerSpec::new("guest", ()).route("guest"));
+});
+
+// A declaration for its `TB` handlers only, as a gateway declares one for its WebSocket handlers
+// and none for an HTTP route it also carries: the `TA` handler is served by a `TA` server.
+controller!(Mixed, Singleton, [], |m| {
+    m.served_by::<TB, TB, TB>();
+    m.handler::<TB, _>(HandlerSpec::new("event", ()).route("event"));
+    m.handler::<TA, _>(HandlerSpec::new("page", ()).route("page"));
 });
 
 fn root(register: fn(&mut ulo::ModuleDef<'_>)) -> Mod<A> {
@@ -43,6 +51,10 @@ fn with_both(m: &mut ulo::ModuleDef<'_>) {
 
 fn with_guest(m: &mut ulo::ModuleDef<'_>) {
     m.controller::<ServedByB>();
+}
+
+fn with_mixed(m: &mut ulo::ModuleDef<'_>) {
+    m.controller::<Mixed>();
 }
 
 fn builder(register: fn(&mut ulo::ModuleDef<'_>)) -> ulo::AppBuilder {
@@ -144,7 +156,7 @@ async fn a_controller_served_by_another_transport_s_server_is_refused_without_th
     assert_eq!(entry.transport, TypeName::of::<TA>(), "the refusal names the controller's transport: {errors}");
     assert_eq!(names(entry), [TypeName::of::<ServedByB>(), TypeName::of::<TA>(), TypeName::of::<TB>()]);
     assert!(
-        entry.to_string().contains("has `TA` handlers a `TB` server serves, and the app binds none"),
+        entry.to_string().contains("has `TA` handlers that a server of `TB` serves, and the app binds none"),
         "{entry}"
     );
 }
@@ -155,6 +167,19 @@ async fn a_controller_served_by_another_transport_s_server_passes_with_it_or_eit
     assert!(listened(builder(with_guest), vec![on_b(&log)]).await.is_ok(), "its server is bound");
     assert!(listened(builder(with_guest).unserved::<TA>(), Vec::new()).await.is_ok(), "its own transport is unserved");
     assert!(listened(builder(with_guest).unserved::<TB>(), Vec::new()).await.is_ok(), "the server's transport is unserved");
+}
+
+#[tokio::test]
+async fn a_declaration_covers_the_handlers_of_the_transport_it_names_and_no_other() {
+    let log = Log::new();
+    let errors = listen_err(builder(with_mixed), vec![on_b(&log)]).await;
+
+    assert_eq!(errors.len(), 1, "the `TB` handler is served, the `TA` one is not: {errors}");
+    let entry = errors.iter().next().unwrap();
+    assert_eq!(entry.transport, TypeName::of::<TA>(), "{errors}");
+    assert_eq!(names(entry), [TypeName::of::<Mixed>(), TypeName::of::<TA>(), TypeName::of::<TA>()]);
+
+    assert!(listened(builder(with_mixed), vec![on_a(&log), on_b(&log)]).await.is_ok(), "each handler has its server");
 }
 
 #[tokio::test]

@@ -12,3 +12,4 @@ pub mod routing;
 pub mod routing_ext;
 pub mod sse;
 pub mod upgrade;
+pub mod wire_table;

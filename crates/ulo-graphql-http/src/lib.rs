@@ -1,7 +1,9 @@
 //! GraphQL over HTTP for `ulo` (transports DESIGN §7): the endpoint, a controller mounted
 //! `.at(config.path)`, so HTTP guards, interceptors and pre-dispatch entries apply to it as to any
 //! route; the GraphQL-over-HTTP status rules; the engine's playground; and, with
-//! `GraphqlConfig::subscriptions`, the graphql-transport-ws gateway of `ulo-graphql-ws`.
+//! `GraphqlConfig::subscriptions`, the graphql-transport-ws gateway of `ulo-graphql-ws`. The
+//! gateway is behind the default `subscriptions` feature: `default-features = false` serves
+//! GraphQL over HTTP alone, with no WebSocket crate in the tree.
 //!
 //! ```ignore
 //! # // reason: names an engine adapter crate (ulo-graphql-async-graphql) this crate does not depend on

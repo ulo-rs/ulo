@@ -22,3 +22,4 @@ pub use host::Host;
 pub use path::Path;
 pub(crate) use path::PathCheck;
 pub use query::Query;
+pub(crate) use query::decode as decode_query;
