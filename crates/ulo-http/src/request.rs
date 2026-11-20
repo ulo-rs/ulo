@@ -150,11 +150,10 @@ impl fmt::Debug for OnUpgrade {
 /// An upgraded connection's I/O, whatever the backend's type, as `futures-io`'s `AsyncRead` and
 /// `AsyncWrite`.
 ///
-/// Built by [`from_futures`](Self::from_futures) from I/O implementing `futures-io`'s traits, or,
-/// with the `tokio-io` feature, by `Upgraded::from_tokio` from I/O implementing tokio's. The
-/// feature also implements tokio's traits on it, both directions through `tokio-util`'s `compat`
-/// layer, so an upgrade handler written against tokio reads and writes it through tokio's traits,
-/// whichever constructor built it.
+/// Built by [`from_futures`](Self::from_futures). A backend whose upgraded I/O implements tokio's
+/// traits converts it at its own seam, `Upgraded::from_futures(io.compat())` through
+/// `tokio-util`'s `compat` layer, so this crate names no runtime's I/O traits; an upgrade handler
+/// written against tokio reads it through `compat` the same way.
 pub struct Upgraded {
     io: Pin<Box<dyn Io>>,
 }
@@ -168,14 +167,6 @@ impl Upgraded {
     /// hyper's through `ulo-server-hyper`'s `FuturesIo`, which both hyper servers build theirs with.
     pub fn from_futures(io: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> Self {
         Upgraded { io: Box::pin(io) }
-    }
-
-    /// An upgraded connection whose I/O implements tokio's traits, as a tokio socket's does and
-    /// hyper's through hyper-util's `TokioIo`.
-    #[cfg(feature = "tokio-io")]
-    pub fn from_tokio(io: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static) -> Self {
-        use tokio_util::compat::TokioAsyncReadCompatExt;
-        Upgraded::from_futures(io.compat())
     }
 }
 
@@ -196,33 +187,5 @@ impl AsyncWrite for Upgraded {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.io.as_mut().poll_close(cx)
-    }
-}
-
-// Each call wraps the boxed I/O in a fresh `Compat`, which holds nothing across reads and writes
-// besides a seek position these impls never use.
-#[cfg(feature = "tokio-io")]
-impl tokio::io::AsyncRead for Upgraded {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut tokio::io::ReadBuf<'_>) -> Poll<io::Result<()>> {
-        use tokio_util::compat::FuturesAsyncReadCompatExt;
-        tokio::io::AsyncRead::poll_read(Pin::new(&mut self.io.as_mut().compat()), cx, buf)
-    }
-}
-
-#[cfg(feature = "tokio-io")]
-impl tokio::io::AsyncWrite for Upgraded {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
-        use tokio_util::compat::FuturesAsyncWriteCompatExt;
-        tokio::io::AsyncWrite::poll_write(Pin::new(&mut self.io.as_mut().compat_write()), cx, buf)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        use tokio_util::compat::FuturesAsyncWriteCompatExt;
-        tokio::io::AsyncWrite::poll_flush(Pin::new(&mut self.io.as_mut().compat_write()), cx)
-    }
-
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        use tokio_util::compat::FuturesAsyncWriteCompatExt;
-        tokio::io::AsyncWrite::poll_shutdown(Pin::new(&mut self.io.as_mut().compat_write()), cx)
     }
 }

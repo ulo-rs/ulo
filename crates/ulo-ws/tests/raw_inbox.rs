@@ -27,6 +27,7 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::Role;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use ulo::{
     App, AppHandle, BoxError, BoxFuture, Dep, DrainToken, FailureReason, Handlers, Limit, Module, ModuleDef, ModuleIdentity, Mount,
     Mounted, Shutdown, ShutdownError, ShutdownFailure, Signal, Timer, TypeName, controller,
@@ -269,7 +270,7 @@ impl Running {
         };
         let (server, client) = tokio::io::duplex(64 * 1024);
         let mut client = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
-        switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+        switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
         client.send(Message::text("hold")).await.expect("the message was sent");
         tokio::spawn(async move {
             let mut read = Vec::new();

@@ -85,6 +85,13 @@ pub trait Classify: Error + Send + Sync + 'static {
 
 /// The one concrete error every transport renders: a kind, a public message, typed details, and
 /// the domain error it came from.
+///
+/// The message is what the client reads, and `Display` writes it. An error
+/// [`from_boxed`](Self::from_boxed) does not recognise is `Internal` with the message
+/// `internal error`, its own text withheld. The error it was built from, recognised or not, is
+/// reachable only as the source: [`source_as`](Self::source_as) by type, or
+/// `std::error::Error::source`, which is what a reporting error handler reads; no accessor of the
+/// message or of the details reaches it.
 pub struct CallError {
     kind: ErrorKind,
     message: String,
@@ -195,6 +202,24 @@ impl CallError {
 
     pub fn with_details(mut self, details: Details) -> Self {
         self.details = details;
+        self
+    }
+
+    /// The same error with `message` as its public message, for an error handler that localises
+    /// or rewords what the client reads. The kind, the details, the challenge, every transport's
+    /// status override and the source are kept, so the reply differs only in its text and the
+    /// original stays reachable through [`source_as`](Self::source_as).
+    ///
+    /// ```
+    /// use ulo_transport::{CallError, ErrorKind};
+    ///
+    /// let error = CallError::unauthorized("Bearer realm=\"api\"").with_message("connectez-vous");
+    /// assert_eq!(error.kind(), ErrorKind::Unauthorized);
+    /// assert_eq!(error.message(), "connectez-vous");
+    /// assert_eq!(error.challenge(), Some("Bearer realm=\"api\""));
+    /// ```
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
         self
     }
 
@@ -403,5 +428,46 @@ impl fmt::Debug for CallError {
 impl Error for CallError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.source.as_deref().map(|source| source as &(dyn Error + 'static))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::details::Detail;
+
+    #[derive(Debug)]
+    struct Original;
+
+    impl fmt::Display for Original {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("the original text")
+        }
+    }
+
+    impl Error for Original {}
+
+    /// Destructured whole, so a field added to `CallError` fails this test's build until the test
+    /// says whether `with_message` keeps it.
+    #[test]
+    fn with_message_replaces_the_message_and_keeps_every_other_field() {
+        let details = Details::new().with(Detail::RetryAfter(Duration::from_secs(3)));
+        let rebuilt = CallError::unauthorized("Basic realm=\"shop\"")
+            .with_details(details.clone())
+            .with_source(Original)
+            .__with_grpc_code(7)
+            .__with_http_status(412)
+            .__with_close_code(4403)
+            .with_message("reworded");
+
+        let CallError { kind, message, details: kept, challenge, grpc_code, http_status, close_code, source } = rebuilt;
+        assert_eq!(kind, ErrorKind::Unauthorized);
+        assert_eq!(message, "reworded");
+        assert_eq!(kept, details);
+        assert_eq!(challenge.as_deref(), Some("Basic realm=\"shop\""));
+        assert_eq!((grpc_code, http_status, close_code), (Some(7), Some(412), Some(4403)));
+        assert!(source.is_some_and(|source| source.downcast_ref::<Original>().is_some()), "the source is the original");
     }
 }

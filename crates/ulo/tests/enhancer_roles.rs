@@ -23,7 +23,7 @@ use common::*;
 use ulo::scope::{Auto, Singleton};
 use ulo::{
     AnyErrorHandler, AnyGuard, AnyInterceptor, Dep, EnhancerSpec, Execution, ExecOptions, Ext, HandlerSpec, Key, LookupError,
-    LookupKind, TypeName, WiringError,
+    LookupKind, ModuleIdentity, TypeName, WiringError,
 };
 
 struct A;
@@ -217,6 +217,15 @@ async fn a_module_s_controllers_mount_and_their_handlers_see_what_that_module_se
     assert_eq!(x.module().name(), module_x);
     assert_eq!(y1.module().name(), module_y);
     assert_eq!(y2.module().name(), module_y, "both transports' handlers of one controller share its module");
+    for info in app.handle().handlers() {
+        let (identity, name) = match info.name() {
+            "x" => (ModuleIdentity::of_type::<Mod<X>>(), &module_x),
+            _ => (ModuleIdentity::of_type::<Mod<Y>>(), &module_y),
+        };
+        assert!(info.module() == &identity, "{} lists its controller's module", info.name());
+        assert_eq!(info.module_name(), name);
+        assert_eq!(info.method(), None, "a transport that names no request method lists none");
+    }
 
     // The module a handler is mounted in is the visibility its calls resolve with: `PrivX` is X's
     // alone.
