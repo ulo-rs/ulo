@@ -903,7 +903,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
     };
     let id = accept.hub.next_id();
     let info = ConnectionInfo { peer, path: Arc::clone(&gateway.path), id };
-    let head = UpgradeHead { parts: head, subprotocol: protocol };
+    let head = UpgradeHead { parts: head, subprotocol: protocol, app: accept.app.clone() };
     exec.seed(info.clone());
     exec.seed(head.clone());
     let built = {

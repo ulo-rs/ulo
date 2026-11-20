@@ -6,7 +6,9 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use ulo::{Bound, Module, ModuleDef, ModuleIdentity, ModuleSettings};
+#[cfg(feature = "subscriptions")]
 use ulo_graphql_ws::{GraphqlWs, InitTimeout};
+#[cfg(feature = "subscriptions")]
 use ulo_transport::prepare::{Failures, zero_bound};
 
 use crate::controller::{EndpointSettings, GraphqlEndpoint};
@@ -15,8 +17,8 @@ use crate::controller::{EndpointSettings, GraphqlEndpoint};
 /// [`GraphqlConfig::engine`] names a qualifier, so a second `GraphqlModule` at another path serves
 /// a second schema with no GraphQL rule added.
 ///
-/// The module registers the endpoint, and with [`GraphqlConfig::subscriptions`] the
-/// graphql-transport-ws gateway, as its own controllers, so the engine binding has to be visible
+/// The module registers the endpoint, and with `GraphqlConfig::subscriptions` (the default
+/// `subscriptions` feature) the graphql-transport-ws gateway, as its own controllers, so the engine binding has to be visible
 /// from it. [`GraphqlConfig::engine_from`] names the module that binds and exports the engine, and
 /// this module imports it; the module that imports this one is not visible from it. The gateway
 /// also needs `WsModule` imported once by the application.
@@ -69,6 +71,7 @@ impl<Q: Send + Sync + 'static> Module for GraphqlModule<Q> {
             m.import(engine.clone());
         }
         m.controller::<GraphqlEndpoint<Q>>().at(path);
+        #[cfg(feature = "subscriptions")]
         if let Some(subscriptions) = subscriptions {
             let mut failures = Failures::new();
             failures.extend(zero_bound(
@@ -153,7 +156,9 @@ impl GraphqlConfig {
 impl<Q> GraphqlConfig<Q> {
     /// Serves graphql-transport-ws at `path`, the gateway `ulo-graphql-ws` writes, mounted by this
     /// module beside the endpoint; the playground connects its subscriptions to it. The
-    /// application imports `WsModule` once for the gateway to be reachable.
+    /// application imports `WsModule` once for the gateway to be reachable. Behind the default
+    /// `subscriptions` feature.
+    #[cfg(feature = "subscriptions")]
     pub fn subscriptions(mut self, path: impl Into<Cow<'static, str>>) -> Self {
         self.subscriptions = Some(path.into());
         self
@@ -170,7 +175,8 @@ impl<Q> GraphqlConfig<Q> {
     /// 4408: 3 seconds at `Bound::Default`, the reference server's; `Bound::Unbounded` waits
     /// indefinitely. A timer that refuses the wait, having shut down, closes the connection with
     /// 1001 and the shutdown phrase instead. `Bound::After(Duration::ZERO)` is refused when the
-    /// application wires.
+    /// application wires. Behind the default `subscriptions` feature.
+    #[cfg(feature = "subscriptions")]
     pub fn connection_init_timeout(mut self, timeout: Bound) -> Self {
         self.connection_init_timeout = timeout;
         self

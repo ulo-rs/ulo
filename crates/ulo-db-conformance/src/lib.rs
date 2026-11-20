@@ -316,7 +316,25 @@ pub trait Host: Sized + Send + Sync + 'static {
 /// });
 /// ```
 ///
-/// A declared name that is no scenario fails to compile.
+/// A declared name that is no scenario fails to compile, and so does a name declared twice,
+/// whether in one list or in both:
+///
+/// ```compile_fail,E0428
+/// # struct MongoHost;
+/// ulo_db_conformance::conformance_suite!(MongoHost; not_applicable {
+///     unreachable_database_fails_at_the_bound: "the store connects nothing at `create`",
+/// }; pending {
+///     unreachable_database_fails_at_the_bound: "pending the laziness batch",
+/// });
+/// ```
+///
+/// ```compile_fail,E0428
+/// # struct MongoHost;
+/// ulo_db_conformance::conformance_suite!(MongoHost; not_applicable {
+///     unreachable_database_fails_at_the_bound: "the store connects nothing at `create`",
+///     unreachable_database_fails_at_the_bound: "a second reason for the same scenario",
+/// });
+/// ```
 #[macro_export]
 macro_rules! conformance_suite {
     ($host:ty $(,)?) => {
@@ -349,9 +367,18 @@ macro_rules! conformance_suite {
                 $d($d test)*
             };
         }
-        // A declared name that is no scenario names no function here.
-        $(const _: fn() = $skip;)*
-        $(const _: fn() = $wait;)*
+        // A declared name that is no scenario names no constant in `__ulo_db_conformance_scenarios`,
+        // a test build or any other: the stamped functions exist in a test build alone, and a
+        // doctest is none.
+        $(const _: () = __ulo_db_conformance_scenarios::$skip;)*
+        $(const _: () = __ulo_db_conformance_scenarios::$wait;)*
+        // A name declared twice, in one list or in both, is defined twice here (E0428). The
+        // stamper would match the first declaration alone and drop the second's reason.
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_db_conformance_declared {
+            $(pub(super) const $skip: () = ();)*
+            $(pub(super) const $wait: () = ();)*
+        }
         $crate::conformance_suite!(@cases $host;
             malformed_url_is_refused => wire::malformed_url_is_refused,
             unreachable_database_fails_at_the_bound => connect::unreachable_fails_at_the_bound,
@@ -370,6 +397,10 @@ macro_rules! conformance_suite {
     };
     (@cases $host:ty; $($name:ident => $module:ident :: $case:ident $([$runner:ident])?),* $(,)?) => {
         static __ULO_DB_CONFORMANCE_SLOTS: $crate::Slots = $crate::Slots::new();
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_db_conformance_scenarios {
+            $(pub(super) const $name: () = ();)*
+        }
         $(
             __ulo_db_conformance_stamp!($name, fn $name() {
                 let _slot = __ULO_DB_CONFORMANCE_SLOTS.hold(<$host as $crate::Host>::PARALLEL);

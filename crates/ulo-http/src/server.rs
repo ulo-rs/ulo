@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use futures_util::future::join_all;
 use ulo::{AppHandle, Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport, Unreached};
-use ulo_net::{Activation, ActivationError, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
+use ulo_net::{Activation, BoundListener, Endpoint, EndpointSpec, ListenerName, Tls};
 use ulo_transport::prepare::{Failure, Failures, zero_bound, zero_count};
 use ulo_transport::{Admission, Count, ShedLog};
 
@@ -285,7 +285,7 @@ fn check_inherited(endpoints: &[Endpoint], failures: &mut Failures) {
     };
     for (name, listed) in names {
         match activation.count(name) {
-            0 => failures.push(ActivationError::Missing(name.clone()).to_string()),
+            0 => failures.push(activation.unavailable(name).to_string()),
             inherited if listed > inherited => {
                 let sockets = if inherited == 1 { "socket answers" } else { "sockets answer" };
                 failures.push(format!(

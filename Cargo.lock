@@ -9518,6 +9518,7 @@ dependencies = [
 name = "ulo-net"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "command-fds",
  "libc",
  "rustls",
  "rustls-pki-types",
@@ -10013,6 +10014,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tracing",
  "ulo",
@@ -10025,6 +10027,7 @@ dependencies = [
  "ulo-runtime-smol",
  "ulo-runtime-tokio",
  "ulo-server-hyper",
+ "ulo-test-certs",
  "ulo-transport",
  "ulo-ws",
  "ulo-ws-conformance",

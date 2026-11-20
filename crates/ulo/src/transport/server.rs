@@ -278,7 +278,7 @@ pub(crate) fn unserved_controllers(graph: &Graph, servers: &[TypeName], unserved
                 let handlers = if transport == server {
                     format!("has `{transport}` handlers, and the app binds no `{server}` server")
                 } else {
-                    format!("has `{transport}` handlers a `{server}` server serves, and the app binds none")
+                    format!("has `{transport}` handlers that a server of `{server}` serves, and the app binds none")
                 };
                 format!(
                     "the controller `{controller}` of module {module}, registered at {location}, {handlers}, so they would never \

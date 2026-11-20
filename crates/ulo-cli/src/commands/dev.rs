@@ -46,6 +46,10 @@ use watchexec_signals::Signal;
 /// drain window on every save.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
+/// The extensions whose change restarts the build. `proto` is a build input: `ulo-build` compiles
+/// the project's `.proto` files in `build.rs`, and the code it writes is stale until one rebuilds.
+const WATCHED_EXTENSIONS: [&str; 3] = ["rs", "toml", "proto"];
+
 /// Read by `ulo-net`'s `EndpointSpec::resolve`.
 const DEV_VAR: &str = "ULO_DEV";
 
@@ -224,16 +228,7 @@ pub async fn execute(args: DevArgs) -> Result<()> {
     for error in ignore_errors {
         eprintln!("{}", format!("[ulo dev] ignore file: {error}").yellow());
     }
-    let filterer = GlobsetFilterer::new(
-        &root,
-        std::iter::empty::<(String, Option<PathBuf>)>(),
-        [("**/target/**".to_string(), None), ("**/.git/**".to_string(), None)],
-        std::iter::empty::<PathBuf>(),
-        ignore_files,
-        ["rs", "toml"].map(std::ffi::OsString::from),
-    )
-    .await
-    .context("cannot build the file filter")?;
+    let filterer = watch_filter(&root, ignore_files).await.context("cannot build the file filter")?;
 
     let (triggers, received) = mpsc::unbounded_channel();
     let handler_triggers = triggers.clone();
@@ -285,6 +280,23 @@ fn changed(event: &Event) -> bool {
         && !event.tags.iter().any(|tag| {
             matches!(tag, Tag::FileEventKind(FileEventKind::Access(access)) if *access != AccessKind::Close(AccessMode::Write))
         })
+}
+
+/// Which paths under `root` count as a change: the [`WATCHED_EXTENSIONS`], outside `target/`,
+/// `.git/` and what the project's ignore files name.
+async fn watch_filter(
+    root: &Path,
+    ignore_files: Vec<ignore_files::IgnoreFile>,
+) -> Result<GlobsetFilterer, ignore_files::Error> {
+    GlobsetFilterer::new(
+        root,
+        std::iter::empty::<(String, Option<PathBuf>)>(),
+        [("**/target/**".to_string(), None), ("**/.git/**".to_string(), None)],
+        std::iter::empty::<PathBuf>(),
+        ignore_files,
+        WATCHED_EXTENSIONS.map(std::ffi::OsString::from),
+    )
+    .await
 }
 
 /// What `--listen` takes: an IP socket address, written as the application writes its endpoint,
@@ -668,6 +680,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    use watchexec_events::{Event, Tag};
+
     use super::{Duplicate, Handoff, Held, LISTEN_FD, Plan, Running, duplicate, failure, place_fd, socket_name, spawn_with_socket, start, stop};
 
     /// The descriptor the child checks.
@@ -973,6 +987,29 @@ mod tests {
         stop(running.take().expect("the running application")).await;
         assert_eq!(start_line, "start socket 1", "the last child's line");
         assert!(alive, "the last child to start, {pid}, was not running once the restarts settled: {lines:?}");
+    }
+
+    /// Whether a change to `relative` under `root` passes the filter `ulo dev` watches with.
+    fn watched(filter: &impl watchexec::filter::Filterer, root: &Path, relative: &str) -> bool {
+        let mut event = Event::default();
+        event.tags.push(Tag::Path { path: root.join(relative), file_type: None });
+        filter.check_event(&event, watchexec_events::Priority::Normal).expect("the filter answers")
+    }
+
+    #[tokio::test]
+    async fn a_proto_file_rebuilds_and_a_file_nothing_builds_from_does_not() {
+        let root = std::env::temp_dir().join(format!("ulo-dev-filter-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("a directory");
+        let root = root.canonicalize().expect("the directory's real path");
+        let filter = super::watch_filter(&root, Vec::new()).await.expect("the filter builds");
+
+        for path in ["proto/greeter.proto", "src/main.rs", "Cargo.toml", "build.rs"] {
+            assert!(watched(&filter, &root, path), "a change to {path} did not rebuild");
+        }
+        for path in ["README.md", "Cargo.lock", "target/debug/build/out.rs", ".git/config.toml"] {
+            assert!(!watched(&filter, &root, path), "a change to {path} rebuilt");
+        }
+        std::fs::remove_dir_all(&root).expect("the directory goes");
     }
 
     /// The child: reports whether the descriptor `ULO_DEV_PLACEMENT_FD` names is the socket whose

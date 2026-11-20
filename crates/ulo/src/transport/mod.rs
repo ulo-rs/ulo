@@ -95,6 +95,9 @@ pub trait Interceptor<T: Transport>: Send + Sync + 'static {
 /// claims the error with a reply; `Err` hands the next handler the error it returns, the same
 /// one or a reshaped one. A guard's refusal arrives as `GuardRejected`, and a panic in a guard,
 /// an interceptor, the handler or an earlier error handler as `PanicRecovered`.
+///
+/// `handle` takes the error before the context, the reverse of [`Guard::can_activate`]: the error
+/// is the handler's primary input and the context is what it reads to shape the reply.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an error handler for `{T}`",
     label = "an error handler for `{T}` is needed here",

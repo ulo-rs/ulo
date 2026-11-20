@@ -99,41 +99,52 @@ pub async fn every_instance<B: Broker>() {
 ///
 /// A link declaring `single_delivery` runs each request's handler on one instance; one
 /// declaring it `false` runs it on both, the client answering the first reply. Under `Addressed`
-/// the scenario runs one instance, as [`one_instance`] does, and asserts each request ran once.
+/// the caller names the first instance's address, and the second, bound at an address of its own,
+/// runs none: each request runs once, which a link declaring `single_delivery: false` there would
+/// count twice.
 pub async fn requests_across_two_instances<B: Broker>() {
     let broker = B::start().await;
     let capabilities = broker.link().capabilities();
     let first = server(&broker).await;
-    let second = if capabilities.delivery == DeliveryMode::Addressed { None } else { Some(server(&broker).await) };
-    let servers: Vec<&Server> = std::iter::once(&first).chain(second.as_ref()).collect();
-    let caller = client(&broker, &servers).await;
-    ready(&broker, &caller.rpc, &servers).await;
+    let second = server(&broker).await;
+    let servers = [&first, &second];
+    let addressed = capabilities.delivery == DeliveryMode::Addressed;
+    let reached: &[&Server] = if addressed { &servers[..1] } else { &servers };
+    let caller = client(&broker, reached).await;
+    ready(&broker, &caller.rpc, reached).await;
     let budget = broker.budget();
     // The second instance's subscription settles, and every reply to the readiness calls arrives,
     // before the count starts.
     sleep::<B>(budget.settle).await;
-    let total = || first.probe.adds_begun() + second.as_ref().map_or(0, |second| second.probe.adds_begun());
-    let before = total();
+    let each = || (first.probe.adds_begun(), second.probe.adds_begun());
+    let before = each();
+    let ran = || {
+        let (one, two) = each();
+        (one - before.0, two - before.1)
+    };
+    let total = || {
+        let (one, two) = ran();
+        one + two
+    };
 
     for n in 0..REQUESTS as i64 {
         let sum = caller.rpc.request::<_, Sum>(ADD, &Add { a: n, b: 1 }).await.expect("the request is answered");
         assert_eq!(sum, Sum { sum: n + 1 });
     }
     let expected = if capabilities.single_delivery() { REQUESTS } else { servers.len() * REQUESTS };
-    let ran = || total() - before;
     let once = capabilities.single_delivery();
     assert!(
-        eventually::<B>(budget.boot + budget.settle, || ran() >= expected).await,
-        "{} of {expected} executions ran across {} instances, `single_delivery: {once}`",
-        ran(),
-        servers.len()
+        eventually::<B>(budget.boot + budget.settle, || total() >= expected).await,
+        "{:?} of {expected} executions ran on the two instances, `single_delivery: {once}`",
+        ran()
     );
     sleep::<B>(budget.settle).await;
-    assert_eq!(ran(), expected, "executions of {REQUESTS} requests across {} instances, `single_delivery: {once}`", servers.len());
+    assert_eq!(total(), expected, "executions of {REQUESTS} requests across two instances, `single_delivery: {once}`: {:?}", ran());
+    if addressed {
+        assert_eq!(ran().1, 0, "the instance the caller did not address ran requests: {:?}", ran());
+    }
 
     first.stop().await;
-    if let Some(second) = second {
-        second.stop().await;
-    }
+    second.stop().await;
     caller.close().await;
 }

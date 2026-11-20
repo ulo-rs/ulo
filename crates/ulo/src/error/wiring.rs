@@ -773,7 +773,7 @@ impl WiringError {
                 // A collection or a factory closure is an edge like any other read, so neither
                 // breaks the cycle; a `ModuleRef` declares no key.
                 items.push(
-                    "help: remove one of these reads, or read one of them through `ModuleRef` when it is used rather than at construction"
+                    "help: remove one of these reads, or read one of them through `ModuleRef` when it is used rather than at construction: `get` for one binding, `execute` and `exec.resolver().many()` for a collection"
                         .to_owned(),
                 );
                 tree(f, head, items)

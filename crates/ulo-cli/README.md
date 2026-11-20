@@ -100,13 +100,15 @@ ulo generate controller user_profile
 #     m.controller::<crate::user_profile_controller::UserProfileController>();
 ```
 
-A kind that needs a crate the project may not have prints the `Cargo.toml` line for it. A generated
-file carries a test; the `provider` and `resolver` tests use `tokio`'s test macro, which a
+Run it from any directory inside the project: it writes into the `src` directory of the nearest
+enclosing directory that holds a `Cargo.toml` beside one. A kind that needs a crate prints the
+`Cargo.toml` line for it unless the manifest already declares that crate. A generated file carries a
+test; the `provider` and `resolver` tests use `tokio`'s test macro, which a
 `ulo new` project already depends on.
 
 ## Run with rebuild
 
-`ulo dev` runs the project and restarts it when a `.rs` or `.toml` file changes.
+`ulo dev` runs the project and restarts it when a `.rs`, `.toml` or `.proto` file changes.
 
 ```bash
 ulo dev

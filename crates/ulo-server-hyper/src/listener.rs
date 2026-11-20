@@ -71,9 +71,10 @@ impl<T: Send + 'static> Incoming<T> {
     }
 }
 
-/// What a finished TLS handshake settled, as a request's `ConnInfo` reports it: the ALPN protocol
-/// and the SNI name. A listener reads it off its TLS crate's session, `tokio-rustls`' and
-/// `futures-rustls`' alike being rustls's `ServerConnection`.
+/// What a finished TLS handshake settled, as a request's `ConnInfo` reports it: the ALPN protocol,
+/// the SNI name and the client's certificate chain, which rustls holds only once the server's
+/// client verifier accepted it. A listener reads it off its TLS crate's session, `tokio-rustls`'
+/// and `futures-rustls`' alike being rustls's `ServerConnection`.
 pub fn tls_info(session: &ServerConnection) -> TlsInfo {
     let mut info = TlsInfo::new();
     if let Some(alpn) = session.alpn_protocol() {
@@ -81,6 +82,9 @@ pub fn tls_info(session: &ServerConnection) -> TlsInfo {
     }
     if let Some(name) = session.server_name() {
         info = info.server_name(name);
+    }
+    if let Some(chain) = session.peer_certificates().filter(|chain| !chain.is_empty()) {
+        info = info.peer_certificates(chain.iter().map(|cert| cert.as_ref().to_vec()).collect::<Vec<_>>());
     }
     info
 }

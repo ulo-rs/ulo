@@ -319,9 +319,19 @@ pub fn routing_label(routing: &Routing) -> String {
 /// });
 /// ```
 ///
-/// A declared name that is no scenario fails to compile. A scenario run on a host it does not
-/// apply to fails rather than passing, so a host leaving out a declaration it needs fails too;
-/// `cargo test -- --ignored` runs the declared ones, which then fail the same way.
+/// A declared name that is no scenario fails to compile, and so does a name declared twice:
+///
+/// ```compile_fail,E0428
+/// # struct HyperHost;
+/// ulo_http_conformance::http_conformance_suite!(HyperHost; not_applicable {
+///     routing_extension: "the reference has no host around the app to read `Routing`",
+///     routing_extension: "a second reason for the same scenario",
+/// });
+/// ```
+///
+/// A scenario run on a host it does not apply to fails rather than passing, so a host leaving out
+/// a declaration it needs fails too; `cargo test -- --ignored` runs the declared ones, which then
+/// fail the same way.
 #[macro_export]
 macro_rules! http_conformance_suite {
     ($host:ty $(,)?) => {
@@ -344,6 +354,16 @@ macro_rules! http_conformance_suite {
                 $d($d test)*
             };
         }
+        // A declared name that is no scenario names no constant in `__ulo_http_conformance_scenarios`,
+        // a test build or any other: the stamped functions exist in a test build alone, and a
+        // doctest is none.
+        $(const _: () = __ulo_http_conformance_scenarios::$skip;)*
+        // A name declared twice is defined twice here (E0428). The stamper would match the first
+        // declaration alone and drop the second's reason.
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_http_conformance_declared {
+            $(pub(super) const $skip: () = ();)*
+        }
         $crate::http_conformance_suite!(@cases $host; [$($skip),*];
             routing_hit => routing::hit,
             not_found_with_no_route => routing::not_found,
@@ -357,6 +377,14 @@ macro_rules! http_conformance_suite {
             dot_segment_refused => routing::dot_segment,
             backslash_refused => routing::backslash,
             trailing_slash_insignificant => routing::trailing_slash,
+            two_set_cookie_lines => wire_table::two_set_cookie_lines,
+            no_content_carries_no_body => wire_table::no_content_carries_no_body,
+            unregistered_status_unchanged => wire_table::unregistered_status_unchanged,
+            crlf_header_value_refused => wire_table::crlf_header_value_refused,
+            obs_text_header_value_unchanged => wire_table::obs_text_header_value_unchanged,
+            double_slash_is_no_route => wire_table::double_slash_is_no_route,
+            unknown_method_not_implemented => wire_table::unknown_method_not_implemented,
+            agreed_wire_floor => wire_table::agreed_floor,
             reshaped_error => errors::reshaped,
             recovered_error => errors::recovered,
             unscoped_entry_answers_preflight => pre_dispatch::preflight,
@@ -378,10 +406,12 @@ macro_rules! http_conformance_suite {
     };
     (@cases $host:ty; [$($skip:ident),*]; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
         static __ULO_HTTP_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
+        #[allow(dead_code, non_upper_case_globals)]
+        mod __ulo_http_conformance_scenarios {
+            $(pub(super) const $name: () = ();)*
+        }
         mod nested {
             use super::*;
-            // A declared name that is no scenario names no function here.
-            $(const _: fn() = $skip;)*
             $(
                 __ulo_http_conformance_stamp!($name, fn $name() {
                     let _slot = super::__ULO_HTTP_CONFORMANCE_SLOTS.hold();
