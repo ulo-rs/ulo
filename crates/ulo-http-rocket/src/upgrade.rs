@@ -7,6 +7,7 @@ use std::pin::Pin;
 
 use rocket::data::{IoHandler, IoStream};
 use tokio::sync::oneshot;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use ulo::BoxError;
 use ulo_http::{OnUpgrade, Upgraded};
 
@@ -19,7 +20,7 @@ pub(crate) fn pending(request: &rocket::Request<'_>) -> (Option<OnUpgrade>, Opti
     let (sender, receiver) = oneshot::channel::<IoStream>();
     let upgrade = OnUpgrade::new(async move {
         let io = receiver.await.map_err(|_| BoxError::from("rocket did not hand over the upgraded connection"))?;
-        Ok::<_, BoxError>(Upgraded::from_tokio(io))
+        Ok::<_, BoxError>(Upgraded::from_futures(io.compat()))
     });
     (Some(upgrade), Some(Handoff(sender)))
 }

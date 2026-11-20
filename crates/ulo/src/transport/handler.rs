@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use crate::dependency::Dependencies;
 use crate::key::KeyName;
+use crate::module::{ModuleIdentity, ModuleName};
 use crate::transport::Transport;
 use crate::transport::enhancer::EnhancerSpec;
 use crate::transport::metadata::{MetaTier, Metadata};
@@ -95,20 +96,24 @@ pub enum Shape {
     Bidi,
 }
 
-/// A mounted handler as an enhancer and a report read it: its transport key, controller, name,
-/// route, shape and declared metadata (transports DESIGN §2.5, X3).
+/// A mounted handler as an enhancer and a report read it: its transport key, controller, module,
+/// name, request method, route, shape and declared metadata (transports DESIGN §2.5, X3).
 ///
 /// `dispatch` sets it on the execution before the first guard runs, so a guard reads
-/// `cx.exec().handler()`; [`AppHandle::handlers`](crate::AppHandle::handlers) lists every one,
-/// for permission reports and generated documentation.
+/// `cx.exec().handler()`. [`App::handlers`](crate::App::handlers) lists every one once `wire()`
+/// returns, with no singleton built, and [`AppHandle::handlers`](crate::AppHandle::handlers) from
+/// `connect()` on, for routes dumps, permission reports and generated documentation.
 pub struct HandlerInfo {
     pub(crate) transport: &'static str,
     pub(crate) controller: KeyName,
     pub(crate) name: &'static str,
+    pub(crate) method: Option<Box<str>>,
     pub(crate) route: Option<Cow<'static, str>>,
     pub(crate) prefix: Option<Cow<'static, str>>,
     pub(crate) shape: Shape,
     pub(crate) meta: Metadata,
+    pub(crate) module: ModuleIdentity,
+    pub(crate) module_name: ModuleName,
 }
 
 impl HandlerInfo {
@@ -123,6 +128,25 @@ impl HandlerInfo {
 
     pub fn name(&self) -> &'static str {
         self.name
+    }
+
+    /// The request method the handler answers, `GET` or `POST`, as its transport's
+    /// [`Transport::request_method`] reads it; `None` on a transport that routes by a pattern, a
+    /// gRPC path or an event alone. With [`route`](Self::route) and [`prefix`](Self::prefix) it
+    /// names one HTTP operation.
+    pub fn method(&self) -> Option<&str> {
+        self.method.as_deref()
+    }
+
+    /// The identity of the module the handler's controller is registered in, which a report
+    /// filtering by module compares with `ModuleIdentity::of_type::<M>()` or `of_value(&config)`.
+    pub fn module(&self) -> &ModuleIdentity {
+        &self.module
+    }
+
+    /// That module as errors and reports print it.
+    pub fn module_name(&self) -> &ModuleName {
+        &self.module_name
     }
 
     /// The route, pattern, gRPC path or event as the handler's attribute wrote it, without the

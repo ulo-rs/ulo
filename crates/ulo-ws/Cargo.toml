@@ -64,8 +64,8 @@ async-net.workspace = true
 # The pipe host's request heads, and the in-memory pipe it serves a connection over.
 httparse.workspace = true
 piper.workspace = true
-# `tokio-io`: `tests/table.rs` hands the driver one end of a tokio pipe through `Upgraded::from_tokio`.
-ulo-http = { path = "../ulo-http", features = ["tokio-io"] }
+# `compat`: `tests/table.rs` hands the driver one end of a tokio pipe through `Upgraded::from_futures`.
+tokio-util = { workspace = true, features = ["compat"] }
 # The HTTP server a gateway on the HTTP port is reached through.
 ulo-http-hyper = { path = "../ulo-http-hyper" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }

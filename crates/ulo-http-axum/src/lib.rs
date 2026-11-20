@@ -35,6 +35,7 @@ mod layer;
 mod run;
 
 use hyper_util::rt::TokioIo;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use ulo::BoxError;
 use ulo_http::embed::{Embed, EmbedLimits};
 use ulo_http::{OnUpgrade, Upgraded};
@@ -65,7 +66,7 @@ impl Embed for Axum {
         let pending = extensions.remove::<hyper::upgrade::OnUpgrade>()?;
         Some(OnUpgrade::new(async move {
             let upgraded = pending.await?;
-            Ok::<_, BoxError>(Upgraded::from_tokio(TokioIo::new(upgraded)))
+            Ok::<_, BoxError>(Upgraded::from_futures(TokioIo::new(upgraded).compat()))
         }))
     }
 }

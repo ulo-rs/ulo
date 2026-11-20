@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::net::SocketAddr;
 
 use http::request::Parts;
@@ -5,6 +6,7 @@ use http::{HeaderMap, Method, Uri, Version};
 use ulo::{Inputs, Transport};
 
 use crate::cx::HttpCx;
+use crate::handler::HttpHandler;
 use crate::response::Response;
 
 /// The HTTP transport, key `"http"`: `#[guards(http = AuthGuard)]` scopes an entry to its
@@ -21,6 +23,12 @@ impl Transport for Http {
 
     fn inputs(d: &mut Inputs) {
         d.input::<RequestHead>().input::<ClientAddr>();
+    }
+
+    /// The [`HttpHandler`]'s method; `None` for any other value, which the server refuses when it
+    /// prepares.
+    fn request_method(handler: &dyn Any) -> Option<&str> {
+        handler.downcast_ref::<HttpHandler>().map(|handler| handler.method().as_str())
     }
 }
 

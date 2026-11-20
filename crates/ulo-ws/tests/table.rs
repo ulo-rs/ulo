@@ -27,6 +27,7 @@ use tokio::io::{AsyncWriteExt, DuplexStream};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::Role;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use ulo::app::Bound as Serving;
 use ulo::{App, AppHandle, BoxError, DrainToken, Guard, Module, ModuleDef, ModuleIdentity, Mounted, Signal, controller, handlers};
 use ulo_http::Upgraded;
@@ -426,7 +427,7 @@ async fn a_server_without_hyper_serves_a_gateway_through_the_table() {
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
     assert_eq!(response.headers().get(SEC_WEBSOCKET_ACCEPT).map(|value| value.as_bytes()), Some(ACCEPT.as_bytes()));
     let (server, mut client) = pipe().await;
-    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
 
     let message = json!({ "event": "echo", "id": 1, "data": "over a pipe" }).to_string();
     client.send(Message::text(message)).await.expect("the message was sent");
@@ -565,7 +566,7 @@ async fn hold_the_slot(app: &Running, path: &str) -> (WebSocketStream<DuplexStre
         panic!("{path}: a valid upgrade request was refused");
     };
     let (server, mut holder) = pipe().await;
-    first.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    first.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
     let message = json!({ "event": "echo", "id": 1, "data": "holding" }).to_string();
     holder.send(Message::text(message)).await.expect("the message was sent");
     within("the holder's reply", holder.next()).await.expect("the connection ended").expect("a read failed");
@@ -633,7 +634,7 @@ async fn a_full_gateway_s_connect_guard_refuses_first_and_capacity_runs_no_hook(
         panic!("`refuse = close` switches every valid upgrade request");
     };
     let (server, mut refused) = pipe().await;
-    guarded.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    guarded.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
     assert_eq!(close_code("the guarded connection's close", &mut refused).await, 3003, "the connect guard's refusal");
 
     // Admitted by the guard, then refused for capacity before `OnConnect`.
@@ -641,7 +642,7 @@ async fn a_full_gateway_s_connect_guard_refuses_first_and_capacity_runs_no_hook(
         panic!("`refuse = close` switches every valid upgrade request");
     };
     let (server, mut full) = pipe().await;
-    over.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    over.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
     assert_eq!(close_code("the connection over the limit", &mut full).await, 1013);
 
     hang_up(holder).await;
@@ -705,7 +706,7 @@ async fn the_defaults_max_message_closes_a_connection_over_it_with_1009() {
         panic!("a valid upgrade request to a gateway was refused");
     };
     let (server, mut client) = pipe().await;
-    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
 
     let short = json!({ "event": "echo", "id": 1, "data": "short" }).to_string();
     assert!(short.len() <= 64, "{short}");
@@ -750,7 +751,7 @@ async fn under_a_bound_of_one_a_held_answer_is_not_overtaken() {
         panic!("a valid upgrade request to a gateway was refused");
     };
     let (server, mut client) = pipe().await;
-    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
     for (id, event) in [(1, "first"), (2, "second")] {
         client.send(Message::text(json!({ "event": event, "id": id }).to_string())).await.expect("the message was sent");
     }
@@ -795,7 +796,7 @@ async fn an_answer_held_before_its_queueing_past_the_drains_end_is_not_abandoned
         panic!("a valid upgrade request to a gateway was refused");
     };
     let (server, mut client) = pipe().await;
-    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
     client.send(Message::text(json!({ "event": "committed", "id": 1 }).to_string())).await.expect("the message was sent");
     within("the answer reaching its hold", entered.notified()).await;
 
@@ -818,7 +819,7 @@ async fn a_streamed_answer_whose_last_frame_waits_for_room_past_the_drains_end_i
         panic!("a valid upgrade request to a gateway was refused");
     };
     let (server, mut client) = pipe().await;
-    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_tokio(server)) });
+    switch.serve(async move { Ok::<_, BoxError>(Upgraded::from_futures(server.compat())) });
     client.send(Message::text(json!({ "event": "large", "id": 1 }).to_string())).await.expect("the message was sent");
     within("the handler", STREAMING.notified()).await;
     let exec = STREAMED.get().expect("the handler ran").clone();

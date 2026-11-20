@@ -11,6 +11,7 @@ use salvo::conn::tcp::{TcpAcceptor, TcpCoupler};
 use salvo::conn::{Accepted, Acceptor, Holding};
 use salvo::fuse::ArcFuseFactory;
 use tokio::net::TcpStream;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use ulo::app::{Bound, Connected};
 use ulo::{App, BoundAddr, Signal};
 use ulo_http::Upgraded;
@@ -104,7 +105,7 @@ impl Host for SalvoHost {
     }
 
     async fn connect(addresses: &[BoundAddr]) -> io::Result<Upgraded> {
-        TcpStream::connect(addresses[0].addr).await.map(Upgraded::from_tokio)
+        TcpStream::connect(addresses[0].addr).await.map(|stream| Upgraded::from_futures(stream.compat()))
     }
 }
 

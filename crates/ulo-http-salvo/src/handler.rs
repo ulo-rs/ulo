@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 use bytes::Bytes;
 use http_body::{Frame, SizeHint};
 use hyper_util::rt::TokioIo;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use salvo::http::ResBody;
 use ulo::BoxError;
 use ulo_http::{ConnInfo, HttpBody, OnUpgrade, Request, Response, Upgraded};
@@ -40,7 +41,7 @@ impl salvo::Handler for SalvoHandler {
         let upgrade = req.extensions_mut().remove::<hyper::upgrade::OnUpgrade>().map(|pending| {
             OnUpgrade::new(async move {
                 let upgraded = pending.await?;
-                Ok::<_, BoxError>(Upgraded::from_tokio(TokioIo::new(upgraded)))
+                Ok::<_, BoxError>(Upgraded::from_futures(TokioIo::new(upgraded).compat()))
             })
         });
         let body = HttpBody::new(req.take_body());

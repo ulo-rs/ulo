@@ -9,6 +9,7 @@ use crate::dependency::Dependencies;
 use crate::graph::{BindingId, ModuleId};
 use crate::key::{Key, KeyName};
 use crate::module::handle::ModuleRef;
+use crate::module::{ModuleIdentity, ModuleName};
 use crate::scope::ScopeKind;
 use crate::transport::enhancer::{ClosureId, EnhancerSpec};
 use crate::transport::handler::{HandlerInfo, HandlerSpec, Shape};
@@ -118,6 +119,7 @@ impl<'a> Mount<'a> {
             reads_prefix: T::READS_PREFIX,
             inputs: T::inputs,
             name,
+            method: T::request_method(&handler).map(Box::from),
             role_keys: [Key::of::<AnyGuard<T>, ()>(), Key::of::<AnyInterceptor<T>, ()>(), Key::of::<AnyErrorHandler<T>, ()>()],
             enhancer_deps,
             dependencies: Arc::new(dependencies),
@@ -244,6 +246,8 @@ pub(crate) struct HandlerDecl {
     /// mounts.
     pub(crate) inputs: fn(&mut Inputs),
     pub(crate) name: &'static str,
+    /// `Transport::request_method` of the handler value.
+    pub(crate) method: Option<Box<str>>,
     /// `AnyGuard<T>`, `AnyInterceptor<T>`, `AnyErrorHandler<T>`: contributions under these keys
     /// are enhancers for the `Auto` rule, and the pipeline reads them through `entries`.
     pub(crate) role_keys: [Key; 3],
@@ -306,8 +310,16 @@ pub(crate) struct HandlerRecord {
     pub(crate) controller: BindingId,
     pub(crate) module: ModuleId,
     pub(crate) decl: HandlerDecl,
-    /// Built at freeze from the declaration, the controller's key and its `.at(..)` prefix.
+    /// Built at freeze from the declaration, the controller's key, its `.at(..)` prefix and its
+    /// module.
     pub(crate) info: Arc<HandlerInfo>,
+}
+
+/// The module a handler's controller is registered in, as [`HandlerRecord::new`] records it.
+pub(crate) struct HandlerModule {
+    pub(crate) id: ModuleId,
+    pub(crate) identity: ModuleIdentity,
+    pub(crate) name: ModuleName,
 }
 
 impl HandlerRecord {
@@ -315,7 +327,7 @@ impl HandlerRecord {
     pub(crate) fn new(
         controller: BindingId,
         controller_key: KeyName,
-        module: ModuleId,
+        module: HandlerModule,
         prefix: Option<Cow<'static, str>>,
         decl: HandlerDecl,
     ) -> Self {
@@ -323,11 +335,15 @@ impl HandlerRecord {
             transport: decl.key,
             controller: controller_key,
             name: decl.name,
+            method: decl.method.clone(),
             route: decl.route.clone(),
             prefix,
             shape: decl.shape,
             meta: decl.meta.clone(),
+            module: module.identity,
+            module_name: module.name,
         });
+        let module = module.id;
         HandlerRecord { controller, module, decl, info }
     }
 

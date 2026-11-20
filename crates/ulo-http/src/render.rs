@@ -17,10 +17,23 @@ use crate::response::Response;
 use crate::routing::Routing;
 use crate::sse::{Event, EventName};
 
-/// The canonical status of a kind. `Timeout` is 504, the HTTP mapping `google.rpc.Code` documents
-/// for DEADLINE_EXCEEDED (`code.proto`), which grpc-gateway follows; 408 means the server gave up
-/// waiting for the client's request.
-pub(crate) fn status_of(kind: ErrorKind) -> StatusCode {
+/// The status HTTP sends an error of `kind` with when no [`WithHttpStatus`] status is set on it:
+/// the one table the problem document's `status` and `title` come from. An error handler that
+/// answers a claimed error with a response of its own reads it here rather than copying the table,
+/// and an error's own status first:
+/// `error.http_status().unwrap_or_else(|| status_for(error.kind()))`.
+///
+/// `Timeout` is 504, the HTTP mapping `google.rpc.Code` documents for DEADLINE_EXCEEDED
+/// (`code.proto`), which grpc-gateway follows; 408 means the server gave up waiting for the
+/// client's request.
+///
+/// ```
+/// use ulo_http::{ErrorKind, StatusCode, status_for};
+///
+/// assert_eq!(status_for(ErrorKind::Conflict), StatusCode::CONFLICT);
+/// assert_eq!(status_for(ErrorKind::Timeout), StatusCode::GATEWAY_TIMEOUT);
+/// ```
+pub fn status_for(kind: ErrorKind) -> StatusCode {
     match kind {
         ErrorKind::BadRequest => StatusCode::BAD_REQUEST,
         ErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -56,18 +69,28 @@ pub(crate) fn status_of(kind: ErrorKind) -> StatusCode {
 /// ```
 pub trait WithHttpStatus {
     fn with_http_status(self, status: StatusCode) -> Self;
+
+    /// The status [`with_http_status`](Self::with_http_status) set, as it was set, so an error
+    /// handler rebuilding the error keeps it. `None` when none was set, and the kind's status
+    /// ([`status_for`]) applies. A status outside 400 to 599 is answered here too, though the
+    /// renderer ignores it and sends the kind's.
+    fn http_status(&self) -> Option<StatusCode>;
 }
 
 impl WithHttpStatus for CallError {
     fn with_http_status(self, status: StatusCode) -> Self {
         self.__with_http_status(status.as_u16())
     }
+
+    fn http_status(&self) -> Option<StatusCode> {
+        self.__http_status().and_then(|status| StatusCode::from_u16(status).ok())
+    }
 }
 
 /// The status `error` is rendered with: the one [`WithHttpStatus`] set when it is an error's,
 /// otherwise its kind's.
-pub(crate) fn status_for(error: &CallError) -> StatusCode {
-    own_status(error).unwrap_or_else(|| status_of(error.kind()))
+pub(crate) fn rendered_status(error: &CallError) -> StatusCode {
+    own_status(error).unwrap_or_else(|| status_for(error.kind()))
 }
 
 /// The status [`WithHttpStatus`] set on `error`, when it is 400 to 599. One outside that range is
@@ -83,11 +106,11 @@ fn own_status(error: &CallError) -> Option<StatusCode> {
     }
 }
 
-/// The problem document for `error`, with the status [`status_for`] gives. A 401 carries
+/// The problem document for `error`, with the status [`rendered_status`] gives. A 401 carries
 /// `WWW-Authenticate`, the error's own challenge or the server's default; a 429 carries
 /// `Retry-After` from a `RetryAfter` detail, and a 503 does when one is present.
 pub(crate) fn problem(error: &CallError, config: &HttpConfig) -> Response {
-    document(error, status_for(error), config)
+    document(error, rendered_status(error), config)
 }
 
 /// An error no handler claimed, as a response: `Timeout` when `exec`'s cancel reason is

@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 use bytes::Bytes;
 use http_body::{Frame, SizeHint};
 use http_body_util::combinators::BoxBody;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 use ulo::BoxError;
 use ulo_http::{ConnInfo, HttpBody, OnUpgrade, Request, Upgraded};
 
@@ -33,7 +34,7 @@ impl poem::Endpoint for PoemEndpoint {
         let upgrade = req.take_upgrade().ok().map(|pending| {
             OnUpgrade::new(async move {
                 let upgraded = pending.await.map_err(|error| BoxError::from(error.to_string()))?;
-                Ok::<_, BoxError>(Upgraded::from_tokio(upgraded))
+                Ok::<_, BoxError>(Upgraded::from_futures(upgraded.compat()))
             })
         });
         let body: BoxBody<Bytes, io::Error> = req.take_body().into();

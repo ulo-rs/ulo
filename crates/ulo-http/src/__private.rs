@@ -26,7 +26,7 @@ use crate::upgrade::ServingConfig;
 /// 503. A WebSocket handshake refused under `refuse = handshake` is answered with them, and a 401
 /// whose error names no challenge with [`HandshakeAnswers::challenge`].
 pub fn error_head(error: &CallError) -> (StatusCode, HeaderMap) {
-    let status = render::status_for(error);
+    let status = render::rendered_status(error);
     let mut headers = HeaderMap::new();
     render::status_headers(error, status, None, &mut headers);
     (status, headers)

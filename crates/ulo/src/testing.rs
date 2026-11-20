@@ -2,7 +2,12 @@
 //! modules (§11).
 //!
 //! An override replaces the recipe of an existing key and keeps its origin module, its scope,
-//! its visibility and its exports. It names no module by default and must match exactly one
+//! its visibility and its exports. The replaced binding's readiness check and lifecycle hooks, a
+//! `.ready(..)`, an `.on_init(..)` or `.on_destroy(..)` and its type's own hooks, belong to the
+//! implementation it replaces and are dropped with it; the bindings that implementation read stay
+//! in the graph, built as before, since another binding may read them too. To leave out a
+//! module's bindings, checks and imports together, replace the module with
+//! [`TestApp::replace_module`]. It names no module by default and must match exactly one
 //! binding: one that matches none is a wiring error, which catches stale mocks after refactors,
 //! and one that matches several is a wiring error listing every match. An override cannot change
 //! a key's kind; `override_many` replaces a whole collection.
@@ -175,7 +180,8 @@ impl TestApp {
 }
 
 impl<S> TestApp<S> {
-    /// Replaces the recipe of the binding under `T` with a shared value.
+    /// Replaces the recipe of the binding under `T` with a shared value, dropping the binding's
+    /// readiness check and hooks with it (see the [module docs](self)).
     /// `override_value::<dyn Timer>` is a wiring error: set it with [`timer`](Self::timer).
     /// `override_value::<dyn Runtime>` is one too: set it with [`runtime`](Self::runtime).
     #[track_caller]
@@ -190,7 +196,8 @@ impl<S> TestApp<S> {
         })
     }
 
-    /// Replaces the recipe of the binding under the future's output type.
+    /// Replaces the recipe of the binding under the future's output type, dropping the binding's
+    /// readiness check and hooks with it.
     #[track_caller]
     pub fn override_factory<Args, F>(self, factory: F) -> TestApp<Pending>
     where
@@ -209,7 +216,8 @@ impl<S> TestApp<S> {
         })
     }
 
-    /// Replaces the recipe of the binding under the `Ok` type of the future's output.
+    /// Replaces the recipe of the binding under the `Ok` type of the future's output, dropping
+    /// the binding's readiness check and hooks with it.
     #[track_caller]
     pub fn override_try_factory<Args, F, T, E>(self, factory: F) -> TestApp<Pending>
     where
@@ -246,8 +254,14 @@ impl<S> TestApp<S> {
         this
     }
 
-    /// Swaps a module by identity. The replacement must export a superset of the original's
-    /// keys, or wiring reports what is missing. An original no module imports is a wiring error,
+    /// Swaps a module by identity, removing its whole subgraph: the original's bindings, their
+    /// checks and hooks, its own hooks, and every module only it imports are left out of the
+    /// graph, so a test whose fake must not reach a production dependency, a mail host or a
+    /// database the original's readiness check dials, replaces the module rather than overriding a
+    /// binding in it. The original's `register` still runs once, into a module the wiring drops,
+    /// to read what it exports: a `register` that reads the environment reads it in the test. The
+    /// replacement must export a superset of the original's keys, or wiring reports what is
+    /// missing. An original no module imports is a wiring error,
     /// `ReplacementUnmatched`, the same stale mock an override that matches nothing is, and a
     /// second replacement of one original is `DuplicateReplacement`, naming both calls.
     #[track_caller]
