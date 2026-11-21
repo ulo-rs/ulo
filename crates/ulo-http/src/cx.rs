@@ -175,7 +175,10 @@ impl HttpCx {
         }
     }
 
-    /// The upgrade future, once, for the WebSocket hand-off.
+    /// The upgrade future, once. A protocol switch is an [`UpgradeHandler`](crate::UpgradeHandler)'s
+    /// alone: the service answers a handler's 101, or any final 1xx, with a 500 in its place, and
+    /// the future yields the connection only after an upgrade handler's 101, so the future a
+    /// handler takes here resolves to an error.
     pub fn take_upgrade(&self) -> Option<OnUpgrade> {
         self.inner.upgrade.lock().unwrap_or_else(PoisonError::into_inner).take()
     }

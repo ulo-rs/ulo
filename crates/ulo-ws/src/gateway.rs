@@ -589,6 +589,9 @@ async fn resolve<G: Send + Sync + 'static>(module: &ModuleRef) -> Result<Arc<G>,
     Ok(gateway)
 }
 
+/// What `listen()`'s refusal of a `port = own` gateway no server serves advises.
+const PORT_OWN_HINT: &str = "serve it with a standalone WebSocket server, `ulo_ws_hyper::Server`, or drop `port = own` to serve it on the HTTP server's port";
+
 /// Mounts `G`'s connect handler, carrying `handler`, with `G`'s connect guards and the session
 /// factory's reads as the handler's dependencies, and declares the gateway a `Ws` controller served
 /// by the server its `port` names: the HTTP server for `Port::Http`, a standalone server of `Ws`
@@ -604,8 +607,8 @@ pub(crate) fn mount<G: GatewayConfig>(m: &mut Mount<'_>, handler: ConnectHandler
             dependencies.param::<ReadsHandoff>("upgrade");
         }
         Port::Own => {
-            m.served_by::<Ws, Ws, Ws>();
-            m.served_by::<WsConnect, Ws, Ws>();
+            m.served_by_with_hint::<Ws, Ws, Ws>(PORT_OWN_HINT);
+            m.served_by_with_hint::<WsConnect, Ws, Ws>(PORT_OWN_HINT);
         }
     }
     let mut guards = EnhancerSpec::<WsConnect>::new();
