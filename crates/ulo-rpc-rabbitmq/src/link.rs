@@ -1687,7 +1687,7 @@ mod tests {
     /// One URL, redacted whole: a comma inside the password does not split it.
     #[test]
     fn the_endpoint_is_the_url_without_its_credentials() {
-        let rows = [("amqp://user:pw@broker:5672/%2f?heartbeat=10", "amqp://broker:5672/%2f"), ("amqp://u:123,456@h/v", "amqp://h/v")];
+        let rows = [("amqp://user:pw@broker:5672/%2f?heartbeat=10", "amqp://broker:5672/%2f"), ("amqp://u:123,456@h/v", "amqp://h/v"), ("amqp://u:123?456@h/v", "amqp://[unreadable]")];
         for (url, expected) in rows {
             let endpoint = Link::endpoint(&RabbitMq::url(url)).expect("an endpoint");
             assert_eq!(endpoint, expected, "{url}");

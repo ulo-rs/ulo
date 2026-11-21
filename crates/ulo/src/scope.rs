@@ -19,6 +19,13 @@
 pub struct Singleton;
 
 /// Built once per execution and shared inside it.
+///
+/// A build that fails is kept for the execution as an instance is: every later reader in that
+/// execution receives the same error without a build, the next execution builds again. That holds
+/// for state written later in the execution too: a binding whose construction reads an
+/// [`Ext`](crate::Ext) before a middleware has inserted it fails for the rest of that execution,
+/// so such a binding is read where the state is already written, or reads it at use through an
+/// [`ExecutionRef`](crate::ExecutionRef).
 pub struct PerExecution;
 
 /// Built fresh for every injection point that reads it.

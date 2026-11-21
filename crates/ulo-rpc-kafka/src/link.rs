@@ -362,7 +362,7 @@ impl Link for Kafka {
 
     /// Each comma-separated broker, as the setting is read.
     fn endpoint(&self) -> Option<String> {
-        Some(self.brokers.split(',').map(|broker| ulo::secrets::setting_url(broker.trim())).collect::<Vec<_>>().join(","))
+        Some(ulo::secrets::setting_url_list(&self.brokers))
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -1995,8 +1995,10 @@ mod tests {
     fn the_endpoint_is_each_broker_without_its_credentials() {
         let brokers = "user:pass@broker1:9092, ssl://u:pass@broker2:9093?x=pass,broker3:9094";
         let endpoint = Link::endpoint(&Kafka::brokers(brokers)).expect("an endpoint");
-        assert_eq!(endpoint, "broker1:9092,ssl://broker2:9093,broker3:9094");
+        assert_eq!(endpoint, "broker1:9092,ssl://broker2:9093,[unreadable]", "`broker3:9094` could continue the query before it");
         assert!(!endpoint.contains("pass") && !endpoint.contains("user"), "a credential reached the endpoint: {endpoint}");
+        let split = Link::endpoint(&Kafka::brokers("u:12,34@h:9092")).expect("an endpoint");
+        assert_eq!(split, "[unreadable],h:9092", "a password holding a comma leaves its start unreported");
     }
 
     /// The partition watcher compares each topic's count on its own: a failed read beside them

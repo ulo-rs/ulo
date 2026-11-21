@@ -56,6 +56,10 @@ ulo-rpc-tcp = { path = "../ulo-rpc-tcp" }
 ulo-ws-hyper = { path = "../ulo-ws-hyper" }
 ulo-test-certs = { path = "../ulo-test-certs" }
 
+# Placing a datagram socket at descriptor 3 in the child `tests/inherited_not_listening.rs` starts.
+[target.'cfg(unix)'.dev-dependencies]
+command-fds.workspace = true
+
 [build-dependencies]
 ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.3" }
 

@@ -35,7 +35,7 @@ pub mod lints {
         rpc::Orders,
         grpc::LintsService,
     ],
-    providers = [di::Store, di::Clock, di::Named, di::Defaulted],
+    providers = [di::Store, di::Clock, di::Named, di::Defaulted, di::GatedCtor, di::GatedFields, di::GatedTuple],
     exports = [di::Store],
 )]
 pub struct AppModule;

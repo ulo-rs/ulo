@@ -227,7 +227,7 @@ jobs:
       - uses: actions/checkout@v4
       # Pinned on purpose, one of the pins in this file that are not read from a
       # manifest; `generated code lints`, `workspace lints`, `editor resolution`, `template matrix`,
-      # `public reach`, `release check`, `compiler probes` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
+      # `public reach`, `release check`, `compiler probes`, `macro diagnostics on the floor` and `miri` hold the others. `tests/ui/*.stderr` records rustc's rendering as well as the
       # attributes' own text, and rustc rewords its half roughly once every three
       # minor versions: on `stable` that arrives as a red build on a pull request
       # that changed nothing related. ulo-codegen-tests' build script sets
@@ -258,6 +258,22 @@ jobs:
       # one that must fail and compiles, one that prints a code its header does not name.
       - run: python3 scripts/probes.py --self-test
       - run: python3 scripts/probes.py
+
+  floor-diagnostics:
+    name: macro diagnostics on the floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The workspace's floor, pinned as `compiler probes` pins it. The `tests/ui` cases run on it
+      # through trybuild, and each is held to the set of error codes its 1.98.1 snapshot prints,
+      # `ci/ui-codes-1.88.txt` naming the cases whose codes differ on 1.88: a case that compiles,
+      # or prints a code outside that, fails the job. `macro diagnostics` holds the wording.
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+      # The script's own verdicts first, against planted trybuild output: a case that compiled, a
+      # code gained, a code lost, an allowance the run does not need and one naming no case.
+      - run: python3 scripts/ui_codes.py --self-test
+      - run: python3 scripts/ui_codes.py
 
   generated-lints:
     name: generated code lints

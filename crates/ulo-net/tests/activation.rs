@@ -62,11 +62,11 @@ fn child_reads_a_mixed_set() {
 
     assert_eq!(activation.count(&datagram), 0, "the datagram socket counted as a listener");
     assert!(
-        matches!(activation.unavailable(&datagram), ActivationError::NotListening { index: 0 }),
+        matches!(activation.unavailable(&datagram), ActivationError::NotListening { index: 0, endpoint, .. } if endpoint == datagram),
         "prepare's reason for the datagram socket is wrong"
     );
     assert!(
-        matches!(activation.take(&datagram), Err(ActivationError::NotListening { index: 0 })),
+        matches!(activation.take(&datagram), Err(ActivationError::NotListening { index: 0, endpoint, .. }) if endpoint == datagram),
         "taking the datagram socket did not name it"
     );
 
@@ -153,9 +153,12 @@ fn child_reads_every_kind() {
         let named = ListenerName::Named(name.into());
         assert_eq!(activation.count(&named), 0, "`{name}` counted as a listener");
         let reason = activation.unavailable(&named);
-        assert!(matches!(reason, ActivationError::NotListening { index: at } if at == index), "`{name}`: {reason:?}");
-        let reason = activation.unavailable(&ListenerName::Index(index));
-        assert!(matches!(reason, ActivationError::NotListening { index: at } if at == index), "#{index}: {reason:?}");
+        assert!(matches!(&reason, ActivationError::NotListening { index: at, endpoint, .. } if *at == index && *endpoint == named), "`{name}`: {reason:?}");
+        assert_eq!(reason.to_string(), format!("endpoint `{name}`: inherited descriptor #{index} is not a listening TCP socket"));
+        let by_index = ListenerName::Index(index);
+        let reason = activation.unavailable(&by_index);
+        assert!(matches!(&reason, ActivationError::NotListening { index: at, endpoint, .. } if *at == index && *endpoint == by_index), "#{index}: {reason:?}");
+        assert_eq!(reason.to_string(), format!("endpoint #{index}: inherited descriptor #{index} is not a listening TCP socket"));
     }
     let absent = activation.unavailable(&ListenerName::Named("absent".into()));
     assert!(matches!(absent, ActivationError::Missing(_)), "{absent:?}");
