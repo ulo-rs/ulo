@@ -23,7 +23,9 @@ use ulo::{
 struct A;
 struct B;
 struct C;
+struct D;
 struct L1;
+struct L2;
 struct S1;
 struct S2;
 struct S3;
@@ -108,7 +110,7 @@ async fn a_construction_failure_runs_no_destroy_hook_of_an_owner_whose_init_hook
     }))
     .await;
     assert!(matches!(error, StartupError::Connect(ConnectError::Construct { .. })), "got: {error}");
-    assert_eq!(log.events(), Vec::<String>::new(), "no init hook ran, and the module's destroy hook waits for the init stage");
+    assert_eq!(log.events(), Vec::<String>::new(), "no init hook ran, and the module's destroy hook waits for its singletons");
 }
 
 /// A destroy-only binding before the failing init hook and one after it are both torn down, in
@@ -465,6 +467,60 @@ async fn a_failed_load_runs_the_destroy_hooks_of_what_it_initialized() {
     assert_eq!(log.events(), ["s1 init", "s2 init", "s3 init", "s2 destroy", "s1 destroy"]);
     close(app).await;
     assert_eq!(destroyed(&log), ["s2 destroy", "s1 destroy"], "the app's own close does not run them again");
+}
+
+/// A module whose own init hook fails after its singletons initialized has not initialized; its
+/// singletons have, and so has a module after it registering no singleton.
+#[tokio::test]
+async fn a_module_whose_own_init_hook_fails_is_not_torn_down_and_its_singletons_are() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        let lb = l.clone();
+        m.import(Mod::<B>::new(move |m| {
+            m.singleton(|| async { S1 }).on_init(init(&lb, "s1", false)).on_destroy(destroy(&lb, "s1"));
+            m.singleton(|| async { S2 }).on_destroy(destroy(&lb, "s2"));
+            m.on_init(init(&lb, "module-b", true));
+            m.on_destroy(destroy(&lb, "module-b"));
+        }));
+        let ld = l.clone();
+        m.import(Mod::<D>::new(move |m| {
+            m.on_destroy(destroy(&ld, "module-d"));
+        }));
+    }))
+    .await;
+    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert_eq!(log.events(), ["s1 init", "module-b init", "module-d destroy", "s2 destroy", "s1 destroy"]);
+}
+
+/// A failed load leaves the base graph as it was: the same module loads again, and the app's close
+/// runs the hooks of that second load once, not those the failed one ran.
+#[tokio::test]
+async fn a_module_whose_load_failed_loads_again_and_closes_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let log = Log::new();
+    let app = connects(Empty).await;
+    let handle = app.handle();
+    let fails = Arc::new(AtomicBool::new(true));
+    let lazy = |log: &Log, fails: &Arc<AtomicBool>| {
+        let (l, f) = (log.clone(), fails.clone());
+        Mod::<L1>::new(move |m| {
+            let ld = l.clone();
+            m.import(Mod::<L2>::new(move |m| {
+                m.on_destroy(destroy(&ld, "module-l2"));
+            }));
+            m.singleton(|| async { S1 }).on_destroy(destroy(&l, "s1"));
+            let fails = f.load(Ordering::SeqCst);
+            m.try_singleton(move || async move { if fails { Err(Boom::new("down")) } else { Ok(S2) } });
+        })
+    };
+    let error = handle.load(lazy(&log, &fails)).await.err().expect("the load succeeded");
+    assert!(matches!(error, LoadError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert_eq!(destroyed(&log), ["s1 destroy", "module-l2 destroy"]);
+    fails.store(false, Ordering::SeqCst);
+    handle.load(lazy(&log, &fails)).await.expect("the second load connects");
+    close(app).await;
+    assert_eq!(destroyed(&log), ["s1 destroy", "module-l2 destroy", "s1 destroy", "module-l2 destroy"]);
 }
 
 /// A singleton whose bootstrap hook fails, after every init hook has run.

@@ -350,9 +350,11 @@ impl App<Wired> {
     /// two exports answer or one bound per execution, fails the connect as
     /// `ConnectError::Construct` naming it.
     ///
-    /// A failure runs the `OnModuleDestroy` hooks of every binding and module whose init stage
-    /// completed, in reverse startup order, each under its bound and all under `shutdown_timeout`;
-    /// a hook that fails or overruns arrives beside the failure as `ConnectError::Teardown`.
+    /// A failure runs the `OnModuleDestroy` hooks of every binding and module that had initialized,
+    /// in reverse startup order, each under its bound and all under `shutdown_timeout`; a hook that
+    /// fails or overruns arrives beside the failure as `ConnectError::Teardown`. An owner with an
+    /// init hook has initialized once that hook completed, a binding with none once it is built
+    /// and checked, and a module with none once every singleton it registers has.
     #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub async fn connect(self) -> Result<App<Connected>, StartupError> {
         let shared = self.shared;

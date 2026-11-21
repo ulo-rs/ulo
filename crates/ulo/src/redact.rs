@@ -945,10 +945,11 @@ mod tests {
     /// `#` and `/` among the secret's characters and inserted raw at random places. A report
     /// holding a character of that alphabet printed part of a credential. The shape left is a
     /// credential holding `<scheme>://` or `//` where a list's element starts: it opens a new URL,
-    /// and its scheme is reported as written, so a scheme is set aside before the check. 100,000
+    /// the text before it read as a URL of its own, and its scheme is reported as written, so a
+    /// scheme is set aside before the check. 100,000
     /// singles and 100,000 lists left 29 such reports, 6 of them through a `//`; this seed draws
-    /// none of those. Planted breaks: the query and fragment not searched for an `@`; a list's
-    /// elements read alone.
+    /// none of those, and two of the shape close the test with their reports. Planted breaks: the
+    /// query and fragment not searched for an `@`; a list's elements read alone.
     #[test]
     fn no_generated_credential_reaches_the_report_outside_a_scheme() {
         struct Rng(u64);
@@ -1040,5 +1041,12 @@ mod tests {
             }
         }
         assert!(leaked.is_empty(), "{} reports printed part of a credential, the first {:?}", leaked.len(), leaked.first());
+
+        // The shape the rule leaves, which the check above flags: the text before a `//` or a
+        // `<scheme>://` inside a password reads as a URL of its own.
+        for (list, reported) in [("U:56,//X@h:1", "U:56,//h:1"), ("nats://U:56,NATS://X@h:4222", "nats://U:56,NATS://h:4222")] {
+            assert_eq!(setting_url_list(list), reported);
+            assert!(leaks(reported), "the leak check misses the shape the rule leaves: {reported}");
+        }
     }
 }

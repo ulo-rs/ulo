@@ -141,7 +141,8 @@ pub trait Link: Send + Sync + 'static {
     /// element opening with a scheme or `//` starts a new URL, so a list whose servers each open
     /// with their scheme reads in full, and one written without schemes reads only its last
     /// credentialed element. A credential that itself holds `<scheme>://` or `//` where an element
-    /// starts is read as such a start, and the scheme it opens is reported as written. A link whose
+    /// starts is read as such a start: the text before it reads as a URL of its own, `u:12,//x@h:1`
+    /// as `u:12,//h:1`, and the scheme it opens is reported as written. A link whose
     /// setting is one URL redacts it whole, since a comma may sit inside its password. A server binding no address names itself by it in its shed log's `server`
     /// field, after [`NAME`](Self::NAME), as it is answered. `None` leaves the field at `NAME`
     /// alone, so a link wrapping another forwards it as it forwards `bound`; a link answering
