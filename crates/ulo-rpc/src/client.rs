@@ -18,7 +18,9 @@
 //! calls waiting on it, by `id`. A reply for an id no call waits on any more, a second reply on a
 //! `FanOut` link or one arriving after its call gave up, is dropped. A lost reply lane fails every
 //! call waiting on it `Unavailable`, and the next call connects again; a `goaway` lets the calls in
-//! flight finish and sends the next call over a new connection.
+//! flight finish and sends the next call over a new connection. A closed client stays closed: every
+//! call made after [`RpcClient::close`], or after `RpcClientModule`'s destroy hook, fails
+//! `Unavailable` with "client closed" and opens no connection.
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -301,6 +303,11 @@ pub(crate) struct ClientInner {
     /// The link's `close`, for a client that owns its link, one built by [`RpcClient::new`]; a
     /// module's client leaves it to the module's destroy hook.
     close: Option<Close>,
+    /// The link's `close` as [`RpcClient::close`] calls it, on either kind of client.
+    link_close: Close,
+    /// Set by [`RpcClient::close`] and by `RpcClientModule`'s destroy hook, which shares it: every
+    /// clone of the client reads one flag, and no call after it connects.
+    closed: Arc<AtomicBool>,
     codec: Codec,
     /// The call shapes the link declares it carries, `Capabilities::shapes`: a call of another
     /// shape is refused before it connects.
@@ -396,20 +403,24 @@ impl RpcClient {
             return Err(UnusableLink { site: "RpcClient::new", link: L::NAME, source });
         }
         let link = Arc::new(link);
-        let closing = Arc::clone(&link);
-        let close: Close = Box::new(move || {
-            let link = Arc::clone(&closing);
-            Box::pin(async move { link.close().await })
-        });
-        Ok(RpcClient::build(link, Bound::Default, Bound::Default, runtime, Some(close)))
+        let close = closer(&link);
+        Ok(RpcClient::build(link, Bound::Default, Bound::Default, runtime, Some(close), Arc::default()))
     }
 
-    /// `RpcClientModule`'s client, whose link the module's destroy hook closes.
+    /// `RpcClientModule`'s client, whose link the module's destroy hook closes, setting `closed`
+    /// first.
+    pub(crate) fn of_module_closed<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>, closed: Arc<AtomicBool>) -> Self {
+        RpcClient::build(link, timeout, idle, runtime, None, closed)
+    }
+
+    /// A module's client with a flag of its own, for the unit tests.
+    #[cfg(test)]
     pub(crate) fn of_module<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>) -> Self {
-        RpcClient::build(link, timeout, idle, runtime, None)
+        RpcClient::of_module_closed(link, timeout, idle, runtime, Arc::default())
     }
 
-    fn build<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>, close: Option<Close>) -> Self {
+    fn build<L: Link>(link: Arc<L>, timeout: Bound, idle: Bound, runtime: Arc<dyn Runtime>, close: Option<Close>, closed: Arc<AtomicBool>) -> Self {
+        let link_close = closer(&link);
         let capabilities = link.capabilities();
         let codec = Codec::of(&capabilities);
         let handed = Arc::clone(&runtime);
@@ -422,6 +433,8 @@ impl RpcClient {
                 link: L::NAME,
                 connect,
                 close,
+                link_close,
+                closed,
                 codec,
                 shapes: capabilities.shapes,
                 runtime,
@@ -530,6 +543,18 @@ impl RpcClient {
         }
         self.queued.bytes = bytes;
         Ok(self)
+    }
+
+    /// Closes the client: every call made afterwards, on this handle and on every clone of it,
+    /// fails `Unavailable` with "client closed" and the reason `"client_closed"`, and opens no
+    /// connection; then closes the link, which ends its connection, so the calls waiting on it
+    /// fail as at a lost connection. A call already past its connect is not refused. Closing
+    /// again closes the link again and refuses nothing more. `RpcClientModule`'s destroy hook
+    /// closes its client the same way. A closed client is not opened again; a new one is built
+    /// over a new link.
+    pub async fn close(&self) -> Result<(), BoxError> {
+        self.inner.closed.store(true, Ordering::Release);
+        (self.inner.link_close)().await
     }
 
     /// A request answered by one reply.
@@ -859,7 +884,15 @@ impl ClientInner {
     }
 
     async fn connection(&self) -> Result<Arc<Conn>, RpcError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(client_closed());
+        }
         let mut slot = self.conn.lock().await;
+        // Read again under the slot's lock, so a close that ran while this call waited for it
+        // opens nothing.
+        if self.closed.load(Ordering::Acquire) {
+            return Err(client_closed());
+        }
         if let Some(conn) = slot.as_ref().filter(|conn| conn.open.load(Ordering::Acquire)) {
             return Ok(Arc::clone(conn));
         }
@@ -1068,11 +1101,29 @@ impl Drop for Pending {
     }
 }
 
+/// The link's `close`, held by the client.
+fn closer<L: Link>(link: &Arc<L>) -> Close {
+    let link = Arc::clone(link);
+    Box::new(move || {
+        let link = Arc::clone(&link);
+        Box::pin(async move { link.close().await })
+    })
+}
+
+/// The refusal of a call made on a closed client.
+fn client_closed() -> RpcError {
+    RpcError::new(ErrorKind::Unavailable, "client closed").with_reason("client_closed")
+}
+
 /// A client that owns its link closes it from a task on its runtime, a drop being unable to
 /// await. Its connection is released as its fields drop, whatever the runtime does with the task.
 impl Drop for ClientInner {
     fn drop(&mut self) {
         let Some(close) = &self.close else { return };
+        // `RpcClient::close` closed the link already.
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
         let closing = close();
         let link = self.link;
         let unfinished = Unfinished { link, finished: false };

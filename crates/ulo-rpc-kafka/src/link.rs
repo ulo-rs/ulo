@@ -27,7 +27,7 @@ use ulo_runtime_tokio::Tokio;
 use ulo_rpc::link::ClientProbe;
 use ulo_rpc::link::{HoldUntil, Inbound, TaskPanics};
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, Misconfigured, NameInvalid, NameTooLong,
+    Ack, CallHeaders, Capabilities, Codec, ConnectTimedOut, Data, Delivery, DeliveryMode, Frame, FrameTooLarge, Instances, Link, NameInvalid, NameTooLong,
     NoDestination, NoTimer, Ordering as Order, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 use ulo_transport::sync::ordered;
@@ -246,9 +246,9 @@ impl Kafka {
     }
 
     /// The client's reply topic, one per logical client and reused across restarts; unset, one per
-    /// process. A name Kafka names no topic, by the rule patterns follow, fails the client's
-    /// connect as [`Misconfigured`], which `RpcClient` answers `Internal` with
-    /// `reason: "misconfigured_link"` on every call.
+    /// process. A name Kafka names no topic, by the rule patterns follow, is refused in `usable`,
+    /// so `RpcClient::new` refuses the client as `UnusableLink` and `RpcClientModule` fails the
+    /// app's `connect`, its source `NameInvalid` or `NameTooLong`.
     pub fn reply_topic(mut self, topic: impl Into<String>) -> Self {
         self.reply_topic = Some(topic.into());
         self
@@ -414,8 +414,17 @@ impl Link for Kafka {
             .without_ordered_control(CONTROL_LANE)
     }
 
+    /// Refuses, besides a link with no runtime, a `reply_topic(..)` Kafka names no topic, by the
+    /// rule a pattern follows, as `NameInvalid` or `NameTooLong`: `RpcClient::new` refuses the
+    /// client as `UnusableLink` and `RpcClientModule`'s init hook fails the app's `connect`, so a
+    /// client that could never create its reply topic fails at startup. A server's `prepare`
+    /// reports it too.
     fn usable(&self) -> Result<(), BoxError> {
-        self.runtime().map(drop)
+        self.runtime()?;
+        match &self.reply_topic {
+            Some(topic) => named("reply topic", topic),
+            None => Ok(()),
+        }
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
@@ -585,7 +594,6 @@ impl Link for Kafka {
         let base = Brokers::parse(&self.brokers)?.config();
         let id = uuid::Uuid::new_v4().simple().to_string();
         let reply_topic = self.reply_topic.clone().unwrap_or_else(|| format!("ulo.rpc.reply.{id}"));
-        named("reply topic", &reply_topic).map_err(|source| Misconfigured { source })?;
         let (partitions, replication, client_producer) = (self.partitions, self.replication, self.client_producer);
         let (replies, producer) = {
             let reply_topic = reply_topic.clone();
@@ -2039,24 +2047,26 @@ mod tests {
         assert!(control.to_string().contains("pattern `ulo_rpc.control` collides with the link's control topic `ulo.rpc.control`"), "{control}");
     }
 
-    /// Q34-45: a `reply_topic` Kafka names no topic fails the client's connect as `Misconfigured`
-    /// before any I/O, by the rule a pattern follows. Planted break: no check, which reaches for
-    /// the broker and fails as an unreachable one does.
+    /// Q35-14: a `reply_topic` Kafka names no topic is refused where the client takes the link, by
+    /// the rule a pattern follows, `RpcClient::new` answering `UnusableLink` with the name's refusal
+    /// as its source, and a valid one is taken. Planted break: the check left at `connect`, which
+    /// builds the client.
     #[test]
-    fn a_reply_topic_kafka_names_no_topic_fails_the_connect_misconfigured() {
+    fn a_reply_topic_kafka_names_no_topic_is_refused_where_the_client_takes_the_link() {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime");
         runtime.block_on(async {
             let handed: Arc<dyn Runtime> = Arc::new(Tokio::current());
             let long = "r".repeat(250);
             for topic in ["orders/replies", long.as_str()] {
-                let refused = match Kafka::brokers("127.0.0.1:9").reply_topic(topic).connect(&handed).await {
-                    Ok(_) => panic!("a reply topic `{topic}` connected"),
+                let refused = match ulo_rpc::RpcClient::new(Kafka::brokers("127.0.0.1:9").reply_topic(topic), Arc::clone(&handed)) {
+                    Ok(_) => panic!("a client with the reply topic `{topic}` was built"),
                     Err(refused) => refused,
                 };
-                let misconfigured = refused.downcast_ref::<Misconfigured>().unwrap_or_else(|| panic!("refused other than as `Misconfigured`: {refused}"));
-                assert!(misconfigured.source.is::<NameInvalid>() || misconfigured.source.is::<NameTooLong>(), "{refused}");
-                assert!(refused.to_string().contains("reply topic `"), "the refusal names the reply topic: {refused}");
+                let source = std::error::Error::source(&refused).expect("the refusal carries the link's");
+                assert!(source.is::<NameInvalid>() || source.is::<NameTooLong>(), "{refused}");
+                assert!(format!("{refused} {source}").contains("reply topic `"), "the refusal names the reply topic: {refused}: {source}");
             }
+            ulo_rpc::RpcClient::new(Kafka::brokers("127.0.0.1:9").reply_topic("orders.replies"), handed).expect("a valid reply topic is taken");
         });
     }
 

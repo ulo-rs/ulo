@@ -755,6 +755,80 @@ mod checker {
         assert!(writer_dropped.load(AtomicOrdering::SeqCst) && reader_dropped.load(AtomicOrdering::SeqCst), "a stuck connection outlived its idle timeout and grace");
     }
 
+    /// Q35-13: a streamed reply to a peer that reads nothing is a call in flight, and its writer
+    /// holds a frame it cannot write: once it has held it for `idle_timeout`, the connection is
+    /// idle whatever it holds, its calls are cancelled `Disconnected`, and the linger drops it at
+    /// `CUT_GRACE`. Planted break: idleness that waits for the calls to end, which leaves the
+    /// connection open, its writer stuck, for as long as the handler produces.
+    #[test]
+    fn a_writer_stuck_for_the_idle_timeout_closes_its_connection_and_cancels_its_calls() {
+        let manual = Manual::new();
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&cancelled);
+        let running = start_with(&manual, |_| {}, move |manual, delivery| match (delivery.frame, delivery.reply) {
+            (Frame::Req { id, .. }, Some(reply)) => drop(manual.spawn(Box::pin(async move {
+                while reply.send(Frame::Item { id, data: Data::default() }).await.is_ok() {}
+            }))),
+            (Frame::Cancel { .. }, None) => {
+                counted.fetch_add(1, AtomicOrdering::SeqCst);
+            }
+            _ => {}
+        });
+        let (fed, writer_dropped) = (Fed::default(), Arc::new(AtomicBool::new(false)));
+        running.connect(FedHalf(fed.clone()), Dropping(Stuck, Arc::clone(&writer_dropped)));
+        manual.run();
+        fed.push(&framed(&request(1)));
+        manual.run();
+        manual.advance(DEFAULT_IDLE_TIMEOUT - Duration::from_millis(1));
+        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "the call was cancelled before the idle timeout");
+        manual.advance(Duration::from_millis(1));
+        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 1, "the streamed reply's call is cancelled `Disconnected` at the idle timeout");
+        assert!(!writer_dropped.load(AtomicOrdering::SeqCst), "the writer dropped before the grace");
+        manual.advance(CUT_GRACE);
+        assert!(writer_dropped.load(AtomicOrdering::SeqCst) && fed.dropped(), "the stuck connection outlived its idle timeout and grace");
+    }
+
+    /// A writer that keeps writing keeps a connection holding a call open past the idle timeout,
+    /// the stall timed from the frame the writer took, and a writer holding nothing is no stall.
+    /// Planted break: the mark left set once its frame is written, which closes the connection
+    /// 60 s after its last item.
+    #[test]
+    fn a_writer_making_progress_keeps_its_call_s_connection_open() {
+        let manual = Manual::new();
+        let held: Arc<Mutex<Option<(u64, ReplyPath)>>> = Arc::default();
+        let holding = Arc::clone(&held);
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&cancelled);
+        let running = start_with(&manual, |_| {}, move |_, delivery| match (delivery.frame, delivery.reply) {
+            (Frame::Req { id, .. }, Some(reply)) => *lock(&holding) = Some((id, reply)),
+            (Frame::Cancel { .. }, None) => {
+                counted.fetch_add(1, AtomicOrdering::SeqCst);
+            }
+            _ => {}
+        });
+        let (fed, written) = (Fed::default(), Recorded::default());
+        running.connect(FedHalf(fed.clone()), RecordedHalf(written.clone()));
+        manual.run();
+        fed.push(&framed(&request(1)));
+        manual.run();
+        let (id, reply) = lock(&held).take().expect("the request reached the server");
+        for minute in 1..=5u32 {
+            manual.advance(Duration::from_secs(50));
+            let item = reply.send(Frame::Item { id, data: Data::default() });
+            drop(manual.spawn(Box::pin(async move {
+                let _ = item.await;
+            })));
+            manual.run();
+            assert_eq!(written.frames().len(), minute as usize, "the item written at {} s", minute * 50);
+        }
+        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "a call whose writer wrote every 50 s was cancelled as idle");
+        // A writer with nothing left to write is no stall: the call in flight holds the connection.
+        manual.advance(Duration::from_secs(600));
+        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "a call was cancelled with its writer holding nothing");
+        assert!(!written.shut(), "a call's connection closed with its writer holding nothing");
+        drop(reply);
+    }
+
     /// A writer that fails, as a reset peer's does, ends a reader waiting for room at once.
     #[test]
     fn a_failing_writer_ends_a_reader_waiting_for_room() {

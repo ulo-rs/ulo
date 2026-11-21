@@ -35,7 +35,8 @@ pub const DEFAULT_MAX_FRAME: u64 = 1024 * 1024;
 
 /// How long a server connection stays open idle unless `idle_timeout` sets it: 60 s. A connection
 /// is idle while it holds no call in flight and no frame is read whole from it or written whole to
-/// it, counted from the latest of those events and of its last call's end.
+/// it, counted from the latest of those events and of its last call's end, and, whatever calls it
+/// holds, once its writer has held a frame that long without writing it whole.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long the accept loop waits after the OS refuses an accept, out of descriptors or memory,
@@ -1054,39 +1055,63 @@ fn largest_over_limit_answer(codec: Codec, limit: u64) -> u64 {
 }
 
 /// One server connection's idleness: when a frame was last read whole from it or written whole to
-/// it, or its count of calls in flight last changed, and that count.
+/// it, or its count of calls in flight last changed, that count, and since when its writer has held
+/// a frame it has not written whole.
 struct Activity {
     last: Mutex<Instant>,
     calls: Watch<usize>,
+    /// Set as the writer takes a frame from its queue, cleared once the frame is written whole.
+    writing: Mutex<Option<Instant>>,
     timer: Arc<dyn Timer>,
 }
 
 impl Activity {
     fn new(timer: Arc<dyn Timer>) -> Activity {
-        Activity { last: Mutex::new(timer.now()), calls: Watch::new(0), timer }
+        Activity { last: Mutex::new(timer.now()), calls: Watch::new(0), writing: Mutex::new(None), timer }
     }
 
     fn touch(&self) {
         *lock(&self.last) = self.timer.now();
     }
+
+    fn writing(&self) {
+        *lock(&self.writing) = Some(self.timer.now());
+    }
+
+    fn written(&self) {
+        *lock(&self.writing) = None;
+        self.touch();
+    }
 }
 
 /// Resolves once the connection has been idle for `timeout`: it holds no call in flight and
-/// nothing has touched it for that long. A clock that refuses the wait, its runtime shut down,
-/// stops timing idleness, and the connection stays open until it ends otherwise.
+/// nothing has touched it for that long, or its writer has held a frame for that long without
+/// writing it whole, whatever calls it holds, the peer having stopped reading. With calls in
+/// flight and the writer making progress it re-reads the state once per `timeout`, and at once
+/// when the last call ends. A clock that refuses the wait, its runtime shut down, stops timing
+/// idleness, and the connection stays open until it ends otherwise.
 async fn idle_for(activity: &Activity, timeout: Option<Duration>) {
     let Some(timeout) = timeout else { return pending().await };
     loop {
-        activity.calls.wait_for(|calls| *calls == 0).await;
-        let due = *lock(&activity.last) + timeout;
         let now = activity.timer.now();
-        if now >= due {
-            if activity.calls.read(|calls| *calls == 0) {
-                return;
-            }
-            continue;
+        let calls = activity.calls.read(|calls| *calls);
+        let stalled = *lock(&activity.writing);
+        let due = match (calls, stalled) {
+            (0, _) => Some(*lock(&activity.last) + timeout),
+            (_, Some(since)) => Some(since + timeout),
+            (_, None) => None,
+        };
+        if due.is_some_and(|due| now >= due) {
+            return;
         }
-        if let Err(refused) = activity.timer.try_sleep(due - now).await {
+        let wait = due.map_or(timeout, |due| due - now);
+        let emptied = async {
+            if calls == 0 {
+                pending::<()>().await;
+            }
+            activity.calls.wait_for(|calls| *calls == 0).await;
+        };
+        if let Either::Left((Err(refused), _)) = select(activity.timer.try_sleep(wait), pin!(emptied)).await {
             tracing::debug!(%refused, "the clock timing a TCP connection's `idle_timeout` refused the wait; the connection is not closed for idleness");
             return pending().await;
         }
@@ -1364,6 +1389,9 @@ async fn run_connection(
                 Either::Left((Some(bytes), _)) => bytes,
                 Either::Left((None, _)) | Either::Right(((), _)) => break,
             };
+            if let Some(activity) = &activity {
+                activity.writing();
+            }
             let prefix = (bytes.len() as u32).to_be_bytes();
             let written = async {
                 writer.write_all(&prefix).await?;
@@ -1374,7 +1402,7 @@ async fn run_connection(
                 return;
             }
             if let Some(activity) = &activity {
-                activity.touch();
+                activity.written();
             }
         }
         let _ = writer.close().await;

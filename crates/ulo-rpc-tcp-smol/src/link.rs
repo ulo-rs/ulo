@@ -34,8 +34,9 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 /// once the frames queued before the close are written, and its reply lane ends, so the calls
 /// waiting on it fail `Unavailable`. The link reads and discards what the server still sends
 /// until the server closes its half or the connection fails, for at most two seconds after `close`
-/// ends on the clock of the runtime the client hands `connect`, the app's inside an app. A call
-/// made afterwards connects again.
+/// ends on the clock of the runtime the client hands `connect`, the app's inside an app. The link
+/// connects again for a later `connect`; an `RpcClient` closed with it makes none, a closed client
+/// staying closed.
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
 /// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
@@ -95,10 +96,12 @@ impl Tcp {
     /// or reply included, and no frame is read whole from it or written whole to it; the time runs
     /// from the latest of those and of its last call's end. A frame still arriving counts once it
     /// is whole, so on a connection holding no call the timeout also bounds how long one frame
-    /// takes to arrive, and it bounds a TLS handshake. A server whose peer stops reading its
-    /// answers stops reading that peer, so such a connection, its answers unwritten, is idle too
-    /// once it holds no call; a streamed reply waiting for room is a call in flight, and holds its
-    /// connection open for as long as its handler keeps sending. At the expiry the server queues
+    /// takes to arrive, and it bounds a TLS handshake. A connection is idle too, whatever calls it
+    /// holds, once its writer has held a frame for the timeout without writing it whole: its peer
+    /// has stopped reading, and its calls, a streamed reply waiting for room among them, are
+    /// cancelled `Disconnected`, so a peer cannot hold a connection and its calls' places by never
+    /// reading. A writer that writes a frame within each timeout keeps a call's connection open
+    /// however slowly the peer reads. At the expiry the server queues
     /// `goaway`, shuts its half once what was queued is written, and reads and discards what the
     /// peer still sends for two seconds on the app's `Timer`, as at `close`. `RpcClient` reads the
     /// `goaway` and connects again for its next call; a request written before it read the
