@@ -170,3 +170,117 @@ pub async fn agreed_floor<H: Host>(mode: Mode) {
 
     host.stop().await;
 }
+
+/// The response after the first one in `raw`, from the next status line after the first's head;
+/// `None` when there is none. The first's body is a problem document or text, which holds no
+/// status line.
+fn second_response(raw: &[u8]) -> Option<&[u8]> {
+    let start = (head(raw).len() + 4).min(raw.len());
+    let at = raw[start..].windows(9).position(|window| window == b"HTTP/1.1 ")?;
+    Some(&raw[start + at..])
+}
+
+/// How many responses `raw` holds: each status line, `HTTP/1.x`, a space and a three-digit code,
+/// wherever it starts, a response written right after a body sharing that body's last line. The
+/// bodies the suite's routes write hold no status line.
+fn responses(raw: &[u8]) -> usize {
+    raw.windows(12)
+        .filter(|window| window.starts_with(b"HTTP/1.") && window[8] == b' ' && window[9..].iter().all(u8::is_ascii_digit))
+        .count()
+}
+
+/// A handler answering a final 1xx is answered 500 as a problem document, for 100, 101, 102 and
+/// 103 alike, and the request pipelined behind it on the same connection is answered after it.
+/// Written as it stands, a 101 hands the connection to whoever holds its upgrade future and a
+/// 100, 102 or 103 reads as an interim answer, after which the client takes the next response
+/// as this request's.
+pub async fn informational_status_refused<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    for code in [100u16, 101, 102, 103] {
+        let path = format!("/status/{code}");
+        let first = format!("GET {} HTTP/1.1\r\nhost: {}\r\n\r\n", host.target(&path), host.authority());
+        let pipelined = first + &request(&host, "GET", "/hit", &[]);
+        let raw = exchange(&host, pipelined.as_bytes(), &path).await;
+        assert_eq!(status_of(&raw), Some(500), "GET {path}: {}", text(&raw));
+        assert!(has_header(&raw, "content-type", "application/problem+json"), "GET {path}: {}", text(&raw));
+        let second = second_response(&raw).unwrap_or_else(|| panic!("GET {path}: the pipelined request is not answered after the 500: {}", text(&raw)));
+        assert!(second.starts_with(b"HTTP/1.1 200"), "GET {path}: the pipelined request is not answered after the 500: {}", text(&raw));
+        assert!(carries(second, b"hit"), "GET {path}: {}", text(&raw));
+    }
+    host.stop().await;
+}
+
+/// The 400 a request whose framing or authority is ambiguous gets, read off the raw exchange:
+/// with `Connection: close`, the connection closed after it, and the request pipelined behind it
+/// never answered.
+fn refused_and_closed(raw: &[u8], what: &str) {
+    assert_eq!(status_of(raw), Some(400), "{what}: {}", text(raw));
+    assert!(has_header(raw, "connection", "close"), "{what}: the 400 does not carry `Connection: close`: {}", text(raw));
+    assert_eq!(responses(raw), 1, "{what}: the pipelined request was answered on the same connection: {}", text(raw));
+}
+
+/// A request carrying two `Host` lines is 400 with `Connection: close`, nothing pipelined behind
+/// it answered (RFC 9112 §3.2), the two lines equal or not.
+pub async fn duplicate_host_refused<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    let pipelined = request(&host, "GET", "/hit", &[]);
+    for second in [host.authority(), "other.example".to_owned()] {
+        let twice = format!("GET {} HTTP/1.1\r\nhost: {}\r\nhost: {second}\r\n\r\n", host.target("/hit"), host.authority()) + &pipelined;
+        let what = format!("two `Host` lines, the second `{second}`");
+        refused_and_closed(&exchange(&host, twice.as_bytes(), &what).await, &what);
+    }
+    host.stop().await;
+}
+
+/// A request carrying `Content-Length` beside `Transfer-Encoding` is answered once and the
+/// connection closed, the request pipelined behind it never answered: two readers of such a
+/// message can disagree on where it ends, the shape of request smuggling, and RFC 9112 §6.3 has a
+/// server close the connection after answering it. The answer is the service's 400 with
+/// `Connection: close` where the host hands the app both headers. hyper drops the
+/// `Content-Length` as it parses the head, so on hyper and the hosts built on it the app reads
+/// the body by its `Transfer-Encoding` alone, which §6.3 also admits, and hyper closes the
+/// connection after the answer. The two headers are sent in both orders.
+pub async fn content_length_beside_transfer_encoding_refused<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    let body = r#"{"name":"ada"}"#;
+    let chunked = format!("{:x}\r\n{body}\r\n0\r\n\r\n", body.len());
+    let length = format!("content-length: {}\r\n", chunked.len());
+    // Both orders: hyper 0.14, under rocket, drops a `Content-Length` that follows
+    // `Transfer-Encoding` and keeps one that precedes it.
+    for (first, second) in [(length.as_str(), "transfer-encoding: chunked\r\n"), ("transfer-encoding: chunked\r\n", length.as_str())] {
+        let both = format!(
+            "POST {} HTTP/1.1\r\nhost: {}\r\ncontent-type: application/json\r\n{first}{second}\r\n{chunked}",
+            host.target("/json"),
+            host.authority(),
+        ) + &request(&host, "GET", "/hit", &[]);
+        let what = format!("`{}` then `{}`", first.trim_end(), second.trim_end());
+        let raw = exchange(&host, both.as_bytes(), &what).await;
+        match status_of(&raw) {
+            Some(400) => refused_and_closed(&raw, &what),
+            Some(200) => {
+                assert!(carries(&raw, body.as_bytes()), "{what}: a 200 that did not read the body by its `Transfer-Encoding`: {}", text(&raw));
+                assert_eq!(responses(&raw), 1, "{what}: the pipelined request was answered on the same connection: {}", text(&raw));
+            }
+            _ => panic!("{what}: neither the 400 nor the body read by its `Transfer-Encoding`: {}", text(&raw)),
+        }
+    }
+    host.stop().await;
+}
+
+/// A 205 a handler gave a body reaches the wire with none and `Content-Length: 0`, the form every
+/// host writes and RFC 9110 §15.3.6 admits, whether the handler left the framing to the host or set
+/// `Content-Length` or `Transfer-Encoding` itself, and the request pipelined behind it is answered
+/// right after its head.
+pub async fn reset_content_carries_no_body<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    for path in ["/status/205", "/reset/length", "/reset/transfer-encoding"] {
+        let first = format!("GET {} HTTP/1.1\r\nhost: {}\r\n\r\n", host.target(path), host.authority());
+        let raw = exchange(&host, (first + &request(&host, "GET", "/hit", &[])).as_bytes(), path).await;
+        assert_eq!(status_of(&raw), Some(205), "GET {path}: {}", text(&raw));
+        assert_eq!(field_lines(&raw, "content-length"), [b"0".as_slice()], "GET {path}: the 205's length: {}", text(&raw));
+        assert!(field_lines(&raw, "transfer-encoding").is_empty(), "GET {path}: the 205 is chunked: {}", text(&raw));
+        let after = &raw[(head(&raw).len() + 4).min(raw.len())..];
+        assert!(after.starts_with(b"HTTP/1.1 200"), "GET {path}: the pipelined response does not start after the 205's head: {}", text(&raw));
+    }
+    host.stop().await;
+}

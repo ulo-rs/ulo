@@ -167,3 +167,28 @@ async fn a_listed_entry_that_is_not_an_origin_fails_listen_naming_it() {
     assert!(text.contains("`origins([..])` lists `null`"), "{text}");
     assert!(!text.contains("ok.example"), "{text}");
 }
+
+/// What `listen()` refuses an app listing `origins` with.
+async fn refused_with(origins: Origins) -> String {
+    App::builder(Root { origins: Some(origins), cors: false, connects: Connects::default() })
+        .runtime(ulo_runtime_tokio::Tokio::current())
+        .wire()
+        .unwrap_or_else(|error| panic!("the app did not wire: {error}"))
+        .connect()
+        .await
+        .unwrap_or_else(|error| panic!("the app did not connect: {error}"))
+        .bind(ulo_http_hyper::Server::new("127.0.0.1:0"))
+        .listen()
+        .await
+        .err()
+        .expect("`listen()` refuses the list")
+        .to_string()
+}
+
+#[tokio::test]
+async fn an_empty_list_and_a_host_that_is_not_ascii_fail_listen() {
+    let empty = refused_with(Origins::List(Vec::new())).await;
+    assert!(empty.contains("`origins([])` lists no origin") && empty.contains("`Origins::Any`"), "{empty}");
+    let unicode = refused_with(Origins::from(["https://bücher.example"])).await;
+    assert!(unicode.contains("write it `https://xn--bcher-kva.example`"), "{unicode}");
+}

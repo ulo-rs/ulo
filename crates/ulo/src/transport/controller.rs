@@ -96,8 +96,21 @@ impl<'a> Mount<'a> {
     /// `AppBuilder::unserved::<Ws>()` covers both. A later call for the same `H` replaces an
     /// earlier one.
     pub fn served_by<H: Transport, T: Transport, S: Transport>(&mut self) {
+        self.declare_served::<H, T, S>(None);
+    }
+
+    /// [`served_by`](Self::served_by), with `hint` as the refusal's advice in place of "bind
+    /// one": what serves these handlers, named by the crate that knows it, since the refusal is
+    /// written where no transport crate is named. `ulo-ws` gives a gateway declared `port = own`
+    /// "serve it with a standalone WebSocket server, `ulo_ws_hyper::Server`, or drop `port = own`
+    /// to serve it on the HTTP server's port".
+    pub fn served_by_with_hint<H: Transport, T: Transport, S: Transport>(&mut self, hint: &'static str) {
+        self.declare_served::<H, T, S>(Some(hint));
+    }
+
+    fn declare_served<H: Transport, T: Transport, S: Transport>(&mut self, hint: Option<&'static str>) {
         let under = TypeName::of::<H>();
-        let served = Served { transport: TypeName::of::<T>(), server: TypeName::of::<S>() };
+        let served = Served { transport: TypeName::of::<T>(), server: TypeName::of::<S>(), hint };
         match self.served.iter_mut().find(|(transport, _)| *transport == under) {
             Some((_, declared)) => *declared = served,
             None => self.served.push((under, served)),
@@ -270,13 +283,15 @@ pub(crate) struct HandlerDecl {
 pub(crate) struct Served {
     pub(crate) transport: TypeName,
     pub(crate) server: TypeName,
+    /// The refusal's advice in place of "bind one", from `Mount::served_by_with_hint`.
+    pub(crate) hint: Option<&'static str>,
 }
 
 impl HandlerDecl {
     /// What serves this handler: its controller's declaration for its transport, or its own
     /// transport's server.
     pub(crate) fn served(&self) -> Served {
-        self.served.unwrap_or(Served { transport: self.transport, server: self.transport })
+        self.served.unwrap_or(Served { transport: self.transport, server: self.transport, hint: None })
     }
 }
 
