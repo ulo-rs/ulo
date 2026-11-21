@@ -1,6 +1,8 @@
 //! A server whose endpoint names an inherited descriptor that is not a listening TCP socket fails
-//! `listen` naming the endpoint and the descriptor, on each of the four servers that adopt an
-//! inherited socket: HTTP, WebSocket, RPC over TCP and gRPC. The inheriting process is the test
+//! `listen` with what `ActivationError::NotListening { index, endpoint }` writes, on each of the
+//! four servers that adopt an inherited socket: HTTP, WebSocket, RPC over TCP and gRPC. The child
+//! reads the variant and both fields from `Activation::unavailable`, the one constructor every
+//! server reports through, and the parent finds its text in each server's entry. The inheriting process is the test
 //! binary run again as the ignored test `child_listens_on_a_datagram_socket`, a datagram socket at
 //! descriptor 3 named `datagram`, `LISTEN_PID` set to its own process ID by the shell it is started
 //! through.
@@ -11,13 +13,16 @@ use std::process::{Command, Stdio};
 
 use command_fds::{CommandFdExt, FdMapping};
 use ulo::{App, Module, ModuleDef, ModuleIdentity};
-use ulo_net::Endpoint;
+use ulo_net::{Activation, ActivationError, Endpoint, ListenerName};
 
 /// Set in the child; unset, the child test does nothing.
 const CHILD: &str = "ULO_NOT_LISTENING_CHILD";
 
 /// What the child prints before the startup error, so the parent finds it among libtest's lines.
 const MARK: &str = "ulo-not-listening: ";
+
+/// What the child prints before `NotListening`'s own text.
+const REASON: &str = "ulo-not-listening-reason: ";
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri refuses `socket` and `Command` under isolation")]
@@ -43,13 +48,17 @@ fn every_server_naming_a_datagram_socket_fails_listen_naming_the_endpoint_and_th
         .lines()
         .find_map(|line| line.split_once(MARK).map(|(_, report)| report.to_owned()))
         .unwrap_or_else(|| panic!("the child reported nothing:\n{text}{}", String::from_utf8_lossy(&output.stderr)));
-    let reason = "endpoint `datagram`: inherited descriptor #0 is not a listening TCP socket";
+    let reason = text
+        .lines()
+        .find_map(|line| line.split_once(REASON).map(|(_, reason)| reason.to_owned()))
+        .unwrap_or_else(|| panic!("the child read no reason:\n{text}"));
+    assert_eq!(reason, "endpoint `datagram`: inherited descriptor #0 is not a listening TCP socket");
     for transport in ["Http", "Ws", "Rpc", "Grpc"] {
         let entry = report
             .split('×')
             .find(|entry| entry.trim_start().starts_with(&format!("transport `{transport}`:")))
             .unwrap_or_else(|| panic!("no entry for `{transport}`: {report}"));
-        assert!(entry.contains(reason), "`{transport}` does not name the endpoint: {entry}");
+        assert!(entry.contains(&reason), "`{transport}` does not name the endpoint: {entry}");
     }
 }
 
@@ -72,6 +81,11 @@ fn child_listens_on_a_datagram_socket() {
         return;
     }
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime");
+    let name = ListenerName::Named("datagram".into());
+    let reason = Activation::get().expect("one datagram socket does not fail the set").unavailable(&name);
+    let ActivationError::NotListening { index, endpoint, .. } = &reason else { panic!("not `NotListening`: {reason:?}") };
+    assert_eq!((*index, endpoint), (0, &name), "the descriptor and the endpoint");
+    println!("{REASON}{reason}");
     runtime.block_on(async {
         let app = App::builder(Root).runtime(ulo_runtime_tokio::Tokio::current()).wire().expect("the app wires");
         let app = app.connect().await.expect("the app connects");

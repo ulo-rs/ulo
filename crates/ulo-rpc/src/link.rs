@@ -137,8 +137,12 @@ pub trait Link: Send + Sync + 'static {
     /// `ulo::secrets::setting_url`, so no userinfo, query or fragment is in it, nor any text that
     /// could precede an `@` of the URL, or, for a link whose setting is a list (NATS servers, Kafka
     /// brokers), written through `ulo::secrets::setting_url_list`, which also reports an element
-    /// holding no `@` of its own before one that does as `[unreadable]`. A link whose setting is one URL redacts it whole, since a comma may sit inside
-    /// its password. A server binding no address names itself by it in its shed log's `server`
+    /// that could continue a password or a query of the element before it as `[unreadable]`: an
+    /// element opening with a scheme or `//` starts a new URL, so a list whose servers each open
+    /// with their scheme reads in full, and one written without schemes reads only its last
+    /// credentialed element. A credential that itself holds `<scheme>://` or `//` where an element
+    /// starts is read as such a start, and the scheme it opens is reported as written. A link whose
+    /// setting is one URL redacts it whole, since a comma may sit inside its password. A server binding no address names itself by it in its shed log's `server`
     /// field, after [`NAME`](Self::NAME), as it is answered. `None` leaves the field at `NAME`
     /// alone, so a link wrapping another forwards it as it forwards `bound`; a link answering
     /// [`bound`](Self::bound) is named by its addresses instead.

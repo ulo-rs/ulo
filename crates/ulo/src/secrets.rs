@@ -42,15 +42,16 @@ pub fn setting_url(url: &str) -> String {
 }
 
 /// A comma-separated list of URLs, as a client that splits it at its commas reads it, reported as
-/// [`setting_url`] reports each element, joined with `,`. An element holding no `@` of its own is
-/// `[unreadable]` when a later element holds one: what it keeps could be the start of a password
-/// holding a comma.
+/// [`setting_url`] reports each element, joined with `,`. A comma may sit inside a password or a
+/// query value, so until an element opens with a scheme or `//`, an element is `[unreadable]` when
+/// a later one holds an `@` or an earlier one a `?` or `#`: what it keeps could be part of either.
 ///
 /// ```
 /// use ulo::secrets::setting_url_list;
 ///
 /// assert_eq!(setting_url_list("nats://u:p@a:4222,nats://u:p@b:4222"), "nats://a:4222,nats://b:4222");
 /// assert_eq!(setting_url_list("nats://u:12,34@h:4222"), "nats://[unreadable],h:4222");
+/// assert_eq!(setting_url_list("nats://h:4222?token=a,b"), "nats://h:4222,[unreadable]");
 /// ```
 pub fn setting_url_list(list: &str) -> String {
     crate::redact::setting_url_list(list)

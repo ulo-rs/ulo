@@ -5,7 +5,9 @@
 //! needs `Eq + Hash + Clone`). Every field's secrets are registered with `m.secret(..)`, decided
 //! by the field's type through the probe in `ulo::__private::secret_field`: a `Secret<_>` field
 //! however its type is spelled, and an `Option`, `Vec` or map over one. A secret inside another
-//! type the field holds is not reached.
+//! type the field holds is not reached. A field behind a `#[cfg]` is probed under that `cfg`; on a
+//! tuple struct only the last field may carry one, since a field compiled out renumbers the fields
+//! after it.
 //! `register` never returns early: `expr?` lowers to `m.try_value(expr)`.
 //!
 //! `register` writes, in order: `global`, the secrets, the imports, the providers, the
@@ -26,6 +28,7 @@ use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{Ident, Index, ItemStruct, Member};
 
+use ulo_handler_codegen::cfg::presence_gates;
 use ulo_handler_codegen::restore::restore_item;
 
 use crate::shared::ulo;
@@ -59,7 +62,7 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &Token
         quote_spanned!(name.span()=> #ulo::ModuleIdentity::of_value(#this))
     };
     let global = args.global.then(|| quote!(#m.global();));
-    let secrets = secret_fields(&item);
+    let secrets = secret_fields(&item)?;
     let imports = args.imports.iter().map(|import| {
         quote_spanned! {import.span()=>
             #m.import(#import);
@@ -110,29 +113,40 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &Token
 }
 
 /// The secret probe on every field (`ulo::__private::secret_field`): a field whose type holds
-/// secrets registers each with `m.secret(..)`, and any other registers nothing.
-pub(crate) fn secret_fields(item: &ItemStruct) -> TokenStream {
+/// secrets registers each with `m.secret(..)`, and any other registers nothing. Each probe carries
+/// its field's `#[cfg]`s. A gated tuple field followed by another field is a span error on it.
+pub(crate) fn secret_fields(item: &ItemStruct) -> syn::Result<TokenStream> {
     let ulo = ulo();
     let m = module_def_param();
     // `self` keeps the call-site span of the `&self` the generated `register` declares; the call
     // around it is spanned at the field, where a `Secret<T>` whose `T` is not `Display` fails.
     let this = quote!(self);
-    let calls = item.fields.iter().enumerate().map(|(index, field)| {
+    let count = item.fields.len();
+    let mut calls = Vec::with_capacity(count);
+    for (index, field) in item.fields.iter().enumerate() {
+        let gates = presence_gates(&field.attrs);
         let member = match &field.ident {
             Some(ident) => Member::Named(ident.clone()),
+            None if !gates.is_empty() && index + 1 < count => {
+                return Err(syn::Error::new_spanned(
+                    &gates[0],
+                    "a `#[cfg]` on a tuple module's field renumbers the fields after it; name the fields, or gate the last field alone",
+                ));
+            }
             None => Member::Unnamed(Index { index: index as u32, span: field.ty.span() }),
         };
-        quote_spanned! {field.ty.span()=>
+        calls.push(quote_spanned! {field.ty.span()=>
+            #(#gates)*
             (&#ulo::__private::secret_field::Probe(&#this.#member)).__ulo_register_secret(#m);
-        }
-    });
-    if item.fields.is_empty() {
-        return TokenStream::new();
+        });
     }
-    quote! {
+    if item.fields.is_empty() {
+        return Ok(TokenStream::new());
+    }
+    Ok(quote! {
         {
             use #ulo::__private::secret_field::{PlainArm as _, SecretArm as _};
             #(#calls)*
         }
-    }
+    })
 }

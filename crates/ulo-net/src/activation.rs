@@ -27,7 +27,8 @@ use crate::endpoint::ListenerName;
 ///
 /// A descriptor that is not a listening TCP socket, a datagram socket among them, is not adopted
 /// and not closed; it fails only a server whose endpoint names it, with
-/// [`ActivationError::NotListening`], and the sockets beside it are served. Nothing else in the
+/// [`ActivationError::NotListening`] naming the descriptor and the endpoint, and the sockets
+/// beside it are served. Nothing else in the
 /// process may adopt the descriptors as well, since each is closed when its listener drops.
 pub struct Activation {
     sockets: Mutex<Vec<Inherited>>,
@@ -96,24 +97,13 @@ impl Activation {
 
     /// Why `name` has no socket to take: [`ActivationError::NotListening`] when a descriptor it
     /// answers for is not a listening TCP socket, [`ActivationError::Missing`] when none is, or
-    /// all were taken. For a server's `prepare`, where [`count`](Self::count) is zero.
+    /// all were taken. For a server's `prepare`, where [`count`](Self::count) is zero; its
+    /// `Display` is the whole reason, the endpoint named in it, so a server writes it as it is.
     pub fn unavailable(&self, name: &ListenerName) -> ActivationError {
         let sockets = self.sockets();
         match sockets.iter().find(|socket| socket.foreign && socket.answers_to(name)) {
-            Some(socket) => ActivationError::NotListening { index: socket.index },
+            Some(socket) => ActivationError::NotListening { index: socket.index, endpoint: name.clone() },
             None => ActivationError::Missing(name.clone()),
-        }
-    }
-
-    /// [`unavailable`](Self::unavailable) as a server's `prepare` reports it. A
-    /// [`ActivationError::NotListening`] for a named endpoint is prefixed with the name, which the
-    /// descriptor's index alone does not give: `` endpoint `web`: inherited descriptor #3 is not a
-    /// listening TCP socket ``. An endpoint named by its index, and a
-    /// [`ActivationError::Missing`], name it already.
-    pub fn unavailable_reason(&self, name: &ListenerName) -> String {
-        match (self.unavailable(name), name) {
-            (error @ ActivationError::NotListening { .. }, ListenerName::Named(named)) => format!("endpoint `{named}`: {error}"),
-            (error, _) => error.to_string(),
         }
     }
 
@@ -409,8 +399,11 @@ pub enum ActivationError {
     Malformed { variable: &'static str },
     /// No inherited socket answers to this name or index.
     Missing(ListenerName),
-    /// An inherited descriptor the endpoint names that is not a listening TCP socket.
-    NotListening { index: usize },
+    /// An inherited descriptor the endpoint names that is not a listening TCP socket: `index` its
+    /// position among `LISTEN_FDS`, `endpoint` the name the server's endpoint gave, a
+    /// `LISTEN_FDNAMES` name or the index it was declared by.
+    #[non_exhaustive]
+    NotListening { index: usize, endpoint: ListenerName },
     /// Socket activation is Unix-only.
     Unsupported,
     Io(Arc<io::Error>),
@@ -425,7 +418,12 @@ impl fmt::Display for ActivationError {
             ActivationError::Malformed { variable } => write!(f, "{variable} is malformed"),
             ActivationError::Missing(ListenerName::Named(name)) => write!(f, "no inherited socket is named `{name}`"),
             ActivationError::Missing(ListenerName::Index(index)) => write!(f, "no inherited socket #{index}"),
-            ActivationError::NotListening { index } => write!(f, "inherited descriptor #{index} is not a listening TCP socket"),
+            ActivationError::NotListening { index, endpoint: ListenerName::Named(name) } => {
+                write!(f, "endpoint `{name}`: inherited descriptor #{index} is not a listening TCP socket")
+            }
+            ActivationError::NotListening { index, endpoint: ListenerName::Index(declared) } => {
+                write!(f, "endpoint #{declared}: inherited descriptor #{index} is not a listening TCP socket")
+            }
             ActivationError::Unsupported => f.write_str("socket activation is supported on Unix only"),
             ActivationError::Io(error) => fmt::Display::fmt(error, f),
         }

@@ -285,7 +285,7 @@ fn check_inherited(endpoints: &[Endpoint], failures: &mut Failures) {
     };
     for (name, listed) in names {
         match activation.count(name) {
-            0 => failures.push(activation.unavailable_reason(name)),
+            0 => failures.push(activation.unavailable(name).to_string()),
             inherited if listed > inherited => {
                 let sockets = if inherited == 1 { "socket answers" } else { "sockets answer" };
                 failures.push(format!(

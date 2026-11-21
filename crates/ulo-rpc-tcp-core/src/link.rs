@@ -236,7 +236,7 @@ impl Core {
         if let Some(Endpoint::Inherited(name)) = &endpoint {
             match Activation::get() {
                 Ok(activation) if activation.contains(name) => {}
-                Ok(activation) => problems.push(activation.unavailable_reason(name)),
+                Ok(activation) => problems.push(activation.unavailable(name).to_string()),
                 Err(error) => problems.push(error.to_string()),
             }
         }
