@@ -5,7 +5,6 @@
 //! service. A response an entry answers with a non-200 HTTP status is
 //! translated with `code_for_http`.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use ulo::{AppHandle, BoxError, BoxFuture, ExecutionRef, MountedHandler};
@@ -14,7 +13,7 @@ use ulo_http::{HttpBody, Request, Response};
 
 use crate::dispatch::{Dispatcher, status_reply};
 use crate::status;
-use crate::transport::{Grpc, GrpcMetadata};
+use crate::transport::{Caller, Grpc, GrpcMetadata};
 
 /// The gRPC pre-dispatch stage's entries one module declares:
 ///
@@ -47,7 +46,7 @@ pub(crate) struct StageCx {
     /// read: the request itself is the failing entry's.
     path: Arc<str>,
     metadata: GrpcMetadata,
-    peer: Option<SocketAddr>,
+    caller: Caller,
     handler: Option<MountedHandler<Grpc>>,
 }
 
@@ -58,7 +57,7 @@ impl StageCx {
             exec,
             path: Arc::from(req.path()),
             metadata: GrpcMetadata::from_headers(req.headers()),
-            peer: req.conn.peer,
+            caller: Caller::of(&req.conn),
             handler,
         }
     }
@@ -79,7 +78,7 @@ impl StageHost for StageCx {
                 &self.exec,
                 Arc::clone(&self.path),
                 self.metadata.clone(),
-                self.peer,
+                self.caller.clone(),
                 self.handler.clone(),
                 None,
             );

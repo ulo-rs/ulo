@@ -41,6 +41,11 @@
 //! `App::service(web::resource(path).route(web::get().to(..)))`, whose resource matches every
 //! method and answers 405 itself.
 //!
+//! actix writes one header of its own the other hosts do not: a `HEAD` request the app answers
+//! from its `GET` handler goes out with `content-length: 0` whatever the `GET` answer's length,
+//! where RFC 9110 §8.6 admits only the length the `GET` answer would carry. The app hands actix
+//! that length; actix replaces it.
+//!
 //! The request still arriving is `DrainPending::Closed`. From actix-web 4.15 actix's graceful stop reaches every
 //! HTTP/1 connection, and a connection with no complete request in progress closes at once. A
 //! client caught mid-request at the moment of shutdown, its head not yet fully sent, gets a closed

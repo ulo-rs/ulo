@@ -5,7 +5,7 @@ use futures_core::Stream;
 use tonic::Status;
 use tonic::metadata::MetadataMap;
 use ulo::{AppHandle, ExecutionRef, Ext, Extensions, Inputs, LookupError, MountedHandler, Timer, Transport};
-use ulo_http::HttpBody;
+use ulo_http::{HttpBody, TlsInfo};
 use ulo_transport::{CallError, ExtractError, FromCall, IntoReplyError};
 
 use crate::dispatch;
@@ -72,11 +72,27 @@ pub(crate) struct CxInner {
     /// what the client sent.
     pub(crate) metadata: GrpcMetadata,
     pub(crate) peer: Option<SocketAddr>,
+    /// What the connection's TLS handshake settled, the client's verified certificate chain among
+    /// it; `None` over plaintext.
+    pub(crate) tls: Option<TlsInfo>,
     /// The matched handler, whose error handlers a stream item's `Err` reaches. `None` in the
     /// context a failure of the unscoped pre-dispatch sub-step is offered with.
     pub(crate) handler: Option<MountedHandler<Grpc>>,
     /// The request body, taken once by the extractor that decodes it.
     pub(crate) body: Mutex<Option<HttpBody>>,
+}
+
+/// What a call's context reads of the connection it arrived on.
+#[derive(Clone)]
+pub(crate) struct Caller {
+    pub(crate) peer: Option<SocketAddr>,
+    pub(crate) tls: Option<TlsInfo>,
+}
+
+impl Caller {
+    pub(crate) fn of(conn: &ulo_http::ConnInfo) -> Self {
+        Caller { peer: conn.peer, tls: conn.tls.clone() }
+    }
 }
 
 impl GrpcCx {
@@ -109,6 +125,15 @@ impl GrpcCx {
 
     pub fn peer(&self) -> Option<SocketAddr> {
         self.inner.peer
+    }
+
+    /// What the TLS handshake of the call's connection settled, `None` over plaintext: the ALPN
+    /// protocol, the SNI name, and the certificate chain the client presented once the server's
+    /// client verifier accepted it, which a guard authorising by client certificate reads,
+    /// `cx.tls().and_then(|tls| tls.peer_certificates.as_ref())`. Read off the TLS session, never
+    /// off the call's metadata, which any client can write.
+    pub fn tls(&self) -> Option<&TlsInfo> {
+        self.inner.tls.as_ref()
     }
 
     pub fn app(&self) -> &AppHandle {
