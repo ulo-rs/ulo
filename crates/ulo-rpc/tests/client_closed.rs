@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use futures_util::stream;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use ulo::{App, BoxError, Module, ModuleDef, ModuleIdentity, Runtime, Signal};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Capabilities, Data, DeliveryMode, ErrorKind, Frame, Link, Outbound, RpcClient, RpcClientModule, RpcError, Subscription};
@@ -134,6 +134,106 @@ async fn a_call_in_flight_at_close_is_answered() {
     assert_eq!(answer.expect("the call in flight is answered"), 5);
     client_closed(client.request::<_, u32>("p", &1u32).await, "a request after the close");
     assert_eq!(link.connects.load(Ordering::SeqCst), 1);
+}
+
+/// A link whose `connect` waits for the test, and whose `close` counts the sides it reached: those
+/// whose connect had completed.
+#[derive(Clone, Default)]
+struct Gated {
+    connects: Arc<AtomicUsize>,
+    entered: Arc<Notify>,
+    release: Arc<Notify>,
+    built: Arc<AtomicUsize>,
+    closes: Arc<AtomicUsize>,
+    reached: Arc<AtomicUsize>,
+    sent: Arc<Mutex<Vec<Frame>>>,
+}
+
+impl Link for Gated {
+    const NAME: &'static str = "gated";
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::new(DeliveryMode::Addressed)
+    }
+
+    async fn listen(&self, _: &[Subscription]) -> Result<Inbound, BoxError> {
+        Err("the gated link serves nothing".into())
+    }
+
+    async fn connect(&self, _: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
+        self.connects.fetch_add(1, Ordering::SeqCst);
+        self.entered.notify_one();
+        self.release.notified().await;
+        self.built.fetch_add(1, Ordering::SeqCst);
+        let sent = Arc::clone(&self.sent);
+        Ok(Outbound {
+            send: Box::new(move |_, frame, _| {
+                lock(&sent).push(frame);
+                Box::pin(async { Ok(()) })
+            }),
+            replies: Box::pin(stream::pending()),
+        })
+    }
+
+    async fn drain(&self) {}
+
+    async fn close(&self) -> Result<(), BoxError> {
+        self.closes.fetch_add(1, Ordering::SeqCst);
+        self.reached.store(self.built.load(Ordering::SeqCst), Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// A call whose connect is under way when the client closes is refused once it connects, sends
+/// nothing, and the side it opened, which the close could not reach, is closed; a call waiting
+/// for that connect is refused without connecting. Planted breaks: the flag not read after the
+/// connect, which sends the call on a side no close reaches; the flag not read under the slot's
+/// lock, which connects the waiting call.
+#[tokio::test]
+async fn a_call_connecting_at_close_is_refused_and_its_side_closed() {
+    let link = Gated::default();
+    let client = RpcClient::new(link.clone(), Arc::new(Tokio::current())).expect("the link is usable");
+    let calling = client.clone();
+    let call = tokio::spawn(async move { calling.emit("p", &1u32).await });
+    tokio::time::timeout(PATIENCE, link.entered.notified()).await.expect("the call's connect began");
+    let waiting = client.clone();
+    let behind = tokio::spawn(async move { waiting.emit("p", &2u32).await });
+    // On this current-thread runtime the yield runs `behind` to its wait for the slot's lock.
+    tokio::task::yield_now().await;
+    client.close().await.expect("the client closes");
+    assert_eq!(link.reached.load(Ordering::SeqCst), 0, "the close reached a side still connecting");
+    link.release.notify_one();
+    let outcome = tokio::time::timeout(PATIENCE, call).await.expect("the call ends").expect("the call's task");
+    client_closed(outcome, "an emit connecting at the close");
+    let outcome = tokio::time::timeout(PATIENCE, behind).await.expect("the waiting call ends").expect("its task");
+    client_closed(outcome, "an emit waiting for the connect at the close");
+    assert_eq!(link.connects.load(Ordering::SeqCst), 1, "a call waiting at the close connected");
+    assert!(lock(&link.sent).is_empty(), "a frame went out on a side opened after the close");
+    assert_eq!((link.closes.load(Ordering::SeqCst), link.reached.load(Ordering::SeqCst)), (2, 1), "the side opened after the close was closed");
+}
+
+/// A call failed by its reply lane's end sends no `cancel`: the connection carries nothing more,
+/// and a `cancel` queued behind a closing writer reaches the peer after the call's frame. Planted
+/// break: the `cancel` sent whatever ended the call, which this link records.
+#[tokio::test]
+async fn a_call_failed_by_its_lane_s_end_sends_no_cancel() {
+    let link = Counted::default();
+    let client = RpcClient::new(link.clone(), Arc::new(Tokio::current())).expect("the link is usable");
+    let calling = client.clone();
+    let call = tokio::spawn(async move { calling.request::<_, u32>("p", &1u32).await });
+    tokio::time::timeout(PATIENCE, async {
+        while lock(&link.sent).is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the request was sent");
+    // The lane's sender dropped ends the reply stream, as a closed connection's does.
+    drop(lock(&link.replies).take());
+    let failed = tokio::time::timeout(PATIENCE, call).await.expect("the call ends").expect("the call's task");
+    assert_eq!(failed.expect_err("a call on an ended lane was answered").kind(), ErrorKind::Unavailable);
+    let sent = lock(&link.sent).clone();
+    assert!(matches!(sent[..], [Frame::Req { .. }]), "the client sent more than the call's frame: {sent:?}");
 }
 
 struct Root(Counted);

@@ -789,7 +789,7 @@ mod checker {
     }
 
     /// A writer that keeps writing keeps a connection holding a call open past the idle timeout,
-    /// the stall timed from the frame the writer took, and a writer holding nothing is no stall.
+    /// and a writer holding nothing is no stall.
     /// Planted break: the mark left set once its frame is written, which closes the connection
     /// 60 s after its last item.
     #[test]
@@ -827,6 +827,43 @@ mod checker {
         assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "a call was cancelled with its writer holding nothing");
         assert!(!written.shut(), "a call's connection closed with its writer holding nothing");
         drop(reply);
+    }
+
+    /// A peer reading 1 KiB a second is progress: a streamed item of 200 KiB, which takes it over
+    /// three minutes, is written whole and its call is not cancelled, the stall timed from the
+    /// writer's last write the socket took bytes from. Planted break: the stall timed from the
+    /// frame the writer took, which cancels the call at 60 s with the item a third written.
+    #[test]
+    fn a_peer_reading_slowly_keeps_a_large_item_s_call() {
+        const ITEM: usize = 200 * 1024;
+        let manual = Manual::new();
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&cancelled);
+        let item = Data::new(format!("\"{}\"", "a".repeat(ITEM)).into_bytes());
+        let running = start_with(&manual, |_| {}, move |manual, delivery| match (delivery.frame, delivery.reply) {
+            (Frame::Req { id, .. }, Some(reply)) => {
+                let item = item.clone();
+                drop(manual.spawn(Box::pin(async move {
+                    let _ = reply.send(Frame::Item { id, data: item }).await;
+                    pending::<()>().await;
+                })));
+            }
+            (Frame::Cancel { .. }, None) => {
+                counted.fetch_add(1, AtomicOrdering::SeqCst);
+            }
+            _ => {}
+        });
+        let (fed, gated) = (Fed::default(), Gated::default());
+        running.connect(FedHalf(fed.clone()), gated.clone());
+        manual.run();
+        fed.push(&framed(&request(1)));
+        manual.run();
+        for _ in 0..(ITEM / 1024 + 4) {
+            gated.open(1024);
+            manual.advance(Duration::from_secs(1));
+        }
+        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "a call whose peer read 1 KiB a second was cancelled as stalled");
+        assert_eq!(gated.frames().len(), 1, "the item was written whole");
     }
 
     /// A writer that fails, as a reset peer's does, ends a reader waiting for room at once.

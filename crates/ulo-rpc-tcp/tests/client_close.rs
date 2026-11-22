@@ -2,8 +2,8 @@
 //! the link's `close`, which shuts the socket the client opened, and the peer reads its end with
 //! nothing written after the call's frame. The conformance suite's `client_close` scenario asserts
 //! the rest on every link: the waiting call failing `Unavailable`, the connection staying closed,
-//! and a later call connecting again. Its relay counts a connection reset as ended too, which this
-//! raw peer tells apart.
+//! and a later call refused "client closed". Its relay counts a connection reset as ended too,
+//! which this raw peer tells apart.
 
 use std::sync::Mutex;
 use std::time::Duration;

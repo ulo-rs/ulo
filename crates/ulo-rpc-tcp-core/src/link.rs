@@ -36,7 +36,7 @@ pub const DEFAULT_MAX_FRAME: u64 = 1024 * 1024;
 /// How long a server connection stays open idle unless `idle_timeout` sets it: 60 s. A connection
 /// is idle while it holds no call in flight and no frame is read whole from it or written whole to
 /// it, counted from the latest of those events and of its last call's end, and, whatever calls it
-/// holds, once its writer has held a frame that long without writing it whole.
+/// holds, once its writer, holding a frame, has written none of it for that long.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long the accept loop waits after the OS refuses an accept, out of descriptors or memory,
@@ -1056,11 +1056,12 @@ fn largest_over_limit_answer(codec: Codec, limit: u64) -> u64 {
 
 /// One server connection's idleness: when a frame was last read whole from it or written whole to
 /// it, or its count of calls in flight last changed, that count, and since when its writer has held
-/// a frame it has not written whole.
+/// a frame without writing any of it.
 struct Activity {
     last: Mutex<Instant>,
     calls: Watch<usize>,
-    /// Set as the writer takes a frame from its queue, cleared once the frame is written whole.
+    /// Set as the writer takes a frame from its queue and again at each write the socket takes
+    /// bytes from, cleared once the frame is written whole.
     writing: Mutex<Option<Instant>>,
     timer: Arc<dyn Timer>,
 }
@@ -1085,11 +1086,13 @@ impl Activity {
 }
 
 /// Resolves once the connection has been idle for `timeout`: it holds no call in flight and
-/// nothing has touched it for that long, or its writer has held a frame for that long without
-/// writing it whole, whatever calls it holds, the peer having stopped reading. With calls in
-/// flight and the writer making progress it re-reads the state once per `timeout`, and at once
-/// when the last call ends. A clock that refuses the wait, its runtime shut down, stops timing
-/// idleness, and the connection stays open until it ends otherwise.
+/// nothing has touched it for that long, or its writer, holding a frame, has written none of it
+/// for that long, whatever calls it holds, the peer having stopped reading. With calls in
+/// flight and the writer making progress it re-reads the state once per `timeout`. A wait never
+/// ends after the expiry the state it wakes to gives: the last call's end, a write and a new
+/// stall each move that expiry no earlier than the wait's end, so no change has to wake it. A
+/// clock that refuses the wait, its runtime shut down, stops timing idleness, and the connection
+/// stays open until it ends otherwise.
 async fn idle_for(activity: &Activity, timeout: Option<Duration>) {
     let Some(timeout) = timeout else { return pending().await };
     loop {
@@ -1105,13 +1108,7 @@ async fn idle_for(activity: &Activity, timeout: Option<Duration>) {
             return;
         }
         let wait = due.map_or(timeout, |due| due - now);
-        let emptied = async {
-            if calls == 0 {
-                pending::<()>().await;
-            }
-            activity.calls.wait_for(|calls| *calls == 0).await;
-        };
-        if let Either::Left((Err(refused), _)) = select(activity.timer.try_sleep(wait), pin!(emptied)).await {
+        if let Err(refused) = activity.timer.try_sleep(wait).await {
             tracing::debug!(%refused, "the clock timing a TCP connection's `idle_timeout` refused the wait; the connection is not closed for idleness");
             return pending().await;
         }
@@ -1362,6 +1359,22 @@ fn encode(codec: Codec, limit: u64, frame: &Frame) -> Result<Bytes, BoxError> {
     Ok(bytes)
 }
 
+/// Writes `bytes` whole, moving a server connection's stall mark to each write the socket takes
+/// bytes from, so a peer reading slowly is progress and only one reading nothing stalls.
+async fn write_marking(writer: &mut Writer, mut bytes: &[u8], activity: Option<&Activity>) -> io::Result<()> {
+    while !bytes.is_empty() {
+        let took = writer.write(bytes).await?;
+        if took == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        bytes = &bytes[took..];
+        if let Some(activity) = activity {
+            activity.writing();
+        }
+    }
+    Ok(())
+}
+
 /// One connection's writing half and, once the link ends the connection, its reading half: writes
 /// each queued frame behind its length prefix until the queue's senders are gone or `end`
 /// resolves, then shuts the writer and drops `shut`; if `lingering` hands the reader over, reads
@@ -1394,8 +1407,8 @@ async fn run_connection(
             }
             let prefix = (bytes.len() as u32).to_be_bytes();
             let written = async {
-                writer.write_all(&prefix).await?;
-                writer.write_all(&bytes).await?;
+                write_marking(&mut writer, &prefix, activity.as_deref()).await?;
+                write_marking(&mut writer, &bytes, activity.as_deref()).await?;
                 writer.flush().await
             };
             if written.await.is_err() {

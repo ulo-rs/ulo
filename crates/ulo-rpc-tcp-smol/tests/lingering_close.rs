@@ -29,8 +29,15 @@ use ulo_rpc_tcp_smol::Tcp;
 
 const ECHO: &str = "lingering_close.echo";
 
-/// The size of each answer queued before a close.
-const ANSWER_BYTES: usize = 64 * 1024;
+/// The size of each answer queued before a close: near the 1 MiB `max_frame`, so [`ANSWERS`] of
+/// them are many times more than the sockets' buffers hold.
+const ANSWER_BYTES: usize = 1_000_000;
+
+/// How many answers a test queues before a close: fewer than the 64 frames a server's writer holds before its reader waits for room, so the
+/// server reads every request while its peer reads nothing; more would leave requests unread, as
+/// a peer that does not read its answers is meant to be stalled, after a number of answers the
+/// platform's buffers decide.
+const ANSWERS: u64 = 63;
 
 /// How many times over the peer's granted buffers a test queues answers or has the peer write
 /// after a close: more than the two sockets' buffers hold, so answers queued before a close are
@@ -49,9 +56,11 @@ fn buffered(peer: &TcpStream) -> u64 {
     granted as u64
 }
 
-/// How many answers a test queues on `peer`'s connection.
+/// How many answers a test queues on `peer`'s connection, checked to overfill its buffers.
 fn answers(peer: &TcpStream) -> u64 {
-    (OVER_BUFFERS as u64 * buffered(peer)).div_ceil(ANSWER_BYTES as u64)
+    let unread = ANSWERS * ANSWER_BYTES as u64;
+    assert!(unread > 4 * buffered(peer), "{unread} bytes of answers do not overfill buffers of {} bytes", buffered(peer));
+    ANSWERS
 }
 
 struct Root;

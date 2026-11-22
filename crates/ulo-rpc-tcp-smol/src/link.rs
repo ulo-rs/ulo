@@ -97,11 +97,11 @@ impl Tcp {
     /// from the latest of those and of its last call's end. A frame still arriving counts once it
     /// is whole, so on a connection holding no call the timeout also bounds how long one frame
     /// takes to arrive, and it bounds a TLS handshake. A connection is idle too, whatever calls it
-    /// holds, once its writer has held a frame for the timeout without writing it whole: its peer
+    /// holds, once its writer, holding a frame, has written none of it for the timeout: its peer
     /// has stopped reading, and its calls, a streamed reply waiting for room among them, are
     /// cancelled `Disconnected`, so a peer cannot hold a connection and its calls' places by never
-    /// reading. A writer that writes a frame within each timeout keeps a call's connection open
-    /// however slowly the peer reads. At the expiry the server queues
+    /// reading. A peer that takes some of a frame within each timeout keeps a call's connection
+    /// open however slowly it reads. At the expiry the server queues
     /// `goaway`, shuts its half once what was queued is written, and reads and discards what the
     /// peer still sends for two seconds on the app's `Timer`, as at `close`. `RpcClient` reads the
     /// `goaway` and connects again for its next call; a request written before it read the

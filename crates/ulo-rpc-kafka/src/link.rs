@@ -358,6 +358,20 @@ fn named(what: &'static str, name: &str) -> Result<(), BoxError> {
     }
 }
 
+/// A client's `reply_topic(..)` refused as a pattern is, and refused where it collides with the
+/// link's control topic, which every server creates and the reply topic's consumer group would
+/// then read.
+fn reply_topic_of(topic: &str) -> Result<(), BoxError> {
+    named("reply topic", topic)?;
+    if collision_key(topic) == collision_key(CONTROL) {
+        return Err(format!(
+            "the reply topic `{topic}` collides with the link's control topic `{CONTROL}`: Kafka reads `.` and `_` in a topic's name as one character"
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// `name` as Kafka compares topics for a collision, `.` and `_` read as one character: two
 /// topics alike under it cannot both exist, and the second one's creation fails `InvalidTopic`.
 fn collision_key(name: &str) -> String {
@@ -422,7 +436,7 @@ impl Link for Kafka {
     fn usable(&self) -> Result<(), BoxError> {
         self.runtime()?;
         match &self.reply_topic {
-            Some(topic) => named("reply topic", topic),
+            Some(topic) => reply_topic_of(topic),
             None => Ok(()),
         }
     }
@@ -2049,22 +2063,31 @@ mod tests {
 
     /// Q35-14: a `reply_topic` Kafka names no topic is refused where the client takes the link, by
     /// the rule a pattern follows, `RpcClient::new` answering `UnusableLink` with the name's refusal
-    /// as its source, and a valid one is taken. Planted break: the check left at `connect`, which
-    /// builds the client.
+    /// as its source, `NameInvalid` for a character and `NameTooLong` past 249 bytes, and so is one
+    /// colliding with the control topic; a valid one is taken. Planted breaks: the check left at
+    /// `connect`, which builds the client; no collision check, which takes `ulo_rpc_control`.
     #[test]
     fn a_reply_topic_kafka_names_no_topic_is_refused_where_the_client_takes_the_link() {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a runtime");
         runtime.block_on(async {
             let handed: Arc<dyn Runtime> = Arc::new(Tokio::current());
             let long = "r".repeat(250);
-            for topic in ["orders/replies", long.as_str()] {
-                let refused = match ulo_rpc::RpcClient::new(Kafka::brokers("127.0.0.1:9").reply_topic(topic), Arc::clone(&handed)) {
-                    Ok(_) => panic!("a client with the reply topic `{topic}` was built"),
-                    Err(refused) => refused,
-                };
-                let source = std::error::Error::source(&refused).expect("the refusal carries the link's");
-                assert!(source.is::<NameInvalid>() || source.is::<NameTooLong>(), "{refused}");
-                assert!(format!("{refused} {source}").contains("reply topic `"), "the refusal names the reply topic: {refused}: {source}");
+            let refused = |topic: &str| match ulo_rpc::RpcClient::new(Kafka::brokers("127.0.0.1:9").reply_topic(topic), Arc::clone(&handed)) {
+                Ok(_) => panic!("a client with the reply topic `{topic}` was built"),
+                Err(refused) => refused,
+            };
+            let invalid = refused("orders/replies");
+            let source = std::error::Error::source(&invalid).expect("the refusal carries the link's");
+            let invalid_name = source.downcast_ref::<NameInvalid>().unwrap_or_else(|| panic!("refused other than as `NameInvalid`: {source}"));
+            assert_eq!((invalid_name.what, invalid_name.name.as_str()), ("reply topic", "orders/replies"));
+            let too_long = refused(&long);
+            let source = std::error::Error::source(&too_long).expect("the refusal carries the link's");
+            let long_name = source.downcast_ref::<NameTooLong>().unwrap_or_else(|| panic!("refused other than as `NameTooLong`: {source}"));
+            assert_eq!((long_name.what, long_name.name.len(), long_name.limit), ("reply topic", 250, 249));
+            for colliding in ["ulo.rpc.control", "ulo_rpc_control"] {
+                let collision = refused(colliding);
+                let source = std::error::Error::source(&collision).expect("the refusal carries the link's").to_string();
+                assert!(source.contains("collides with the link's control topic `ulo.rpc.control`"), "{source}");
             }
             ulo_rpc::RpcClient::new(Kafka::brokers("127.0.0.1:9").reply_topic("orders.replies"), handed).expect("a valid reply topic is taken");
         });

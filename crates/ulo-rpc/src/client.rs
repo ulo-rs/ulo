@@ -324,6 +324,9 @@ struct Conn {
     pending: Mutex<HashMap<u64, Waiting>>,
     /// False once the reply lane ended or the server sent `goaway`: no new call goes over it.
     open: AtomicBool,
+    /// True once the reply lane ended, a `goaway` aside: the connection carries nothing more to
+    /// the server, so a call it fails sends no `cancel`.
+    lane_ended: AtomicBool,
     /// The client's runtime, which a dropped call's `cancel` is spawned on.
     runtime: Arc<dyn Runtime>,
 }
@@ -362,10 +365,12 @@ impl Conn {
     }
 
     /// The reply lane's end: no new call goes over the connection, and every call waiting on it
-    /// fails `Unavailable`.
+    /// fails `Unavailable` and sends no `cancel`. The flag is set before the calls are failed, so
+    /// each reads it as its [`Pending`] drops.
     fn ended(&self) {
         let mut pending = self.pending();
         self.open.store(false, Ordering::Release);
+        self.lane_ended.store(true, Ordering::Release);
         pending.clear();
     }
 }
@@ -548,7 +553,8 @@ impl RpcClient {
     /// Closes the client: every call made afterwards, on this handle and on every clone of it,
     /// fails `Unavailable` with "client closed" and the reason `"client_closed"`, and opens no
     /// connection; then closes the link, which ends its connection, so the calls waiting on it
-    /// fail as at a lost connection. A call already past its connect is not refused. Closing
+    /// fail as at a lost connection. A call already past its connect is not refused; one whose
+    /// connect is under way is refused once it connects, and the side it opened is closed. Closing
     /// again closes the link again and refuses nothing more. `RpcClientModule`'s destroy hook
     /// closes its client the same way. A closed client is not opened again; a new one is built
     /// over a new link.
@@ -896,11 +902,22 @@ impl ClientInner {
         if let Some(conn) = slot.as_ref().filter(|conn| conn.open.load(Ordering::Acquire)) {
             return Ok(Arc::clone(conn));
         }
-        let Outbound { send, replies } = (self.connect)().await.map_err(|err| connect_error(self.link, err))?;
+        let outbound = (self.connect)().await.map_err(|err| connect_error(self.link, err))?;
+        // A close that ran while this connect was under way reached no side of it: the link held
+        // none yet. The side is dropped and the link closed again, so none outlives the close.
+        if self.closed.load(Ordering::Acquire) {
+            drop(outbound);
+            if let Err(error) = (self.link_close)().await {
+                tracing::warn!(%error, link = self.link, "the RPC client's link did not close cleanly");
+            }
+            return Err(client_closed());
+        }
+        let Outbound { send, replies } = outbound;
         let conn = Arc::new(Conn {
             send,
             pending: Mutex::new(HashMap::new()),
             open: AtomicBool::new(true),
+            lane_ended: AtomicBool::new(false),
             runtime: Arc::clone(&self.runtime),
         });
         // Detached: it ends with the reply lane, or at the next frame once the connection is gone.
@@ -956,6 +973,7 @@ async fn lane_panicked(conn: &Weak<Conn>, link: &'static str, payload: Box<dyn s
     {
         let _pending = conn.pending();
         conn.open.store(false, Ordering::Release);
+        conn.lane_ended.store(true, Ordering::Release);
     }
     let message = crate::link::panic_redacted(&*conn.runtime, payload).await;
     let waiting: Vec<Waiting> = conn.pending().drain().map(|(_, waiting)| waiting).collect();
@@ -1078,7 +1096,9 @@ async fn pump(conn: Arc<Conn>, pattern: Pattern, id: u64, mut items: BoxStream<'
 }
 
 /// A call registered on its connection. Dropped before its reply settled it, a timeout, a cancel
-/// or the caller's own drop, it sends `cancel`, unless its queue's overflow sent it already.
+/// or the caller's own drop, it sends `cancel`, unless its queue's overflow sent it already or the
+/// connection's reply lane has ended: a `close` ending the lane would otherwise queue the `cancel`
+/// behind the writer's own end, which may write it before shutting its half.
 struct Pending {
     conn: Arc<Conn>,
     id: u64,
@@ -1091,7 +1111,7 @@ struct Pending {
 impl Drop for Pending {
     fn drop(&mut self) {
         self.conn.pending().remove(&self.id);
-        if self.settled || self.cancelled.swap(true, Ordering::AcqRel) {
+        if self.settled || self.conn.lane_ended.load(Ordering::Acquire) || self.cancelled.swap(true, Ordering::AcqRel) {
             return;
         }
         let cancel = self.conn.send(&self.pattern, Frame::Cancel { id: self.id }, None);
