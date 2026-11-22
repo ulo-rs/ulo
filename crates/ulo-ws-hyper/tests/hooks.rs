@@ -268,7 +268,7 @@ async fn a_connection_the_connect_phase_refused_never_reaches_on_disconnect() {
 async fn an_error_s_http_status_changes_no_websocket_rendering() {
     let Started { app, .. } = start().await;
     let mut refused = app.connect("/hooked", &[(NAME, TEAPOT)]).await;
-    assert_eq!(close_frame(&mut refused).await, Some((3003, "no teapots".to_owned())));
+    assert_eq!(close_frame(&mut refused).await, Some((3003, "forbidden: no teapots".to_owned())));
     hang_up(refused).await;
     let mut socket = visit(&app, "ada").await;
     send_json(&mut socket, &json!({ "event": "teapot", "id": 1 })).await;

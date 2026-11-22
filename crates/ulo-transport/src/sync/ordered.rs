@@ -104,6 +104,51 @@ impl<T> Sender<T> {
         Room { inner: Arc::clone(&self.inner), place: Some(place), listener: None }
     }
 
+    /// Resolves once fewer than `bound` items wait for the receiver, so an item sent then is among
+    /// the first `bound` not yet taken, or with [`Closed`] once the receiver has gone. It queues
+    /// nothing: a producer that waits on it before each send it causes keeps the queue near its
+    /// bound however slowly the receiver takes.
+    pub fn room(&self) -> impl Future<Output = Result<(), Closed>> + Send + 'static
+    where
+        T: Send + 'static,
+    {
+        let inner = Arc::clone(&self.inner);
+        let mut listener: Option<EventListener> = None;
+        poll_fn(move |cx| {
+            loop {
+                {
+                    let state = inner.lock();
+                    if !state.receiving {
+                        return Poll::Ready(Err(Closed));
+                    }
+                    if state.queue.len() < inner.bound {
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+                // Registered, then the state read again, as `Room` does.
+                match listener.as_mut() {
+                    None => listener = Some(inner.room.listen()),
+                    Some(waiting) => {
+                        if Pin::new(waiting).poll(cx).is_pending() {
+                            return Poll::Pending;
+                        }
+                        listener = None;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Items queued and not yet taken by the receiver.
+    pub fn len(&self) -> usize {
+        self.inner.lock().queue.len()
+    }
+
+    /// Whether no item waits for the receiver.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Queues `item` when fewer than `bound` items wait for the receiver.
     pub fn try_send(&self, item: T) -> Result<(), TrySendError<T>> {
         let mut state = self.inner.lock();
@@ -290,6 +335,26 @@ mod tests {
         assert_eq!(poll_once(waiting.as_mut()), Poll::Ready(Err(super::Closed)));
         assert_eq!(poll_once(pin!(sender.send(3))), Poll::Ready(Err(super::Closed)));
         assert!(matches!(sender.try_send(4), Err(super::TrySendError::Closed(4))));
+    }
+
+    /// `room` resolves only below the bound, wakes when the receiver takes, and fails once the
+    /// receiver has gone. Planted break: `room` answering at `len() <= bound`, one item over.
+    #[test]
+    fn room_waits_below_the_bound_and_wakes_on_a_take() {
+        let (sender, mut receiver) = channel::<u32>(2);
+        assert!(poll_once(pin!(sender.room())).is_ready(), "an empty queue has room");
+        drop(sender.send(1));
+        drop(sender.send(2));
+        assert_eq!(sender.len(), 2);
+        let mut waiting = pin!(sender.room());
+        assert!(poll_once(waiting.as_mut()).is_pending(), "a queue at its bound has no room");
+        drop(sender.send(3));
+        assert_eq!(poll_once(pin!(receiver.recv())), Poll::Ready(Some(1)));
+        assert!(poll_once(waiting.as_mut()).is_pending(), "two items still wait after one take");
+        assert_eq!(poll_once(pin!(receiver.recv())), Poll::Ready(Some(2)));
+        assert_eq!(poll_once(waiting.as_mut()), Poll::Ready(Ok(())), "one item waits, under the bound of two");
+        drop(receiver);
+        assert_eq!(poll_once(pin!(sender.room())), Poll::Ready(Err(super::Closed)));
     }
 
     #[test]

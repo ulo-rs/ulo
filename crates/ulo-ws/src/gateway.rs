@@ -380,12 +380,13 @@ impl ConnectRefused {
     /// A refusal of kind `kind`, closing with the code [`CloseCode::of_kind`] gives;
     /// `ConnectRefused::from(CallError::new(kind, reason))`.
     ///
-    /// A code that more than one kind closes with, 1008, 1011 and 1013, carries the kind in its
-    /// reason, spelled as the envelope spells it, then `: ` and `reason`: `not_found: no such
-    /// room`, `too_many_requests: slow down`. A client reads the kind back from the reason. A
-    /// `reason` already starting with the kind and `: ` is not prefixed again. A code one kind
-    /// owns, 3000, 3003 and 3008, carries `reason` alone. A reason over 123 bytes is cut at the
-    /// last character boundary within them, from `reason`'s end: the kind is never cut.
+    /// The close's reason is the kind, spelled as the envelope spells it, then `: ` and `reason`:
+    /// `not_found: no such room`, `forbidden: not on the list`, on every code, 3000, 3003 and
+    /// 3008 included, so a client reads the kind back from any close by kind and tells it from a
+    /// close [`code`](Self::code) sets. A `reason` already starting with the kind and `: `, or
+    /// that is the kind alone, is not prefixed again, and an empty one leaves the kind alone. A
+    /// reason over 123 bytes is cut at the last character boundary within them, from `reason`'s
+    /// end: the kind is never cut.
     pub fn kind(kind: ErrorKind, reason: impl Into<String>) -> Self {
         ConnectRefused::from(CallError::new(kind, reason))
     }

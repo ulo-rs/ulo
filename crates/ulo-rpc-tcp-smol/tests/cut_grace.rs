@@ -5,9 +5,11 @@
 //! the moment that wait ends, not from the moment `close` began.
 //!
 //! The clock both links read is scripted: no sleep it hands out ends until the test advances it,
-//! and the test reads which sleeps are live and the clock time each was last polled at. Each test
-//! sizes what it queues from the buffers the kernel granted the peer's socket, read back, so the
-//! buffers cannot hold it whatever the platform's defaults.
+//! and the test reads which sleeps are live and the clock time each was last polled at. The client
+//! test sizes what it queues from the buffers the kernel granted the peer's socket, read back, so
+//! the buffers cannot hold it whatever the platform's defaults; the server test makes fewer calls
+//! than a server's writer holds before its reader stops, each answered near `max_frame`, and
+//! checks that those answers overfill the same buffers.
 
 use std::error::Error;
 use std::fmt;
@@ -35,6 +37,16 @@ const FRAME_BYTES: usize = 64 * 1024;
 /// How many times over the peer's granted buffers a test queues frames or has the peer write:
 /// more than the two sockets' buffers hold.
 const OVER_BUFFERS: usize = 16;
+
+/// How many calls the server test makes: fewer than the 64 frames a server's writer holds before
+/// its reader waits for room, so the server reads and answers every one while its peer reads
+/// nothing. More would stall the reader with requests unread, as a peer that does not read its
+/// answers is meant to be stalled, after a number of answers set by the platform's buffers.
+const CALLS: u64 = 63;
+
+/// The size of each answer the server test's handler writes: near the 1 MiB `max_frame`, so the
+/// [`CALLS`] answers are many times more than the sockets' buffers hold.
+const ANSWER_BYTES: usize = 1_000_000;
 
 /// How long a gated wait lasts before the test fails.
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -259,7 +271,7 @@ impl Answering {
     async fn answer(&self, n: Payload<u32>) -> Result<String, Never> {
         let _ = n;
         ANSWERED.fetch_add(1, Ordering::SeqCst);
-        Ok("a".repeat(FRAME_BYTES))
+        Ok("a".repeat(ANSWER_BYTES))
     }
 }
 
@@ -306,7 +318,9 @@ async fn run_a_cut_close_holds_a_half_closed_peer_s_connection_for_the_grace() {
     let serving = ulo::spawn_with(&OnSmol::runtime(), async move { app.serve(pending::<Signal>()).await });
 
     let mut peer = TcpStream::connect(addr).expect("the server accepts a connection");
-    let calls = frames(&peer);
+    let calls = CALLS;
+    let unread = calls * ANSWER_BYTES as u64;
+    assert!(unread > 4 * buffered(&peer), "{unread} bytes of answers do not overfill buffers of {} bytes", buffered(&peer));
     for id in 1..=calls {
         let request = Frame::Req { id, pattern: ANSWER.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
         write_frame(&mut peer, &request).expect("the request is written");

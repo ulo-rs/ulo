@@ -6,7 +6,7 @@ use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::Poll;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
@@ -14,13 +14,13 @@ use futures_io::{AsyncRead, AsyncWrite};
 use futures_util::future::{Either, join, select};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{AsyncReadExt, AsyncWriteExt, FutureExt, SinkExt, StreamExt, select_biased};
-use ulo::{BoundAddr, BoxError, BoxFuture, Runtime, Spawn, TaskHandle, Timer};
+use ulo::{Bound, BoundAddr, BoxError, BoxFuture, Runtime, Spawn, TaskHandle, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, BoundListener, Endpoint, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
 use ulo_transport::sync::{Watch, ordered};
-use ulo_transport::{Detail, Details, ErrorKind, TaskSet};
+use ulo_transport::{Count, Detail, Details, ErrorKind, TaskSet};
 
 use crate::leading::{self, Calling};
 
@@ -32,6 +32,12 @@ const DOMAIN: &str = "ulo.rpc";
 /// the defaults. A larger payload, a body at HTTP's 2 MiB limit forwarded whole among them, needs
 /// `max_frame` set on the server's link and the client's.
 pub const DEFAULT_MAX_FRAME: u64 = 1024 * 1024;
+
+/// How long a server connection stays open idle unless `idle_timeout` sets it: 60 s. A connection
+/// is idle while it holds no call in flight and no frame is read whole from it or written whole to
+/// it, counted from the latest of those events and of its last call's end, and, whatever calls it
+/// holds, once its writer, holding a frame, has written none of it for that long.
+pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long the accept loop waits after the OS refuses an accept, out of descriptors or memory,
 /// before it accepts again. A runtime that refuses the wait, having shut down, ends the loop as the
@@ -108,6 +114,8 @@ pub struct Core {
     tls: Option<Tls>,
     codec: Codec,
     max_frame: Option<u64>,
+    idle_timeout: Bound,
+    max_connections: Count,
     /// Set by `prepare`.
     prepared: Option<Prepared>,
     /// The app's clock, handed over in `prepare`, which times each server connection's linger.
@@ -169,6 +177,8 @@ impl Core {
             tls: None,
             codec: Codec::Json,
             max_frame: None,
+            idle_timeout: Bound::Default,
+            max_connections: Count::Default,
             prepared: None,
             timer: None,
             accept: Mutex::new(None),
@@ -199,6 +209,33 @@ impl Core {
         self.max_frame = Some(bytes);
     }
 
+    pub fn set_idle_timeout(&mut self, timeout: Bound) {
+        self.idle_timeout = timeout;
+    }
+
+    pub fn set_max_connections(&mut self, connections: Count) {
+        self.max_connections = connections;
+    }
+
+    /// How long a server connection stays open idle: [`DEFAULT_IDLE_TIMEOUT`] at `Bound::Default`,
+    /// none at `Bound::Unbounded`.
+    pub fn idle_timeout(&self) -> Option<Duration> {
+        match self.idle_timeout {
+            Bound::Default => Some(DEFAULT_IDLE_TIMEOUT),
+            Bound::After(after) => Some(after),
+            Bound::Unbounded => None,
+        }
+    }
+
+    /// The most connections a server holds open at once: none at `Count::Default` and
+    /// `Count::Unlimited`.
+    pub fn max_connections(&self) -> Option<usize> {
+        match self.max_connections {
+            Count::Max(connections) => Some(usize::try_from(connections).unwrap_or(usize::MAX)),
+            Count::Default | Count::Unlimited => None,
+        }
+    }
+
     /// The largest frame read or written: `max_frame`, 1 MiB unset, bounded by the 4-byte prefix.
     pub fn max_frame(&self) -> u64 {
         self.max_frame.unwrap_or(DEFAULT_MAX_FRAME).min(u64::from(u32::MAX))
@@ -218,7 +255,9 @@ impl Core {
     }
 
     /// Everything that can fail before a socket, reported together with `usable`, the link's own
-    /// refusal: the endpoint, an inherited socket, the TLS configuration, a zero `max_frame`.
+    /// refusal: the endpoint, an inherited socket, the TLS configuration, a zero `max_frame` or one
+    /// below the size of the server's own answer to a frame over it, a zero `idle_timeout` and a
+    /// zero `max_connections`.
     /// `timer` is the app's, `AppHandle::timer`, which bounds each server connection's linger.
     pub fn prepare(&mut self, usable: Result<(), BoxError>, timer: Option<Arc<dyn Timer>>) -> Result<(), BoxError> {
         self.timer = timer;
@@ -250,8 +289,23 @@ impl Core {
             },
             None => None,
         };
-        if self.max_frame == Some(0) {
-            problems.push("`.max_frame(0)` would refuse every frame".to_owned());
+        match self.max_frame {
+            Some(0) => problems.push("`.max_frame(0)` would refuse every frame".to_owned()),
+            Some(bytes) => {
+                let floor = largest_over_limit_answer(self.codec, self.max_frame());
+                if bytes < floor {
+                    problems.push(format!(
+                        "`.max_frame({bytes})` is below {floor} bytes, the size of the server's answer to a frame over it, so a caller sending one would wait for an answer that cannot be written"
+                    ));
+                }
+            }
+            None => {}
+        }
+        if self.idle_timeout == Bound::After(Duration::ZERO) {
+            problems.push("`.idle_timeout(Bound::After(Duration::ZERO))` would close every connection as it opens; `Bound::Unbounded` keeps idle connections open".to_owned());
+        }
+        if self.max_connections == Count::Max(0) {
+            problems.push("`.max_connections(Count::Max(0))` would accept no connection".to_owned());
         }
         match (endpoint, problems.as_slice()) {
             (Some(endpoint), []) => {
@@ -286,7 +340,15 @@ impl Core {
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", local).tls(prepared.tls.is_some())];
         let (deliveries, received) = mpsc::channel(DELIVERY_QUEUE);
         let (forwarded, inbound) = mpsc::channel(DELIVERY_QUEUE);
-        let server = Server { codec: self.codec, limit: self.max_frame(), state: Arc::clone(&self.state), runtime: Arc::clone(&runtime), timer };
+        let server = Server {
+            codec: self.codec,
+            limit: self.max_frame(),
+            idle: self.idle_timeout(),
+            max_connections: self.max_connections(),
+            state: Arc::clone(&self.state),
+            runtime: Arc::clone(&runtime),
+            timer,
+        };
         *accept = Some(Owned(runtime.spawn(Box::pin(server.accept(listener, deliveries)))));
         *lock(&self.forward) = Some(Owned(runtime.spawn(Box::pin(forward(Arc::clone(&self.state), received, forwarded, Arc::clone(&runtime))))));
         Ok(Box::pin(inbound))
@@ -339,7 +401,7 @@ impl Core {
                 };
                 select(pin!(close_ended), pin!(released)).await;
             };
-            drop(runtime.spawn(Box::pin(run_connection(writer, queued, end, Some(shut), handed, ended, timer))));
+            drop(runtime.spawn(Box::pin(run_connection(writer, queued, end, Some(shut), handed, ended, timer, None))));
         }
         let (codec, limit) = (self.codec, self.max_frame());
         let (frames, replies) = mpsc::channel(REPLY_QUEUE);
@@ -575,8 +637,11 @@ impl Reading {
         if len > limit {
             return Ok(Read::Over(len));
         }
-        let mut body = vec![0; len as usize];
-        self.reader.read_exact(&mut body).await?;
+        // Grown as the bytes arrive, so a declared length costs only what the peer has sent.
+        let mut body = Vec::with_capacity(usize::try_from(len).map_or(SKIPPED, |len| len.min(SKIPPED)));
+        if (&mut self.reader).take(len).read_to_end(&mut body).await? as u64 != len {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
         Ok(Read::Frame(body))
     }
 
@@ -665,6 +730,10 @@ async fn yield_now() {
 struct Server {
     codec: Codec,
     limit: u64,
+    /// `idle_timeout`; `None` keeps an idle connection open.
+    idle: Option<Duration>,
+    /// `max_connections`; `None` accepts every connection.
+    max_connections: Option<usize>,
     state: Arc<State>,
     /// The link's runtime, which every connection's tasks are spawned on.
     runtime: Arc<dyn Runtime>,
@@ -679,8 +748,17 @@ impl Server {
         let mut connections = TaskSet::new(Arc::clone(&self.runtime) as Arc<dyn Spawn>);
         let mut draining = pin!(reached(&self.state, DRAINING).fuse());
         loop {
+            let full = self.max_connections.is_some_and(|max| connections.len() >= max);
             let accepted = {
-                let accepted = listener.accept().fuse();
+                // At `max_connections` the loop waits for a connection to end; the listener's
+                // backlog holds the connections that arrive meanwhile.
+                let accepted = async {
+                    if full {
+                        pending::<()>().await;
+                    }
+                    listener.accept().await
+                }
+                .fuse();
                 let joined = async {
                     if connections.is_empty() {
                         pending::<()>().await;
@@ -731,26 +809,67 @@ impl Server {
         }
     }
 
+    /// Opens the connection, its TLS handshake bounded by `idle_timeout` as a frame still
+    /// arriving is, then serves it.
     async fn connection(self, incoming: Incoming, deliveries: mpsc::Sender<Delivery>) {
         let peer = incoming.peer;
-        match incoming.open.await {
+        let opened = match self.idle {
+            None => incoming.open.await,
+            Some(idle) => {
+                let open = incoming.open;
+                match select(open, self.timer.try_sleep(idle)).await {
+                    Either::Left((opened, _)) => opened,
+                    Either::Right((Ok(()), _)) => {
+                        tracing::debug!(%peer, idle_timeout = ?idle, "a TLS handshake on the TCP link did not finish within the link's `idle_timeout`; the connection is dropped");
+                        return;
+                    }
+                    Either::Right((Err(_), open)) => open.await,
+                }
+            }
+        };
+        match opened {
             Ok((reader, writer)) => self.serve(reader, writer, peer, deliveries).await,
             Err(error) => tracing::debug!(%error, %peer, "a TLS handshake on the TCP link failed"),
         }
     }
 
     /// Reads one connection's frames until it closes, then cancels its calls in flight. Ended by
-    /// the link instead, at `close` or at the link's drop, the connection lingers.
+    /// the link instead, at `close` or at the link's drop, the connection lingers. Before each
+    /// frame the reader waits for room on the connection's writer, so a peer that does not read
+    /// what the server writes stops being read: its own frames wait in its socket, and TCP's flow
+    /// control holds its writes back. A connection idle for `idle_timeout` is sent `goaway` and
+    /// closed as `close` closes one, its linger counted from the expiry.
     async fn serve(self, reader: Reader, writer: Writer, peer: SocketAddr, mut deliveries: mpsc::Sender<Delivery>) {
         let (queue, queued) = ordered::channel(WRITE_QUEUE);
         let (handover, handed) = oneshot::channel();
+        let (expire, expired) = oneshot::channel::<()>();
+        let activity = Arc::new(Activity::new(Arc::clone(&self.timer)));
         // Every `close` ends the server's connections, so the first one to end starts the grace,
         // also for a connection whose task first ran after that `close` advanced the epoch and
-        // before its abort landed.
-        let ended = close_ended(&self.state, 0);
+        // before its abort landed. An idle connection's grace starts at its expiry.
+        let ended = {
+            let close_ended = close_ended(&self.state, 0);
+            async move {
+                let expired = async {
+                    if expired.await.is_err() {
+                        pending::<()>().await;
+                    }
+                };
+                select(pin!(close_ended), pin!(expired)).await;
+            }
+        };
         // The writer runs apart from this task: the server's calls hold reply paths into its queue
         // after the connection's reader has ended, and it ends when the last of them drops.
-        drop(self.runtime.spawn(Box::pin(run_connection(writer, queued, pending(), None, handed, ended, Arc::clone(&self.timer)))));
+        drop(self.runtime.spawn(Box::pin(run_connection(
+            writer,
+            queued,
+            pending(),
+            None,
+            handed,
+            ended,
+            Arc::clone(&self.timer),
+            Some(Arc::clone(&activity)),
+        ))));
         let mut reader = Lingering { reading: Some(Reading::new(reader)), handover: Some(handover) };
         let connection = self.state.next_connection.fetch_add(1, Ordering::Relaxed);
         lock(&self.state.connections).insert(connection, queue.clone());
@@ -762,37 +881,59 @@ impl Server {
         {
             let _ = queue.try_send(goaway);
         }
-        let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&self.state))));
+        let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&self.state), Arc::clone(&activity))));
         let path = reply_path(queue.clone(), self.codec, self.limit, Arc::clone(&ids), peer);
-        loop {
-            let bytes = match reader.get().frame(self.limit).await {
-                Ok(Read::Frame(bytes)) => bytes,
-                Ok(Read::End) => break,
-                Ok(Read::Over(len)) => match reader.get().over(self.codec, len).await {
-                    Ok(call) => {
-                        let Some(cancel) = self.over(call, len, &queue, &ids, peer) else { continue };
-                        let delivery = Delivery { frame: Frame::Cancel { id: cancel }, reply: Some(path.clone()), ack: taken(&ids, cancel) };
-                        if deliveries.send(delivery).await.is_err() {
-                            break;
+        let mut idle = pin!(idle_for(&activity, self.idle).fuse());
+        let end = loop {
+            let next = {
+                let next = async {
+                    // Room for what this frame's call writes, a refusal written for it among them.
+                    if queue.room().await.is_err() {
+                        return Next::Gone;
+                    }
+                    match reader.get().frame(self.limit).await {
+                        Ok(Read::Frame(bytes)) => Next::Frame(bytes),
+                        Ok(Read::End) => Next::Gone,
+                        Ok(Read::Over(len)) => match reader.get().over(self.codec, len).await {
+                            Ok(call) => Next::Over(call, len),
+                            Err(error) => {
+                                tracing::debug!(%error, %peer, "a TCP connection ended inside a frame over the link's `max_frame`");
+                                Next::Gone
+                            }
+                        },
+                        Err(error) => {
+                            tracing::debug!(%error, %peer, "a TCP connection ended");
+                            Next::Gone
                         }
-                        continue;
                     }
-                    Err(error) => {
-                        tracing::debug!(%error, %peer, "a TCP connection ended inside a frame over the link's `max_frame`");
-                        break;
-                    }
-                },
-                Err(error) => {
-                    tracing::debug!(%error, %peer, "a TCP connection ended");
-                    break;
+                }
+                .fuse();
+                let mut next = pin!(next);
+                select_biased! {
+                    next = next => next,
+                    () = idle => break End::Idle,
                 }
             };
+            let bytes = match next {
+                Next::Frame(bytes) => bytes,
+                Next::Over(call, len) => {
+                    activity.touch();
+                    let Some(cancel) = self.over(call, len, &queue, &ids, peer) else { continue };
+                    let delivery = Delivery { frame: Frame::Cancel { id: cancel }, reply: Some(path.clone()), ack: taken(&ids, cancel) };
+                    if deliveries.send(delivery).await.is_err() {
+                        break End::Gone;
+                    }
+                    continue;
+                }
+                Next::Gone => break End::Gone,
+            };
+            activity.touch();
             let frame = match self.codec.decode_frame(&bytes) {
                 Ok(frame) => frame,
                 Err(error) => {
                     // Without its id nothing can be answered: the connection is dropped.
                     tracing::warn!(%error, %peer, "a frame did not decode; the TCP connection is dropped");
-                    break;
+                    break End::Gone;
                 }
             };
             let Some(frame) = self.inward(frame, &ids) else { continue };
@@ -802,10 +943,22 @@ impl Server {
             };
             let delivery = Delivery { frame, reply: Some(path.clone()), ack };
             if deliveries.send(delivery).await.is_err() {
-                break;
+                break End::Gone;
             }
+        };
+        match end {
+            End::Idle => {
+                tracing::debug!(%peer, idle_timeout = ?self.idle, "a TCP connection was idle for the link's `idle_timeout`; it is closed");
+                if let Ok(goaway) = self.codec.encode_frame(&Frame::Goaway) {
+                    let _ = queue.try_send(goaway);
+                }
+                let _ = expire.send(());
+                // Dropped unreleased, it hands the reader to the writer's task, which discards what
+                // the peer still sends until the grace ends.
+                drop(reader);
+            }
+            End::Gone => reader.release(),
         }
-        reader.release();
         lock(&self.state.connections).remove(&connection);
         let orphaned = lock(&ids).drain();
         let count = orphaned.len();
@@ -838,12 +991,7 @@ impl Server {
                 return None;
             }
         };
-        let error = ErrorBody::new(
-            ErrorKind::BadRequest,
-            format!("a frame of {len} bytes is over the server's `max_frame` of {limit} bytes"),
-            Details::new().with(Detail::ErrorInfo { reason: "payload_too_large".to_owned(), domain: DOMAIN.to_owned(), metadata: BTreeMap::new() }),
-        );
-        match encode(self.codec, limit, &Frame::Err { id, error }) {
+        match encode(self.codec, limit, &over_limit_answer(id, len, limit)) {
             // Queued at the call; the writer sends it once it has room.
             Ok(answer) => drop(queue.send(answer)),
             Err(error) => tracing::debug!(%error, %peer, "the answer to an over-limit frame did not encode; the call is not answered"),
@@ -867,6 +1015,103 @@ impl Server {
             Frame::Cancel { id } => Frame::Cancel { id: ids.cancel(id)? },
             _ => return None,
         })
+    }
+}
+
+/// What the reader read next.
+enum Next {
+    Frame(Vec<u8>),
+    /// An over-limit frame of the length given, read to its end, and the call its leading bytes
+    /// name.
+    Over(Option<(Calling, u64)>, u64),
+    /// The connection ended or failed, or its writer is gone: nothing more is read.
+    Gone,
+}
+
+/// Why a server connection stopped reading.
+enum End {
+    /// The peer closed its half, the connection failed, its writer is gone, or the server took no
+    /// more deliveries.
+    Gone,
+    /// `idle_timeout` passed with the connection idle.
+    Idle,
+}
+
+/// The `err` a server writes for call `id` when a frame of `len` bytes is over its `limit`.
+fn over_limit_answer(id: u64, len: u64, limit: u64) -> Frame {
+    let error = ErrorBody::new(
+        ErrorKind::BadRequest,
+        format!("a frame of {len} bytes is over the server's `max_frame` of {limit} bytes"),
+        Details::new().with(Detail::ErrorInfo { reason: "payload_too_large".to_owned(), domain: DOMAIN.to_owned(), metadata: BTreeMap::new() }),
+    );
+    Frame::Err { id, error }
+}
+
+/// The encoded size of the largest answer to a frame over `limit`: the largest `id` and the
+/// largest length the 4-byte prefix declares. A codec that cannot encode it answers `u64::MAX`, so
+/// every limit is below it.
+fn largest_over_limit_answer(codec: Codec, limit: u64) -> u64 {
+    codec.encode_frame(&over_limit_answer(u64::MAX, u64::from(u32::MAX), limit)).map_or(u64::MAX, |bytes| bytes.len() as u64)
+}
+
+/// One server connection's idleness: when a frame was last read whole from it or written whole to
+/// it, or its count of calls in flight last changed, that count, and since when its writer has held
+/// a frame without writing any of it.
+struct Activity {
+    last: Mutex<Instant>,
+    calls: Watch<usize>,
+    /// Set as the writer takes a frame from its queue and again at each write the socket takes
+    /// bytes from, cleared once the frame is written whole.
+    writing: Mutex<Option<Instant>>,
+    timer: Arc<dyn Timer>,
+}
+
+impl Activity {
+    fn new(timer: Arc<dyn Timer>) -> Activity {
+        Activity { last: Mutex::new(timer.now()), calls: Watch::new(0), writing: Mutex::new(None), timer }
+    }
+
+    fn touch(&self) {
+        *lock(&self.last) = self.timer.now();
+    }
+
+    fn writing(&self) {
+        *lock(&self.writing) = Some(self.timer.now());
+    }
+
+    fn written(&self) {
+        *lock(&self.writing) = None;
+        self.touch();
+    }
+}
+
+/// Resolves once the connection has been idle for `timeout`: it holds no call in flight and
+/// nothing has touched it for that long, or its writer, holding a frame, has written none of it
+/// for that long, whatever calls it holds, the peer having stopped reading. With calls in
+/// flight and the writer making progress it re-reads the state once per `timeout`. A wait never
+/// ends after the expiry the state it wakes to gives: the last call's end, a write and a new
+/// stall each move that expiry no earlier than the wait's end, so no change has to wake it. A
+/// clock that refuses the wait, its runtime shut down, stops timing idleness, and the connection
+/// stays open until it ends otherwise.
+async fn idle_for(activity: &Activity, timeout: Option<Duration>) {
+    let Some(timeout) = timeout else { return pending().await };
+    loop {
+        let now = activity.timer.now();
+        let calls = activity.calls.read(|calls| *calls);
+        let stalled = *lock(&activity.writing);
+        let due = match (calls, stalled) {
+            (0, _) => Some(*lock(&activity.last) + timeout),
+            (_, Some(since)) => Some(since + timeout),
+            (_, None) => None,
+        };
+        if due.is_some_and(|due| now >= due) {
+            return;
+        }
+        let wait = due.map_or(timeout, |due| due - now);
+        if let Err(refused) = activity.timer.try_sleep(wait).await {
+            tracing::debug!(%refused, "the clock timing a TCP connection's `idle_timeout` refused the wait; the connection is not closed for idleness");
+            return pending().await;
+        }
     }
 }
 
@@ -935,6 +1180,7 @@ struct Ids {
     by_caller: HashMap<u64, u64>,
     by_server: HashMap<u64, Caller>,
     state: Arc<State>,
+    activity: Arc<Activity>,
 }
 
 /// Who a call's replies go to.
@@ -948,15 +1194,18 @@ enum Caller {
 }
 
 impl Ids {
-    fn new(state: Arc<State>) -> Self {
-        Ids { by_caller: HashMap::new(), by_server: HashMap::new(), state }
+    fn new(state: Arc<State>, activity: Arc<Activity>) -> Self {
+        Ids { by_caller: HashMap::new(), by_server: HashMap::new(), state, activity }
     }
 
-    /// Applies the change in calls in flight since `before`.
+    /// Applies the change in calls in flight since `before`, to the link's count and the
+    /// connection's. The change touches the connection, so its idleness counts from a call's end.
     fn counted(&self, before: usize) {
         let after = self.by_server.len();
         if after != before {
             self.state.held.modify(|held| *held = (*held + after).saturating_sub(before));
+            self.activity.touch();
+            self.activity.calls.modify(|calls| *calls = after);
         }
     }
 
@@ -1110,12 +1359,30 @@ fn encode(codec: Codec, limit: u64, frame: &Frame) -> Result<Bytes, BoxError> {
     Ok(bytes)
 }
 
+/// Writes `bytes` whole, moving a server connection's stall mark to each write the socket takes
+/// bytes from, so a peer reading slowly is progress and only one reading nothing stalls.
+async fn write_marking(writer: &mut Writer, mut bytes: &[u8], activity: Option<&Activity>) -> io::Result<()> {
+    while !bytes.is_empty() {
+        let took = writer.write(bytes).await?;
+        if took == 0 {
+            return Err(io::ErrorKind::WriteZero.into());
+        }
+        bytes = &bytes[took..];
+        if let Some(activity) = activity {
+            activity.writing();
+        }
+    }
+    Ok(())
+}
+
 /// One connection's writing half and, once the link ends the connection, its reading half: writes
 /// each queued frame behind its length prefix until the queue's senders are gone or `end`
 /// resolves, then shuts the writer and drops `shut`; if `lingering` hands the reader over, reads
 /// and discards until the peer closes its half or a read fails. `CUT_GRACE` on `timer` after
 /// `ended` resolves, or at once there when `timer` refuses the grace, both halves drop wherever
-/// they are, which closes the socket.
+/// they are, which closes the socket. Each frame written whole touches `written`, a server
+/// connection's idleness.
+#[allow(clippy::too_many_arguments)]
 async fn run_connection(
     writer: Writer,
     mut queued: ordered::Receiver<Bytes>,
@@ -1124,7 +1391,9 @@ async fn run_connection(
     lingering: oneshot::Receiver<Reading>,
     ended: impl Future<Output = ()>,
     timer: Arc<dyn Timer>,
+    written: Option<Arc<Activity>>,
 ) {
+    let activity = written;
     let writing = async move {
         let (mut writer, _shut) = (writer, shut);
         let mut end = pin!(end);
@@ -1133,14 +1402,20 @@ async fn run_connection(
                 Either::Left((Some(bytes), _)) => bytes,
                 Either::Left((None, _)) | Either::Right(((), _)) => break,
             };
+            if let Some(activity) = &activity {
+                activity.writing();
+            }
             let prefix = (bytes.len() as u32).to_be_bytes();
             let written = async {
-                writer.write_all(&prefix).await?;
-                writer.write_all(&bytes).await?;
+                write_marking(&mut writer, &prefix, activity.as_deref()).await?;
+                write_marking(&mut writer, &bytes, activity.as_deref()).await?;
                 writer.flush().await
             };
             if written.await.is_err() {
                 return;
+            }
+            if let Some(activity) = &activity {
+                activity.written();
             }
         }
         let _ = writer.close().await;
@@ -1173,6 +1448,9 @@ async fn run_connection(
         Some(Err(refused)) => tracing::debug!(%refused, "the runtime timing a TCP connection's linger refused its grace; the connection is dropped without one"),
     }
 }
+
+#[cfg(test)]
+mod flow_tests;
 
 #[cfg(test)]
 mod tests {

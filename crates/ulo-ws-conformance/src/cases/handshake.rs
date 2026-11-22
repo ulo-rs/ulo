@@ -280,7 +280,8 @@ pub async fn refused_before_upgrade<H: Host>() {
     let unauthorized = app.upgrade(&Request::upgrade("/strict").header(TOKEN.0, TOKEN.1)).await;
     refused("`OnConnect`'s `Unauthorized`", &unauthorized, 401);
     assert_eq!(unauthorized.header("www-authenticate"), Some("Bearer"), "a 401 carries its challenge");
-    assert_eq!(unauthorized.body, WHO, "the refusal's own reason");
+    // The body is the close reason a `refuse = close` gateway writes, the kind ahead of it.
+    assert_eq!(unauthorized.body, format!("unauthorized: {WHO}"), "the refusal's own reason");
 
     let mut admitted = app.connect("/strict", &[TOKEN, (USER, "ada")]).await;
     assert_eq!(admitted.exchange(json!({ "event": "echo", "id": 1, "data": "in" })).await, json!({ "id": 1, "data": "in" }));

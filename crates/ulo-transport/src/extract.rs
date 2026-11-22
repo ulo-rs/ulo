@@ -191,9 +191,9 @@ pub enum ExtractError {
     /// `TooLarge`, which no read makes room for.
     OverflowedBytes { param: &'static str, limit: u64 },
     /// A streamed body still being read when its call ended, before the caller's last item: a
-    /// handler answered and left the body to a task of its own. The stream yields this as its
-    /// last item, so that task does not take the part it read for the whole. It classifies as
-    /// `Unavailable`; the call has been answered already.
+    /// handler answered and left the body to a task of its own. The stream yields the items that
+    /// had arrived, then this as its last item, so that task does not take the part it read for
+    /// the whole. It classifies as `Unavailable`; the call has been answered already.
     CallEnded { param: &'static str },
 }
 

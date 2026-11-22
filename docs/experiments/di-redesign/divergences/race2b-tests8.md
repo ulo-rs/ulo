@@ -143,13 +143,15 @@ TCP, UDP, NATS, MQTT and RabbitMQ passed on their first run.
 - **Why:** a link that reconnects behind a closed client reaches zero and then opens a connection
   again with no call made.
 
-### 5. A call after the close connects again
+### 5. A call after the close is refused "client closed"
 
-- **Written:** step 6, retried until answered or the `boot` budget passes.
-- **Why:** §5.4 says a call made after the hook connects again, and a fix to `close` that left
-  the link unusable would otherwise pass. The retry covers a broker that routes replies to a new
-  connection late: a Kafka reply group takes its partitions seconds after it connects. Only an
-  answer passes.
+- **Written:** step 6, one call, which fails `Unavailable` with "client closed" and the reason
+  `"client_closed"`, and, where the environment counts them, no client connection is open after
+  it.
+- **Why:** a closed client stays closed (Q35-12, transports decision 310): a client that outlives
+  its app opens no new broker connection, the flag sitting on `RpcClient`, which every clone
+  shares, while the links stay reconnectable. Superseded: this decision read §5.4 as saying a
+  call made after the hook connects again, and retried the call until answered.
 
 ### 6. The per-crate `client_close` tests are trimmed, not deleted
 

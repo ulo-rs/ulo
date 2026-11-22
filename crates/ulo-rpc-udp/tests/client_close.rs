@@ -1,7 +1,7 @@
 //! The client app's close releases its UDP client socket: `RpcClientModule`'s destroy hook calls
 //! the link's `close`, which ends the reply lane of the socket the client bound and releases it.
 //! The conformance suite's `client_close` scenario asserts the rest on every link: the waiting call
-//! failing `Unavailable` and a later call connecting again. A UDP environment has no connection
+//! failing `Unavailable` and a later call refused "client closed". A UDP environment has no connection
 //! for it to count, which is what the release stands for here.
 
 use std::net::{Ipv4Addr, SocketAddr};

@@ -27,12 +27,19 @@ use ulo_rpc::{CallHeaders, Codec, Data, Frame};
 use ulo_rpc_tcp_core::{Accept, CUT_GRACE, Core, Incoming};
 use ulo_runtime_tokio::Tokio;
 
-/// The size of each answer or request frame a test queues.
-const FRAME_BYTES: usize = 64 * 1024;
+/// The size of each answer the server writes: near the 1 MiB `max_frame`, so [`CALLS`] of them
+/// are many times more than the sockets' buffers hold.
+const FRAME_BYTES: usize = 1_000_000;
 
-/// How many times over the peer's granted buffers the server answers: more than the two sockets'
-/// buffers hold.
-const OVER_BUFFERS: usize = 16;
+/// How many calls the test makes: fewer than the 64 frames a server's writer holds before its reader waits for room, so the
+/// server reads every request while its peer reads nothing; more would leave requests unread, as
+/// a peer that does not read its answers is meant to be stalled, after a number of answers the
+/// platform's buffers decide.
+const CALLS: u64 = 63;
+
+/// How many times over the peer's granted buffers the server's answers at least come to: more
+/// than the two sockets' buffers hold.
+const OVER_BUFFERS: usize = 4;
 
 /// How long a gated wait lasts before the test fails.
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -50,9 +57,12 @@ fn buffered(peer: &TcpStream) -> u64 {
     granted as u64
 }
 
-/// How many frames of [`FRAME_BYTES`] the server answers on `peer`'s connection.
+/// How many frames of [`FRAME_BYTES`] the server answers on `peer`'s connection, checked to
+/// overfill its buffers [`OVER_BUFFERS`] times.
 fn frames(peer: &TcpStream) -> u64 {
-    (OVER_BUFFERS as u64 * buffered(peer)).div_ceil(FRAME_BYTES as u64)
+    let unread = CALLS * FRAME_BYTES as u64;
+    assert!(unread > OVER_BUFFERS as u64 * buffered(peer), "{unread} bytes of answers do not overfill buffers of {} bytes", buffered(peer));
+    CALLS
 }
 
 async fn gate(what: &str, mut ready: impl FnMut() -> bool) {

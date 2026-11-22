@@ -155,9 +155,10 @@ fn reason_of(message: &[u8]) -> String {
 }
 
 /// A malformed message's reason repeats what the peer wrote at a bounded length, since the
-/// adapter logs it on every message: a node id at its first 64 bytes and a parser's reason, which
-/// quotes a field the peer named, at its first 256, each cut at a character boundary and marked
-/// (F573). Planted break: the node repeated whole.
+/// adapter logs it on every message: a node id at its first 64 bytes, and a parser's reason, which
+/// quotes a field the peer named and ends with the position, at its first 192 and its last 64
+/// (Q34-29), each cut at a character boundary and marked (F573). Planted breaks: the node repeated
+/// whole; the parser's reason cut at its head alone.
 #[test]
 fn a_reason_repeats_a_long_peer_string_cut_and_marked() {
     // "é" is two bytes, so byte 64 falls inside one and the cut moves back to byte 63.
@@ -170,6 +171,8 @@ fn a_reason_repeats_a_long_peer_string_cut_and_marked() {
     let field = "f".repeat(100_000);
     let message = format!("\x01{{\"gateway\":null,\"audience\":{{\"kind\":\"all\"}},\"except\":[],\"{field}\":1}}\n");
     let reason = reason_of(message.as_bytes());
-    assert!(reason.contains("ffff") && reason.ends_with('…'), "the reason does not repeat the field cut: {reason:.300}");
-    assert!(reason.len() <= 256 + '…'.len_utf8(), "the reason carries {} bytes", reason.len());
+    assert!(reason.contains("ffff…"), "the reason does not repeat the field cut: {reason:.300}");
+    let (_, column) = reason.rsplit_once("`except` at line 1 column ").unwrap_or_else(|| panic!("the reason does not keep the parser's tail: {reason:.300}"));
+    assert!(column.parse::<u64>().is_ok_and(|column| column > 100_000), "the reason does not keep the parser's position: {reason:.300}");
+    assert!(reason.len() <= 192 + '…'.len_utf8() + 64, "the reason carries {} bytes", reason.len());
 }
