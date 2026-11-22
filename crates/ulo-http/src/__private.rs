@@ -38,6 +38,17 @@ pub fn internal_error() -> crate::Response {
     render::problem(&CallError::new(ulo_transport::ErrorKind::Internal, "internal error"), &HttpConfig::default())
 }
 
+/// The 400 problem document a backend reading requests off the wire answers an HTTP/1.1 request
+/// carrying no `Host` field with (RFC 9112 §3.2), with `Connection: close`, `Routing::Unrouted`
+/// and the request's version, so the connection closes whatever the client asked of it.
+pub fn missing_host(version: http::Version) -> crate::Response {
+    let mut refused = render::problem(&CallError::new(ulo_transport::ErrorKind::BadRequest, "an HTTP/1.1 request carries no `Host`"), &HttpConfig::default());
+    refused.headers_mut().insert(http::header::CONNECTION, HeaderValue::from_static("close"));
+    *refused.version_mut() = version;
+    refused.extensions_mut().insert(crate::Routing::Unrouted);
+    refused
+}
+
 /// What the server answering a WebSocket handshake adds to its refusals, as it adds them to its
 /// own errors and refusals. Each header is built when a refusal asks for it, so a handshake that
 /// is not refused builds none and logs nothing for a challenge that is not a valid header value.

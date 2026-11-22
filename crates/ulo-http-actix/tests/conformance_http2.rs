@@ -9,4 +9,6 @@
 
 mod common;
 
-ulo_http_conformance::http_conformance_suite!(common::ActixHost<true>);
+ulo_http_conformance::http_conformance_suite!(common::ActixHost<true>; not_applicable {
+    missing_host_refused: "the host owns its wire policy, a request without `Host` among it",
+});

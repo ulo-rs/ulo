@@ -93,6 +93,6 @@ pub use transport::{CallHeaders, LinkInfo, NoHandler, Reply, Rpc, RpcCx};
 pub use ulo_rpc_macros::{event, message};
 pub use bytes::Bytes;
 pub use ulo_transport::{
-    CallError, Classify, Detail, Details, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid,
+    CallError, Classify, Detail, Details, ErrorBounds, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid,
     Validate,
 };

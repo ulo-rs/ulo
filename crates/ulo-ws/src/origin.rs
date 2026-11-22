@@ -21,9 +21,10 @@ use crate::connection::Refusal;
 ///   the scheme, the host ignoring ASCII case and the port with the scheme's default filled in.
 ///   A same-origin page is admitted only when listed. `prepare` refuses an entry that is not such
 ///   an origin, `null` included; an empty list, which would admit only a handshake that sends no
-///   `Origin`; and an entry whose host is not ASCII, naming its punycode form, since a browser
-///   sends `Origin` in ASCII and such an entry could match no handshake: `https://bücher.example`
-///   is written `https://xn--bcher-kva.example`. A trailing `.` is part of a listed host as of a
+///   `Origin`; and an entry whose host is not ASCII, since a browser sends `Origin` in ASCII and
+///   such an entry could match no handshake. The refusal names the punycode of each such label as
+///   written, `xn--bcher-kva` for `bücher` in `https://bücher.example`, which is what a browser
+///   sends unless the host holds compatibility characters IDNA would map first. A trailing `.` is part of a listed host as of a
 ///   sent one, so `https://app.example.` admits only a page loaded from the dotted name.
 /// - [`Any`](Origins::Any): every page.
 ///
@@ -118,7 +119,14 @@ impl OriginCheck {
                         };
                         if !parsed.host.is_ascii() {
                             let ascii = match parsed.punycode() {
-                                Some(ascii) => format!("write it `{ascii}`, as a browser sends it"),
+                                Some(labels) if labels.len() == 1 => format!(
+                                    "the punycode of the label as written is `{}`; a host using compatibility characters needs IDNA conversion first",
+                                    labels[0]
+                                ),
+                                Some(labels) => format!(
+                                    "the punycode of the labels as written is {}; a host using compatibility characters needs IDNA conversion first",
+                                    labels.iter().map(|label| format!("`{label}`")).collect::<Vec<_>>().join(", ")
+                                ),
                                 None => "write its host in punycode, as a browser sends it".to_owned(),
                             };
                             refusals.push(format!(
@@ -202,23 +210,12 @@ impl WebOrigin {
 }
 
 impl WebOrigin {
-    /// The origin with each label of its host that is not ASCII written in punycode, `xn--` and
-    /// RFC 3492's encoding of the label lowercased, its port left out when it is the scheme's
-    /// default. The labels are not otherwise IDNA-mapped, so a label a browser would normalise
-    /// first, one in a decomposed form among them, may be written differently by the browser.
-    /// `None` for a label too long to encode.
-    fn punycode(&self) -> Option<String> {
-        let labels: Option<Vec<String>> = self
-            .host
-            .split('.')
-            .map(|label| if label.is_ascii() { Some(label.to_owned()) } else { encode_label(&label.to_lowercase()).map(|code| format!("xn--{code}")) })
-            .collect();
-        let scheme = match self.scheme {
-            Scheme::Http => "http",
-            Scheme::Https => "https",
-        };
-        let host = labels?.join(".");
-        Some(if self.port == self.scheme.default_port() { format!("{scheme}://{host}") } else { format!("{scheme}://{host}:{}", self.port) })
+    /// Each label of the host that is not ASCII in punycode, `xn--` and RFC 3492's encoding of the
+    /// label lowercased, in the host's order. No other IDNA mapping is applied, so a label holding
+    /// compatibility characters a browser would map first encodes differently from what the
+    /// browser sends. `None` for a label too long to encode.
+    fn punycode(&self) -> Option<Vec<String>> {
+        self.host.split('.').filter(|label| !label.is_ascii()).map(|label| encode_label(&label.to_lowercase()).map(|code| format!("xn--{code}"))).collect()
     }
 }
 
@@ -502,8 +499,8 @@ mod tests {
         assert!(refusals[0].contains("`origins([])`") && refusals[0].contains("`Origins::SameOrigin`") && refusals[0].contains("`Origins::Any`"), "{refusals:?}");
     }
 
-    /// An entry whose host is not ASCII is refused naming the punycode a browser sends, its port
-    /// kept where it is not the scheme's default; an ASCII entry, punycode already, is accepted.
+    /// An entry whose host is not ASCII is refused naming the punycode of each such label, one or
+    /// several; an ASCII entry, punycode already, is accepted.
     #[test]
     fn an_entry_whose_host_is_not_ascii_is_refused_naming_its_punycode_form() {
         let mut refusals = Vec::new();
@@ -512,9 +509,14 @@ mod tests {
             &mut refusals,
         );
         assert_eq!(refusals.len(), 3, "{refusals:?}");
-        assert!(refusals[0].contains("`https://bücher.example`") && refusals[0].contains("write it `https://xn--bcher-kva.example`"), "{refusals:?}");
-        assert!(refusals[1].contains("write it `http://xn--mnchen-3ya.example:8080`"), "{refusals:?}");
-        assert!(refusals[2].contains("write it `https://xn--r8jz45g.xn--zckzah`"), "{refusals:?}");
+        let hint = "; a host using compatibility characters needs IDNA conversion first";
+        assert!(
+            refusals[0].contains("`https://bücher.example`")
+                && refusals[0].ends_with(&format!("the punycode of the label as written is `xn--bcher-kva`{hint}")),
+            "{refusals:?}"
+        );
+        assert!(refusals[1].ends_with(&format!("the punycode of the label as written is `xn--mnchen-3ya`{hint}")), "{refusals:?}");
+        assert!(refusals[2].ends_with(&format!("the punycode of the labels as written is `xn--r8jz45g`, `xn--zckzah`{hint}")), "{refusals:?}");
         assert!(admits(&check, "api.example", "https://xn--bcher-kva.example"));
     }
 

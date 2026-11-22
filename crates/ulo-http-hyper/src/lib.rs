@@ -31,6 +31,12 @@
 //! `ulo_net::Tls`, inherited sockets, port 0, and per-request upgrades through hyper's upgrade
 //! future.
 //!
+//! The backend reads requests off the wire, and answers an HTTP/1.1 request with no `Host` field
+//! itself, an absolute-form target's included, with a 400 problem document and
+//! `Connection: close`, before the app sees it (RFC 9112 §3.2). An empty `Host` is a field and
+//! passes, HTTP/1.0 needs none, and HTTP/2 carries `:authority`. An embedding host keeps its own
+//! rule for such a request.
+//!
 //! `header_timeout` is hyper's HTTP/1.1 header-read timeout; an HTTP/2 connection has no
 //! head-read clock. `max_concurrent_streams` at `Count::Default` sends hyper's own value, which
 //! hyper places outside its stability guarantee.

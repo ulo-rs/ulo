@@ -53,7 +53,10 @@
 //! and logged at `error` naming the header: left out, a `Set-Cookie` or a
 //! `Content-Security-Policy` would weaken the response unseen. rocket also writes
 //! `content-length: 0` on every 204 and 304, which RFC 9110 §8.6 forbids on a 204; the app hands
-//! it both with an empty body and no length. rocket's hyper 0.14 drops a request's
+//! it both with an empty body and no length. rocket builds hyper's response with no version, so an
+//! HTTP/1.0 request asking `Connection: keep-alive` that the app refuses 400 with
+//! `Connection: close`, for two `Host` lines, keeps its connection, hyper writing `keep-alive` in
+//! place of the `close`, and the next request on it is answered. rocket's hyper 0.14 drops a request's
 //! `Content-Length` written after `Transfer-Encoding` and keeps the connection, which RFC 9112
 //! §6.3 has a server close, so the adapter answers every request carrying `Transfer-Encoding`
 //! with `Connection: close`.

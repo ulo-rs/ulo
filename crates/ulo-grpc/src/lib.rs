@@ -91,7 +91,7 @@ pub use ulo_http::{PeerCertificates, TlsInfo};
 pub use http;
 pub use ulo_grpc_macros::method;
 pub use ulo_transport::{
-    CallError, Classify, Detail, Details, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
+    CallError, Classify, Detail, Details, ErrorBounds, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
 };
 
 /// The code `ulo-build` generated for the protobuf package `$package`: its messages, its clients

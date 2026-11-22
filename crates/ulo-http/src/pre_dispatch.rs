@@ -827,7 +827,7 @@ impl StageCx {
             params: params.clone(),
             max_body: target.max_body,
         });
-        let cx = self.service.context(&self.exec, Arc::clone(&self.head), self.conn.clone(), route, None, None);
+        let cx = self.service.context(&self.exec, Arc::clone(&self.head), self.conn.clone(), route, None);
         let handler = self.route.as_ref().map(|(target, _)| &target.handler);
         let response = match ulo::recover(handler, &self.exec, &cx, err).await {
             Ok(response) => response,

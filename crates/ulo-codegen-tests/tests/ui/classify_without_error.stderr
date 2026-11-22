@@ -10,7 +10,7 @@ help: the trait `std::error::Error` is not implemented for `NoteNotFound`
 7 | pub struct NoteNotFound;
   | ^^^^^^^^^^^^^^^^^^^^^^^
   = note: derive `Display` and `Error` with thiserror: `#[derive(Debug, thiserror::Error, Classify)]`, with an `#[error("..")]` on the type or on each variant
-  = note: required for `NoteNotFound` to implement `ulo_transport::__private::classify::ErrorBounds`
+  = note: required for `NoteNotFound` to implement `ErrorBounds`
 note: required by a bound in `ulo_transport::__private::classify::bounds`
  --> $WORKSPACE/crates/ulo-transport/src/__private.rs
   |

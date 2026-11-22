@@ -190,5 +190,8 @@ async fn an_empty_list_and_a_host_that_is_not_ascii_fail_listen() {
     let empty = refused_with(Origins::List(Vec::new())).await;
     assert!(empty.contains("`origins([])` lists no origin") && empty.contains("`Origins::Any`"), "{empty}");
     let unicode = refused_with(Origins::from(["https://bücher.example"])).await;
-    assert!(unicode.contains("write it `https://xn--bcher-kva.example`"), "{unicode}");
+    assert!(
+        unicode.contains("the punycode of the label as written is `xn--bcher-kva`; a host using compatibility characters needs IDNA conversion first"),
+        "{unicode}"
+    );
 }

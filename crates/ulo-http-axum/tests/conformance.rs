@@ -119,5 +119,6 @@ impl Host for AxumHost {
 }
 
 ulo_http_conformance::http_conformance_suite!(AxumHost; not_applicable {
+    missing_host_refused: "the host owns its wire policy, a request without `Host` among it",
     double_slash_is_no_route: "axum's `nest_service` hands the app `/api//hit` as `/hit`, so in the nested mode the app routes the path every entry of it reads; the fallback mode answers 404",
 });

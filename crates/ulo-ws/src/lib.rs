@@ -90,6 +90,6 @@ pub use transport::{ConnectCx, ConnectReply, ConnectionInfo, NoHandler, Reply, U
 pub use bytes::Bytes;
 pub use http;
 pub use ulo_transport::{
-    CallError, Classify, Detail, Details, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
+    CallError, Classify, Detail, Details, ErrorBounds, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
 };
 pub use ulo_ws_macros::{gateway, message};

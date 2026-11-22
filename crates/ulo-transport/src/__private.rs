@@ -184,19 +184,11 @@ fn reply<T: Transport, V: IntoReply<T>>(value: V, cx: &T::Cx) -> Result<T::Reply
 
 /// What `#[derive(Classify)]` generates names.
 pub mod classify {
-    /// `Classify`'s supertraits under a trait carrying a note, which the generated impl's where
-    /// clause names higher-ranked and [`bounds`] names plain, so a type without them gets one
-    /// error, at `bounds`, with the note below.
-    #[diagnostic::on_unimplemented(
-        message = "`#[derive(Classify)]` needs `{Self}` to implement `std::error::Error` and be `Send + Sync + 'static`",
-        label = "not an `Error + Send + Sync + 'static` type",
-        note = "derive `Display` and `Error` with thiserror: `#[derive(Debug, thiserror::Error, Classify)]`, with an `#[error(\"..\")]` on the type or on each variant"
-    )]
-    pub trait ErrorBounds: std::error::Error + Send + Sync + 'static {}
+    use crate::ErrorBounds;
 
-    impl<T: std::error::Error + Send + Sync + 'static> ErrorBounds for T {}
-
-    /// Compiles where `T` is an [`ErrorBounds`] type.
+    /// Compiles where `T` is an [`ErrorBounds`] type. The generated impl's where clause names the
+    /// bound higher-ranked and this names it plain, so a type without it gets one error, here,
+    /// with `ErrorBounds`'s message and note.
     pub fn bounds<T: ?Sized + ErrorBounds>() {}
 }
 
