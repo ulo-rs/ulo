@@ -24,7 +24,8 @@ pub(crate) enum Slot {
 ///
 /// An execution's cache keeps a failed build's error as it keeps an instance (§3.8): every reader
 /// of the slot in that execution, concurrent or later, receives that error, and the build does
-/// not run again until another execution reads the slot. The app's cache, which holds the
+/// not run again until another execution reads the slot, even when the state the build failed
+/// on, an `Ext` a middleware inserts later, is written in the meantime. The app's cache, which holds the
 /// enhancer closures built once, keeps no failure: a later call builds again, since a failure
 /// kept there would last as long as the app.
 ///

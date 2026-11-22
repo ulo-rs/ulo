@@ -67,7 +67,26 @@ pub fn status_for(kind: ErrorKind) -> StatusCode {
 /// let error = CallError::new(ErrorKind::Conflict, "the version changed").with_http_status(StatusCode::PRECONDITION_FAILED);
 /// assert_eq!(error.kind(), ErrorKind::Conflict);
 /// ```
-pub trait WithHttpStatus {
+///
+/// Sealed: [`CallError`] is the one implementor, the store the renderer reads, so the trait can
+/// gain a method without breaking a type outside this crate.
+///
+/// ```compile_fail,E0277
+/// use ulo_http::{StatusCode, WithHttpStatus};
+///
+/// struct Mine;
+///
+/// impl WithHttpStatus for Mine {
+///     fn with_http_status(self, _status: StatusCode) -> Self {
+///         self
+///     }
+///
+///     fn http_status(&self) -> Option<StatusCode> {
+///         None
+///     }
+/// }
+/// ```
+pub trait WithHttpStatus: sealed::Sealed {
     fn with_http_status(self, status: StatusCode) -> Self;
 
     /// The status [`with_http_status`](Self::with_http_status) set, as it was set, so an error
@@ -75,6 +94,12 @@ pub trait WithHttpStatus {
     /// ([`status_for`]) applies. A status outside 400 to 599 is answered here too, though the
     /// renderer ignores it and sends the kind's.
     fn http_status(&self) -> Option<StatusCode>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for ulo_transport::CallError {}
 }
 
 impl WithHttpStatus for CallError {

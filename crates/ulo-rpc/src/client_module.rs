@@ -1,7 +1,7 @@
 //! `RpcClientModule`: binds an `RpcClient` over one link (transports DESIGN §5.4).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use ulo::{Bound, BoxError, Dep, Module, ModuleDef, ModuleIdentity, Runtime};
@@ -29,9 +29,11 @@ use crate::link::Link;
 /// naming `.with_handle(..)`, as a server's link fails `listen()`.
 /// The client spawns its tasks on the app's runtime, which also times its calls, reading it as
 /// `Dep<dyn Runtime>`: an app without one, `.timer(..)` alone included, fails `wire()` naming the
-/// missing binding and `.runtime(..)`. The binding's `on_destroy` hook calls the link's `close`,
-/// so the client's connection ends with the app rather than when the runtime drops it; a call
-/// made after that connects again.
+/// missing binding and `.runtime(..)`. The binding's `on_destroy` hook closes the client as
+/// [`RpcClient::close`] does, so the client's connection ends with the app rather than when the
+/// runtime drops it, and a closed client stays closed: a call made after the hook fails
+/// `Unavailable` with "client closed" and opens no connection, so a client that outlives its app
+/// opens none to the broker.
 ///
 /// Each `for_root` is its own module: two clients of one link type are two imports, never one
 /// deduplicated, and diagnostics name either `RpcClientModule`.
@@ -133,14 +135,17 @@ impl<L: Link> Module for RpcClientModule<L> {
         } else {
             let link = Arc::clone(&self.link);
             let closing = Arc::clone(&self.link);
+            let closed = Arc::new(AtomicBool::new(false));
+            let closes = Arc::clone(&closed);
             let (timeout, idle, queued, queued_bytes) = (self.timeout, self.idle, self.queued, self.queued_bytes);
             let checked = Arc::clone(&self.link);
             m.singleton(move |runtime: Dep<dyn Runtime>| {
-                let link = Arc::clone(&link);
-                async move { RpcClient::of_module(link, timeout, idle, runtime.into_arc()).with_queued(queued, queued_bytes) }
+                let (link, closed) = (Arc::clone(&link), Arc::clone(&closed));
+                async move { RpcClient::of_module_closed(link, timeout, idle, runtime.into_arc(), closed).with_queued(queued, queued_bytes) }
             })
             .on_destroy(move || {
                 let link = Arc::clone(&closing);
+                closes.store(true, Ordering::Release);
                 async move {
                     if let Err(error) = link.close().await {
                         tracing::warn!(%error, link = L::NAME, "the RPC client's link did not close cleanly");

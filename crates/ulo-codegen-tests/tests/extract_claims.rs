@@ -162,11 +162,11 @@ async fn an_error_handler_claims_an_extraction_failure_on_rpc_websocket_and_grpc
     let client = RpcClient::new(Tcp::new(rpc), Arc::new(ulo_runtime_tokio::Tokio::current())).expect("a client on the RPC address");
     let call = |data: Value| client.request::<Value, String>("claims.double", &data).timeout(Duration::from_secs(5)).into_future();
     assert_eq!(within("the RPC call", call(json!(4))).await.expect("the call is answered"), "8");
-    assert_eq!(within("the RPC call", call(json!("four"))).await.expect("the failure is claimed"), "Malformed|payload");
+    assert_eq!(within("the RPC call", call(json!("four"))).await.expect("the failure is claimed"), "Mismatched|payload");
 
     let ws = address(&addresses, Ws::KEY);
     assert_eq!(within("the WebSocket call", ws_double(ws, json!(4))).await, json!({ "id": 1, "data": "8" }));
-    assert_eq!(within("the WebSocket call", ws_double(ws, json!("four"))).await, json!({ "id": 1, "data": "Malformed|data" }));
+    assert_eq!(within("the WebSocket call", ws_double(ws, json!("four"))).await, json!({ "id": 1, "data": "Mismatched|data" }));
 
     let grpc = address(&addresses, Grpc::KEY);
     let channel = tonic::transport::Endpoint::from_shared(format!("http://{grpc}")).expect("an endpoint").connect().await.expect("the gRPC channel");

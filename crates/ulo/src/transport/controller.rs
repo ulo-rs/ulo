@@ -350,7 +350,7 @@ impl HandlerRecord {
             transport: decl.key,
             controller: controller_key,
             name: decl.name,
-            method: decl.method.clone(),
+            request_method: decl.method.clone(),
             route: decl.route.clone(),
             prefix,
             shape: decl.shape,

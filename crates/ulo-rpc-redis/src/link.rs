@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use redis::aio::{ConnectionManager, PubSubSink, PubSubStream};
+use redis::aio::{ConnectionManager, ConnectionManagerConfig, PubSubSink, PubSubStream};
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
@@ -37,6 +37,19 @@ const WRITE_QUEUE: usize = 64;
 /// How long a server's `listen` and a client's connect wait for Redis, unless
 /// [`Redis::connect_within`] says otherwise.
 const CONNECT_WITHIN: Duration = Duration::from_secs(30);
+
+/// How far past `connect_within` the redis client's own bound on a connection attempt is set: the
+/// link's bound starts before the attempt does, so set equal they would end in the same instant
+/// and either error could be the one reported.
+const LIBRARY_PAST: Duration = Duration::from_secs(1);
+
+/// The publisher's connection manager under the link's bound: one attempt, bounded `within` and a
+/// second, so a connect `connect_within` cuts fails `ConnectTimedOut`, and a refused connection
+/// fails at once, as on NATS and RabbitMQ. A reconnect after a lost connection is bounded the same
+/// way.
+fn manager_config(within: Duration) -> ConnectionManagerConfig {
+    ConnectionManagerConfig::new().set_connection_timeout(Some(within.saturating_add(LIBRARY_PAST))).set_number_of_retries(0)
+}
 
 /// The Redis link.
 ///
@@ -174,9 +187,10 @@ impl Redis {
     /// How long the link waits for Redis to take its connections, 30 seconds by default: a
     /// server's `listen`, its publisher connection and its Pub/Sub connection with every channel
     /// subscribed, and a client's connect, its publisher connection and its reply channel's
-    /// subscription. The redis client bounds each connection on its own and retries it, about 16
-    /// seconds in all against a server that accepts the connection and never answers, so the
-    /// bound in effect is whichever ends first, this one or the client's. A wait that runs out
+    /// subscription. The link sets the redis client's own bound on its publisher connection one
+    /// second past this one, with no retry, so against a server that accepts the connection and
+    /// never answers this bound is the one that ends the wait, and a refused connection fails at
+    /// once; a reconnect after a lost connection is bounded the same way. A wait that runs out
     /// fails with [`ConnectTimedOut`], which a server's `listen` returns as `Bind` and `RpcClient`
     /// answers `Unavailable` with `reason: "connect_timed_out"`; the connections are dropped with
     /// the wait, so nothing of them remains. A server's wait is timed on the app's `Timer`, which
@@ -257,9 +271,9 @@ impl Link for Redis {
         let timed_out = self.timed_out(&client);
         let patterns: Vec<String> = subscriptions.iter().map(|subscription| subscription.pattern.as_str().to_owned()).collect();
         let connecting = {
-            let (client, channels) = (client.clone(), server_channels(&patterns, true));
+            let (client, channels, config) = (client.clone(), server_channels(&patterns, true), manager_config(self.connect_within));
             runtime.run(async move {
-                let publisher = ConnectionManager::new(client.clone()).await?;
+                let publisher = ConnectionManager::new_with_config(client.clone(), config).await?;
                 // Subscribed before `listen` returns, so a failure leaves nothing subscribed
                 // and the first call after `bind` finds the server listening.
                 let (sink, stream) = subscribe(&client, &channels).await?;
@@ -303,9 +317,9 @@ impl Link for Redis {
         let timed_out = self.timed_out(&client);
         let channel = format!("ulo:rpc:reply:{}", uuid::Uuid::new_v4().simple());
         let connecting = {
-            let channel = channel.clone();
+            let (channel, config) = (channel.clone(), manager_config(self.connect_within));
             runtime.run(async move {
-                let publisher = ConnectionManager::new(client.clone()).await?;
+                let publisher = ConnectionManager::new_with_config(client.clone(), config).await?;
                 let (sink, stream) = subscribe(&client, std::slice::from_ref(&channel)).await?;
                 Ok::<_, BoxError>((publisher, sink, stream))
             })
@@ -826,7 +840,7 @@ mod tests {
     /// The server's shed log names the link by it as answered.
     #[test]
     fn the_endpoint_is_the_url_without_its_credentials() {
-        for (url, expected) in [("redis://:pw@cache:6379/2?protocol=resp3", "redis://cache:6379/2"), ("rediss://u:p,w@cache:6380", "rediss://cache:6380")] {
+        for (url, expected) in [("redis://:pw@cache:6379/2?protocol=resp3", "redis://cache:6379/2"), ("rediss://u:p,w@cache:6380", "rediss://cache:6380"), ("redis://token?x@cache", "redis://[unreadable]")] {
             assert_eq!(Link::endpoint(&Redis::url(url)).as_deref(), Some(expected), "{url}");
         }
     }

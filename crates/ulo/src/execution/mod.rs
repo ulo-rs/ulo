@@ -116,10 +116,13 @@ impl ExecOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CancelReason {
     /// The backend observed the peer close the connection or reset the stream: a dropped response
-    /// body, a closed connection, an h2 `RST_STREAM`. The server dropping an unread request body
-    /// is not one.
+    /// body, a closed connection, and on HTTP an h2 `RST_STREAM`. The server dropping an unread
+    /// request body is not one. gRPC never reports it: see `ClientCancelled`.
     Disconnected,
-    /// A WebSocket or RPC `cancel` frame, or a gRPC `RST_STREAM(CANCEL)`.
+    /// A WebSocket or RPC `cancel` frame, or a gRPC caller abandoning its call. On gRPC that is
+    /// every abandonment, a lost connection as well as an `RST_STREAM`: hyper drops the call's
+    /// future the same way for both and reports neither the reset's code nor the connection's
+    /// end to the service, so a gRPC execution reads this where HTTP would read `Disconnected`.
     ClientCancelled,
     /// A passed `grpc-timeout`, RPC `deadline-ms` header, configured route timeout, or a
     /// standalone execution's deadline. A transport renders `Timeout` for it.
@@ -177,6 +180,9 @@ pub(crate) struct ExecShared {
     /// Set by the transport immediately before the answer's final write: an execution still alive
     /// at the drain's end with it set is cancelled and not counted abandoned.
     pub(crate) committed: AtomicBool,
+    /// The construction chain of the `ModuleRef` the execution was opened through; every resolver
+    /// the execution hands out starts from it (`Resolver::building`).
+    pub(crate) opened_by: Option<Arc<Building>>,
 }
 
 /// The reply stream's end: the outcome once reported, and the callbacks waiting for it.
@@ -188,9 +194,10 @@ pub(crate) struct StreamEnd {
 
 impl Execution {
     /// Opens an execution resolving with `module`'s visibility. Refused from Draining on with
-    /// `Closed`. For transports and standalone code alike.
+    /// `Closed`. For transports and standalone code alike. Carries the construction `module` was
+    /// read for, as [`ModuleRef::execute`] does.
     pub fn open(module: &ModuleRef, opts: ExecOptions) -> Result<Execution, Closed> {
-        module.app.open(module.module, opts, false)
+        module.app.open(module.module, opts, false, module.building.clone())
     }
 
     /// Opens a connection's cleanup during the drain: allowed in Draining, counted in the drain
@@ -199,7 +206,7 @@ impl Execution {
     /// ended gets `Closed`.
     pub fn open_terminal(token: &DrainToken, module: &ModuleRef, opts: ExecOptions) -> Result<Execution, Closed> {
         let _ = token;
-        module.app.open(module.module, opts, true)
+        module.app.open(module.module, opts, true, module.building.clone())
     }
 
     /// Seeds an execution input. Inputs are `Send + Sync`, like everything the execution holds.
@@ -424,7 +431,12 @@ impl ExecutionRef {
     /// The resolver a transport reads through. Once the execution has ended, every read through
     /// it answers `LookupError::ExecutionEnded`, as [`get`](Self::get) does.
     pub fn resolver(&self) -> Resolver<'_> {
-        self.shared.resolver().within(self.building.clone())
+        let resolver = self.shared.resolver();
+        // A handle read at construction carries a chain that starts from the execution's own.
+        match &self.building {
+            Some(_) => resolver.within(self.building.clone()),
+            None => resolver,
+        }
     }
 }
 
@@ -443,7 +455,7 @@ impl ExecShared {
     }
 
     pub(crate) fn resolver(self: &Arc<Self>) -> Resolver<'_> {
-        Resolver::new(&self.app, self.module(), Some(self), Purpose::Lookup)
+        Resolver::new(&self.app, self.module(), Some(self), Purpose::Lookup).within(self.opened_by.clone())
     }
 
     pub(crate) fn trace(&self) -> Option<&TraceContext> {

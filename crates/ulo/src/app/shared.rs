@@ -184,7 +184,16 @@ impl AppShared {
     /// Opens an execution in `module`; refused with `Closed` by phase (§9.5): ordinary
     /// executions from Draining on, terminal ones from the drain's end on. A refused terminal
     /// execution counts in `Shutdown::terminal_skipped`.
-    pub(crate) fn open(self: &Arc<Self>, module: ModuleId, opts: ExecOptions, terminal: bool) -> Result<Execution, Closed> {
+    ///
+    /// `opened_by` is the construction chain of the `ModuleRef` the execution is opened through, so
+    /// a read in it that comes back to a binding that chain is still building is refused.
+    pub(crate) fn open(
+        self: &Arc<Self>,
+        module: ModuleId,
+        opts: ExecOptions,
+        terminal: bool,
+        opened_by: Option<Arc<Building>>,
+    ) -> Result<Execution, Closed> {
         // A span in `opts` is read by `execute` alone; a transport traces through `span::call`.
         // Entered before the phase check, so a drain that begins after the check passes finds
         // the entry; a refusal drops it again. The phase check counts a refused terminal
@@ -211,6 +220,7 @@ impl AppShared {
             terminal,
             ended: AtomicBool::new(false),
             committed: AtomicBool::new(false),
+            opened_by,
         });
         self.live.attach(&live, &shared);
         Ok(Execution { shared, _live: live })
@@ -222,12 +232,18 @@ impl AppShared {
     ///
     /// With a span in `opts` (I16), the source is called with it before the closure first runs,
     /// the span not yet entered, and the closure runs inside it.
-    pub(crate) async fn execute<F, R>(self: &Arc<Self>, module: ModuleId, mut opts: ExecOptions, f: F) -> Result<R, Closed>
+    pub(crate) async fn execute<F, R>(
+        self: &Arc<Self>,
+        module: ModuleId,
+        mut opts: ExecOptions,
+        opened_by: Option<Arc<Building>>,
+        f: F,
+    ) -> Result<R, Closed>
     where
         F: AsyncFnOnce(&Execution) -> R,
     {
         let span = opts.span.take();
-        let exec = self.open(module, opts, false)?;
+        let exec = self.open(module, opts, false, opened_by)?;
         if let (Some(span), Some(source)) = (&span, self.trace_source.get()) {
             let own = source.start(span, exec.shared.trace());
             exec.set_trace(own);

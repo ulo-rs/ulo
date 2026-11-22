@@ -26,7 +26,8 @@ const CLOSE_BOUND: Duration = Duration::from_secs(30);
 /// and fails the call `Unavailable` within `PATIENCE`, the client module's destroy hook having
 /// closed the link. Where the environment counts the client's connections
 /// (`Broker::client_connections`), every one ends within `PATIENCE` and none opens again while the
-/// client makes no call. A call the same client makes afterwards connects again and is answered.
+/// client makes no call. A call the same client makes afterwards fails `Unavailable` with "client
+/// closed" and opens no connection: a closed client stays closed.
 ///
 /// The call is shown to be waiting at its handler, and still unanswered, before the close, so the
 /// scenario fails on a close that leaves it waiting, the caller's own timeout lying beyond every
@@ -76,25 +77,13 @@ pub async fn client_close<B: Broker>() {
         assert_eq!(reopened, Some(0), "the closed client opened a connection with no call made");
     }
 
-    // A call after the close connects again. A broker can take a while to route replies to a new
-    // connection, as a consumer group assigning its partitions, so the first calls may time out.
-    let deadline = Instant::now() + budget.boot;
-    loop {
-        let outcome = rpc.request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).timeout(Duration::from_millis(500)).await;
-        match outcome {
-            Ok(sum) => {
-                assert_eq!(sum, Sum { sum: 5 });
-                break;
-            }
-            outcome if Instant::now() >= deadline => {
-                panic!("a call after the client's close was not answered within the boot budget: {outcome:?}")
-            }
-            _ => sleep::<B>(Duration::from_millis(100)).await,
-        }
-    }
+    // A closed client stays closed: a call after the close is refused and opens no connection.
+    let after = rpc.request::<_, Sum>(ADD, &Add { a: 2, b: 3 }).timeout(PATIENCE).await;
+    let refused = failed(after, ErrorKind::Unavailable);
+    assert_eq!((refused.message(), refused.reason()), ("client closed", Some("client_closed")), "a call after the client's close");
     if held.is_some() {
         let open = broker.client_connections().await;
-        assert!(open.is_some_and(|open| open > 0), "the call after the close was answered with no connection open: {open:?}");
+        assert_eq!(open, Some(0), "a call after the client's close opened a connection");
     }
     server.stop().await;
 }

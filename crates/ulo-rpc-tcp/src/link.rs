@@ -7,10 +7,11 @@ use tokio::runtime::Handle;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-use ulo::{AppHandle, BoundAddr, BoxError, Permanent, Runtime, Timer};
+use ulo::{AppHandle, Bound, BoundAddr, BoxError, Permanent, Runtime, Timer};
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{BoundListener, EndpointSpec, Tls};
 use ulo_rpc::link::Inbound;
+use ulo_rpc::config::Count;
 use ulo_rpc::{Capabilities, Codec, Link, Outbound, Subscription};
 use ulo_rpc_tcp_core::{Accept, Core, Incoming, Reader, Writer};
 use ulo_runtime_tokio::{NoIoDriver, Tokio};
@@ -37,8 +38,9 @@ use ulo_runtime_tokio::{NoIoDriver, Tokio};
 /// once the frames queued before the close are written, and its reply lane ends, so the calls
 /// waiting on it fail `Unavailable`. The link reads and discards what the server still sends
 /// until the server closes its half or the connection fails, for at most two seconds after `close`
-/// ends on the clock of the runtime the client hands `connect`, the app's inside an app. A call
-/// made afterwards connects again.
+/// ends on the clock of the runtime the client hands `connect`, the app's inside an app. The link
+/// connects again for a later `connect`; an `RpcClient` closed with it makes none, a closed client
+/// staying closed.
 ///
 /// A server's link dropped without `close`, as it is when its app drops before the close step,
 /// stops accepting: its listener closes, the connections it accepted end as at `close`, and the
@@ -81,14 +83,55 @@ impl Tcp {
         self
     }
 
-    /// The largest frame, in bytes, read or written. Of a larger frame a server reads the length
-    /// prefix and the first 4 KiB alone: where those bytes name its call, `t` and `id` ahead of
-    /// the payload as `RpcClient` writes them, the call is answered `bad_request` with
-    /// `payload_too_large`, and the connection closes either way. 1 MiB unset, which bounds the
-    /// request frames a server holds at 1 GiB under its default `max_inflight`; a value above the
-    /// 4-byte prefix's range is bounded by it. Zero is refused in `prepare`.
+    /// The largest frame, in bytes, read or written. A larger frame a server reads to its declared
+    /// end and drops, scanning its first 4 KiB for the call it names: where those bytes name one,
+    /// `t` and `id` ahead of the payload as `RpcClient` writes them, the call is answered
+    /// `bad_request` with `payload_too_large`, and the connection reads the next frame either way.
+    /// 1 MiB unset, which bounds the request frames a server holds at 1 GiB under its default
+    /// `max_inflight`; a value above the 4-byte prefix's range is bounded by it. Zero is refused in
+    /// `prepare`, and so is a value below the size of that answer, 246 bytes in JSON and 198 in
+    /// CBOR at a three-digit limit, which a server could not write.
     pub fn max_frame(mut self, bytes: u64) -> Self {
         self.core.set_max_frame(bytes);
+        self
+    }
+
+    /// How long a server connection stays open idle: 60 s at `Bound::Default`
+    /// ([`DEFAULT_IDLE_TIMEOUT`](ulo_rpc_tcp_core::DEFAULT_IDLE_TIMEOUT)), with no limit at
+    /// `Bound::Unbounded`. A connection is idle while it holds no call in flight, a streamed request
+    /// or reply included, and no frame is read whole from it or written whole to it; the time runs
+    /// from the latest of those and of its last call's end. A frame still arriving counts once it
+    /// is whole, so on a connection holding no call the timeout also bounds how long one frame
+    /// takes to arrive, and it bounds a TLS handshake. A connection is idle too, whatever calls it
+    /// holds, once its writer, holding a frame, has written none of it for the timeout: its peer
+    /// has stopped reading, and its calls, a streamed reply waiting for room among them, are
+    /// cancelled `Disconnected`, so a peer cannot hold a connection and its calls' places by never
+    /// reading. A peer that takes some of a frame within each timeout keeps a call's connection
+    /// open however slowly it reads. At the expiry the server queues
+    /// `goaway`, shuts its half once what was queued is written, and reads and discards what the
+    /// peer still sends for two seconds on the app's `Timer`, as at `close`. `RpcClient` reads the
+    /// `goaway` and connects again for its next call; a request written before it read the
+    /// `goaway` is never read by the server and fails `unavailable` with nothing run for it.
+    /// Timed on the app's `Timer`; `Bound::After(Duration::ZERO)` is refused in `prepare`. A
+    /// client's connections have no idle timeout.
+    pub fn idle_timeout(mut self, timeout: Bound) -> Self {
+        self.core.set_idle_timeout(timeout);
+        self
+    }
+
+    /// The most connections a server holds open at once, with no limit at `Count::Default` and
+    /// `Count::Unlimited`. At the bound the server accepts no connection until one of its
+    /// connections stops being read; those that arrive meanwhile wait in the listener's backlog,
+    /// which the OS bounds and past which it refuses them. A connection counts from its accept,
+    /// its TLS handshake included, until it stops being read, so one lingering after `close` or
+    /// its idle expiry does not count. With no limit, the connections are bounded by the process's
+    /// descriptor limit and each holding no call by `idle_timeout`: one open connection holds the bytes of the
+    /// frame it is reading, at most `max_frame`, a 16 KiB buffer while it drops an over-limit
+    /// frame, and its writer's queue, which its reader keeps near 64 frames by waiting for room,
+    /// plus what is still on its way from the server. The calls across every connection are
+    /// bounded by the server's `max_inflight`. `Count::Max(0)` is refused in `prepare`.
+    pub fn max_connections(mut self, connections: Count) -> Self {
+        self.core.set_max_connections(connections);
         self
     }
 

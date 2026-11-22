@@ -29,8 +29,15 @@ use ulo_rpc_tcp_smol::Tcp;
 
 const ECHO: &str = "lingering_close.echo";
 
-/// The size of each answer queued before a close.
-const ANSWER_BYTES: usize = 64 * 1024;
+/// The size of each answer queued before a close: near the 1 MiB `max_frame`, so [`ANSWERS`] of
+/// them are many times more than the sockets' buffers hold.
+const ANSWER_BYTES: usize = 1_000_000;
+
+/// How many answers a test queues before a close: fewer than the 64 frames a server's writer holds before its reader waits for room, so the
+/// server reads every request while its peer reads nothing; more would leave requests unread, as
+/// a peer that does not read its answers is meant to be stalled, after a number of answers the
+/// platform's buffers decide.
+const ANSWERS: u64 = 63;
 
 /// How many times over the peer's granted buffers a test queues answers or has the peer write
 /// after a close: more than the two sockets' buffers hold, so answers queued before a close are
@@ -49,9 +56,11 @@ fn buffered(peer: &TcpStream) -> u64 {
     granted as u64
 }
 
-/// How many answers a test queues on `peer`'s connection.
+/// How many answers a test queues on `peer`'s connection, checked to overfill its buffers.
 fn answers(peer: &TcpStream) -> u64 {
-    (OVER_BUFFERS as u64 * buffered(peer)).div_ceil(ANSWER_BYTES as u64)
+    let unread = ANSWERS * ANSWER_BYTES as u64;
+    assert!(unread > 4 * buffered(peer), "{unread} bytes of answers do not overfill buffers of {} bytes", buffered(peer));
+    ANSWERS
 }
 
 struct Root;
@@ -439,8 +448,10 @@ async fn run_a_peer_that_half_closes_and_never_reads_loses_the_writer_at_the_gra
     drop(inbound);
 }
 
-/// A connection whose peer shut its half before the close no longer reads, and its writer, holding
-/// answers the peer never reads, drops at the grace of the `close` that follows.
+/// A connection whose peer shut its half before the close, its writer holding answers the peer
+/// never reads, drops the writer at the grace of the `close` that follows. The server stops
+/// reading a peer once the writer has no room (Q34-48), so the FIN can go unread until the
+/// `close`, which ends the call the connection holds.
 #[test]
 fn a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace() {
     watched(run_a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_grace);
@@ -450,21 +461,17 @@ async fn run_a_peer_that_half_closed_before_the_close_loses_the_writer_at_the_gr
     let clock = ScriptedTimer::new();
     let (_app, tcp, mut inbound, addr) = listening(&clock).await;
     let mut peer = TcpStream::connect(addr).expect("the link accepts a connection");
-    let answers = queue_answers(&mut peer, &mut inbound).await;
-    // A call left unanswered: the server cancels it once its connection's reader ends.
-    let held = answers + 1;
-    write_frame(&mut peer, &request(held)).expect("the request is written");
+    // A call left unanswered, read while the writer had room.
+    write_frame(&mut peer, &request(0)).expect("the request is written");
     let delivery = within("a request", inbound.next()).await.expect("a delivery");
-    let id = delivery.frame.id().expect("a request's id");
+    let answers = queue_answers(&mut peer, &mut inbound).await;
 
     peer.shutdown(Shutdown::Write).expect("the peer shuts its half");
-    let cancel = within("a cancel", inbound.next()).await.expect("a delivery");
-    assert!(matches!(cancel.frame, Frame::Cancel { id: cancelled } if cancelled == id), "the server received {:?}", cancel.frame);
-    drop(delivery);
 
     tcp.close().await.expect("the link closes");
     gate("the link asks the app's clock for its grace", || clock.live(CUT_GRACE) == 1).await;
     writer_dropped_at_the_grace(&clock, &peer, answers).await;
+    drop(delivery);
     drop(inbound);
 }
 

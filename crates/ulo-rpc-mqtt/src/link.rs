@@ -78,6 +78,13 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// [`Mqtt::connect_within`] says otherwise.
 const CONNECT_WITHIN: Duration = Duration::from_secs(30);
 
+/// rumqttc's own connection bound, in the whole seconds it takes, for a link whose
+/// `connect_within` is `within`: rounded up, plus one. The link's bound starts before rumqttc's,
+/// so set equal they would end in the same instant and either error could be the one reported.
+fn library_bound(within: Duration) -> u64 {
+    within.as_secs().saturating_add(u64::from(within.subsec_nanos() > 0)).saturating_add(1)
+}
+
 /// The MQTT v5 link.
 ///
 /// The link's connections and tasks live on the tokio runtime it holds, the one current where it
@@ -319,9 +326,10 @@ impl Mqtt {
     /// How long the link waits for the broker to answer its connection, 30 seconds by default: a
     /// server's `listen` from the connection to the broker's SUBACK of every subscription, and a
     /// client's connect to the SUBACK of its reply topic. rumqttc bounds the connection itself,
-    /// its TCP connect, a TLS handshake and the CONNACK, at five seconds, so against a broker that
-    /// accepts the connection and never answers that bound ends the wait first: the bound in
-    /// effect is whichever ends first, this one or rumqttc's. A wait that runs out fails with
+    /// its TCP connect, a TLS handshake and the CONNACK, in whole seconds, and the link sets that
+    /// bound to this one rounded up to a second, plus a second, so against a broker that accepts
+    /// the connection and never answers this bound is the one that ends the wait; each reconnect
+    /// after a lost connection is bounded by rumqttc's the same way. A wait that runs out fails with
     /// [`ConnectTimedOut`], which a server's `listen` returns as `Bind` and `RpcClient` answers
     /// `Unavailable` with `reason: "connect_timed_out"`; the handshake is abandoned with the wait,
     /// so its event loop ends and queues no SUBSCRIBE after it. A server's wait is timed on the
@@ -453,7 +461,7 @@ impl Link for Mqtt {
         // The event loop is spawned on the link's runtime, and one that has shut down drops it
         // unrun, which would read as the broker not answering.
         runtime.run(async {}).await.map_err(Permanent::new)?;
-        let (client, eventloop) = AsyncClient::new(target.options(client_id(), tls), SERVER_REQUESTS);
+        let (client, eventloop) = AsyncClient::new(target.options(client_id(), tls, self.connect_within), SERVER_REQUESTS);
         let filters: Vec<String> = subscriptions
             .iter()
             .map(|Subscription { pattern, instances, .. }| match instances {
@@ -518,7 +526,7 @@ impl Link for Mqtt {
         let id = client_id();
         let reply_topic = format!("ulo/rpc/reply/{id}");
         let timed_out = ConnectTimedOut::new(self.connect_within, target.address(), "MQTT");
-        let (client, eventloop) = AsyncClient::new(target.options(id.clone(), tls), 64);
+        let (client, eventloop) = AsyncClient::new(target.options(id.clone(), tls, self.connect_within), 64);
         let side = Arc::new(ClientSide {
             client,
             codec: self.codec,
@@ -815,9 +823,11 @@ impl Target {
         if self.host.contains(':') { format!("[{}]:{}", self.host, self.port) } else { format!("{}:{}", self.host, self.port) }
     }
 
-    fn options(&self, client_id: String, tls: Option<TlsConfiguration>) -> MqttOptions {
+    /// The client's options, its own connection bound past `within`, the link's `connect_within`.
+    fn options(&self, client_id: String, tls: Option<TlsConfiguration>, within: Duration) -> MqttOptions {
         let mut options = MqttOptions::new(client_id, self.host.clone(), self.port);
         options.set_keep_alive(Duration::from_secs(10));
+        options.set_connection_timeout(library_bound(within));
         options.set_max_packet_size(Some(MAX_INCOMING));
         options.set_receive_maximum(Some(RECEIVE_MAXIMUM));
         if let Some((user, password)) = &self.credentials {
@@ -1882,7 +1892,8 @@ async fn client_loop(
                 // acknowledgment will come for the packets in flight.
                 side.ended();
                 if let Some(ready) = ready.take() {
-                    let _ = ready.send(Err(format!("the MQTT link could not connect: {error}").into()));
+                    // `RpcClient` names the link and the failed connect around it.
+                    let _ = ready.send(Err(Box::new(error)));
                     return;
                 }
                 if *lock(&side.closed) {
@@ -2041,7 +2052,7 @@ mod tests {
     /// The server's shed log names the link by it as answered.
     #[test]
     fn the_endpoint_is_the_url_without_its_credentials() {
-        for (url, expected) in [("mqtt://user:pw@broker:1883?client_id=x", "mqtt://broker:1883"), ("mqtts://u:p,w@[::1]:8883", "mqtts://[::1]:8883")] {
+        for (url, expected) in [("mqtt://user:pw@broker:1883?client_id=x", "mqtt://broker:1883"), ("mqtts://u:p,w@[::1]:8883", "mqtts://[::1]:8883"), ("mqtt://u:12?34@broker:1883", "mqtt://[unreadable]")] {
             assert_eq!(Link::endpoint(&Mqtt::url(url)).as_deref(), Some(expected), "{url}");
         }
     }

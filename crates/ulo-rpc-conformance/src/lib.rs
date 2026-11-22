@@ -241,7 +241,7 @@ macro_rules! conformance_suite {
             unencodable_reply_is_internal => errors::unencodable_reply,
             guard_refusal_is_forbidden => errors::guard_refusal,
             panic_is_internal => errors::panic,
-            undecodable_payload_is_bad_request => errors::undecodable_payload,
+            undecodable_payload_is_refused => errors::undecodable_payload,
             headers_reach_call_headers => headers::reach_call_headers,
             event_reaches_its_handler => events::reaches_handler,
             a_refused_event_is_never_redelivered => events::refused_event_is_not_redelivered,

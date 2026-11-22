@@ -10,6 +10,7 @@ use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{FnArg, ImplItem, ImplItemFn, ItemImpl, Pat, ReturnType};
 
+use ulo_handler_codegen::cfg::presence_gates;
 use ulo_handler_codegen::restore::restore_item;
 
 use crate::construct::{ConstructArgs, Kind};
@@ -51,12 +52,13 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemImpl, origin
     let scope = args.scope.as_ref().map_or_else(|| quote!(#ulo::scope::Auto), |s| s.path());
     let bindings = dependencies::bindings(dependency_specs.len());
     let reads = dependencies::read(&dependency_specs, &bindings);
+    let passed = dependencies::gated(&dependency_specs, &bindings);
     let returned_span = match &ctor.sig.output {
         ReturnType::Type(_, ty) => ty.span(),
         ReturnType::Default => construct_span,
     };
     let returned = quote_spanned! {returned_span=>
-        #ulo::__private::IntoConstructed::<Self>::into_constructed(Self::#name(#(#bindings),*) #await_ctor)
+        #ulo::__private::IntoConstructed::<Self>::into_constructed(Self::#name(#(#passed),*) #await_ctor)
     };
     let construct = quote! {
         #reads
@@ -122,7 +124,7 @@ pub(crate) fn find_constructor(item: &mut ItemImpl) -> syn::Result<&ImplItemFn> 
     })
 }
 
-/// The constructor's parameters as dependencies. A receiver, or a pattern other than an
+/// The constructor's parameters as dependencies, each under its `#[cfg]`s. A receiver, or a pattern other than an
 /// identifier, is a span error on it.
 pub(crate) fn params(ctor: &ImplItemFn) -> syn::Result<Vec<DependencySpec>> {
     let mut specs = Vec::new();
@@ -139,6 +141,7 @@ pub(crate) fn params(ctor: &ImplItemFn) -> syn::Result<Vec<DependencySpec>> {
                     label: DependencyLabel::Param(pat.ident.clone()),
                     ty: (*typed.ty).clone(),
                     span: typed.ty.span(),
+                    gates: presence_gates(&typed.attrs),
                 }),
                 other => {
                     return Err(syn::Error::new_spanned(

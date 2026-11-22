@@ -1,10 +1,12 @@
 //! Dependencies as the macros see them: a field or parameter with its type, emitted twice: its
 //! declaration in `Construct::dependencies`, which carries the `quote_spanned!` assertion that
 //! points an error at the field or parameter itself, and its read in `Construct::construct`.
+//! A field or parameter behind a `#[cfg]` carries that `cfg` onto both, and onto the place the
+//! read value is passed, so with the `cfg` off it is neither declared, read nor passed.
 
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
-use syn::{Ident, Type};
+use syn::{Attribute, Ident, Type};
 
 use crate::shared::{dependencies_param, resolver_param, ulo};
 
@@ -13,6 +15,8 @@ pub(crate) struct DependencySpec {
     pub(crate) ty: Type,
     /// The span of the field's or parameter's type, where its assertion's error points.
     pub(crate) span: Span,
+    /// The field's or parameter's `#[cfg]`s, from `ulo_handler_codegen::cfg::presence_gates`.
+    pub(crate) gates: Vec<Attribute>,
 }
 
 pub(crate) enum DependencyLabel {
@@ -37,7 +41,9 @@ pub(crate) fn declare(dependencies: &[DependencySpec], scope: &TokenStream) -> T
             DependencyLabel::Index(index) => (Ident::new("__ulo_field", dependency.span), index.to_string()),
             DependencyLabel::Param(ident) => (Ident::new("__ulo_param", dependency.span), label_text(ident)),
         };
+        let gates = &dependency.gates;
         quote_spanned! {dependency.span=>
+            #(#gates)*
             {
                 #[allow(unused_imports)]
                 use #ulo::__private::{Declare as _, Declined as _};
@@ -55,11 +61,26 @@ pub(crate) fn read(dependencies: &[DependencySpec], bindings: &[Ident]) -> Token
     let r = resolver_param();
     let reads = dependencies.iter().zip(bindings).map(|(dependency, binding)| {
         let ty = &dependency.ty;
+        let gates = &dependency.gates;
         quote_spanned! {dependency.span=>
+            #(#gates)*
             let #binding = <#ty as #ulo::FromContainer>::from_container(#r).await?;
         }
     });
     quote!(#(#reads)*)
+}
+
+/// Each of `bindings` under its dependency's gates, for a call argument or a field initializer:
+/// both take a `#[cfg]` as a statement does.
+pub(crate) fn gated(dependencies: &[DependencySpec], bindings: &[Ident]) -> Vec<TokenStream> {
+    dependencies
+        .iter()
+        .zip(bindings)
+        .map(|(dependency, binding)| {
+            let gates = &dependency.gates;
+            quote!(#(#gates)* #binding)
+        })
+        .collect()
 }
 
 /// One binding per dependency, mixed-site so no name the user writes can collide with it.

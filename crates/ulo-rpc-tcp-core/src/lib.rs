@@ -10,7 +10,9 @@
 //! frame, bounded by `max_frame`; a server answering a frame over it `bad_request` with
 //! `payload_too_large` where the frame's leading bytes name its call, reading the frame's declared
 //! length and dropping it either way, and reading the next frame; a server mapping each
-//! connection's call ids to ids of its own;
+//! connection's call ids to ids of its own; a server reading a connection's next frame only while
+//! that connection's writer has room; a server connection idle for `idle_timeout`, 60 s unset, sent
+//! `goaway` and closed; the accept loop held at `max_connections`;
 //! the writer queue each connection's frames go out through in the order their sends were called;
 //! `goaway` at the drain, a connection registered after it included; the inbound stream ending
 //! once the draining server holds no call, the link answering later requests `unavailable`; and
@@ -26,4 +28,4 @@
 mod leading;
 mod link;
 
-pub use link::{ACCEPT_BACKOFF, Accept, CUT_GRACE, Core, DEFAULT_MAX_FRAME, Incoming, Reader, Writer};
+pub use link::{ACCEPT_BACKOFF, Accept, CUT_GRACE, Core, DEFAULT_IDLE_TIMEOUT, DEFAULT_MAX_FRAME, Incoming, Reader, Writer};

@@ -78,6 +78,24 @@ struct Nested {
     credentials: Credentials,
 }
 
+/// Declared under the `cfg` the gated fields carry, so no build of this file has it.
+#[cfg(any())]
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Absent;
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+#[module]
+struct Gated {
+    #[cfg(any())]
+    absent: Absent,
+    #[cfg(not(any()))]
+    pw: Secret<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+#[module]
+struct GatedLast(Secret<String>, #[cfg(any())] Absent);
+
 struct Failing;
 
 /// Imports `M` and fails its one singleton with a message carrying [`SECRET`].
@@ -150,6 +168,14 @@ async fn each_secret_value_of_a_hash_map_is_registered() {
 #[tokio::test]
 async fn a_tuple_module_s_secret_field_is_registered() {
     assert_redacted(Tupled(5432, secret())).await;
+}
+
+/// A field behind a `cfg` that is off is not probed, and its type exists in no build; the secret
+/// beside it, behind a `cfg` that is on, is registered. A tuple module's last field may be gated.
+#[tokio::test]
+async fn a_gated_field_is_probed_under_its_cfg() {
+    assert_redacted(Gated { pw: secret() }).await;
+    assert_redacted(GatedLast(secret())).await;
 }
 
 /// A `Secret` inside a struct the field holds is not reached; the docs send it to `m.secret` or to

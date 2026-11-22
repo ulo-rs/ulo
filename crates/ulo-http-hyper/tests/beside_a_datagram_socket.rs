@@ -1,6 +1,6 @@
 //! A datagram socket inherited through the socket-activation protocol beside a listener, through
 //! the server's `prepare` and `bind`: a server whose endpoint names the datagram socket fails
-//! startup naming its index, and one naming the listener serves. The inheriting process is the test
+//! startup naming it and its index, and one naming the listener serves. The inheriting process is the test
 //! binary run again as the ignored test `child_binds_an_inherited_endpoint`, a datagram socket at
 //! descriptor 3 and a listener at 4, `LISTEN_PID` set to its own process ID by the shell it is
 //! started through.
@@ -67,12 +67,12 @@ fn stop(mut child: Child) {
 
 #[test]
 #[cfg_attr(miri, ignore = "Miri refuses `socket` and `Command` under isolation")]
-fn a_server_naming_the_datagram_socket_fails_startup_naming_its_index() {
+fn a_server_naming_the_datagram_socket_fails_startup_naming_it_and_its_index() {
     let (mut child, _) = spawn_child("datagram");
     let report = report(&mut child);
     stop(child);
     assert!(report.starts_with("failed: "), "{report}");
-    assert!(report.contains("inherited descriptor #0 is not a listening TCP socket"), "{report}");
+    assert!(report.contains("endpoint `datagram`: inherited descriptor #0 is not a listening TCP socket"), "{report}");
 }
 
 #[test]

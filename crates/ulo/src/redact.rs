@@ -679,28 +679,77 @@ pub(crate) fn strip_userinfo(text: &str) -> String {
 /// or a leading `//` and ends at `/`, `?` or `#`, and its last `@` ends the userinfo. A value
 /// with neither is read from its authority, so `key@cache:6379` is `cache:6379`.
 ///
-/// An unencoded `/`, `?` or `#` inside the userinfo ends the authority there. A `/` leaves the
-/// `@` in the path, and a `?` or `#` after a `:` leaves a port that is not digits unless every
-/// character between them is a digit. A URL left with either reads as no authority and is
-/// reported as its scheme and `[unreadable]`, path and all, so two such URLs under one scheme
-/// compare equal; an `@` in any path is read the same way. Two shapes cut by a `?` or `#` still
-/// read as an authority, and what precedes the cut is reported: a userinfo without a `:`,
-/// `redis://token?x@cache` reported as `redis://token`, and a password whose characters before
-/// the cut are all digits, `redis://user:12?x@cache` reported as `redis://user:12`.
+/// An unencoded `/`, `?` or `#` inside the userinfo ends the authority there, and what precedes
+/// the cut could be read as a host: `redis://token?x@cache` as the host `token`, and
+/// `redis://user:12?x@cache` as the host `user` and the port `12`. The rule that keeps such a
+/// fragment out is one: when the text kept could precede an `@` of the original, an `@` anywhere
+/// after the start of the host, in the path, the query or the fragment, the URL is reported as its
+/// scheme and `[unreadable]`, path and all, so two such URLs under one scheme compare equal. A
+/// URL whose authority does not read as a host and a port of digits is reported the same way.
+/// `http://host?login=me@corp` is `[unreadable]` by that rule too: a reader that does not end the
+/// authority at `?` reads `host?login=me` as its userinfo.
 pub(crate) fn setting_url(url: &str) -> String {
+    report(url, false)
+}
+
+/// `list` as a module setting reports a comma-separated list of URLs, a client splitting it at its
+/// commas before reading each: each element as [`setting_url`] reports it, joined with `,`. A
+/// comma may sit inside a password or a query value, so the text after it may be the rest of the
+/// element before it: an element opening with a scheme or `//` starts a new URL, and until the next
+/// such element an element is `[unreadable]` when a later one holds an `@`, which its kept text
+/// could precede, or an earlier one holds a `?` or `#`, whose value it could continue.
+/// `nats://u:12,34@h:4222`, a password holding a comma, is `nats://[unreadable],h:4222`;
+/// `nats://h:4222?token=a,b` is `nats://h:4222,[unreadable]`; a list whose every URL opens with its
+/// scheme reads in full, `nats://u:p@a:4222,nats://u:p@b:4222` as `nats://a:4222,nats://b:4222`.
+pub(crate) fn setting_url_list(list: &str) -> String {
+    let elements: Vec<&str> = list.split(',').map(str::trim).collect();
+    let mut url = 0;
+    let urls: Vec<usize> = elements
+        .iter()
+        .enumerate()
+        .map(|(i, element)| {
+            if i > 0 && opens_url(element) {
+                url += 1;
+            }
+            url
+        })
+        .collect();
+    let reported: Vec<String> = elements
+        .iter()
+        .enumerate()
+        .map(|(i, element)| {
+            let same = |j: &usize| urls[*j] == urls[i];
+            let at_follows = (i + 1..elements.len()).filter(same).any(|j| elements[j].contains('@'));
+            let cut_precedes = (0..i).filter(same).any(|j| elements[j].contains(['?', '#']));
+            report(element, at_follows || cut_precedes)
+        })
+        .collect();
+    reported.join(",")
+}
+
+/// Whether `element` opens with a scheme and `://`, or with `//`.
+fn opens_url(element: &str) -> bool {
+    let element = element.trim_matches(|c: char| c <= ' ');
+    element.starts_with("//") || element.find("://").is_some_and(|at| is_scheme(&element[..at]))
+}
+
+/// [`setting_url`]'s reading of `url`, `[unreadable]` also when `unreadable`.
+fn report(url: &str, unreadable: bool) -> String {
     const UNREADABLE: &str = "[unreadable]";
     // As the WHATWG parser the clients use reads it: no leading or trailing control or space,
     // and no tab or newline anywhere.
-    let url: String = url.trim_matches(|c: char| c <= ' ').chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
-    let url = &url[..url.find(['?', '#']).unwrap_or(url.len())];
+    let whole: String = url.trim_matches(|c: char| c <= ' ').chars().filter(|c| !matches!(c, '\t' | '\n' | '\r')).collect();
+    let url = &whole[..whole.find(['?', '#']).unwrap_or(whole.len())];
     let (scheme, rest) = match url.find("://") {
         Some(at) if is_scheme(&url[..at]) => url.split_at(at + "://".len()),
         _ if url.starts_with("//") => url.split_at("//".len()),
         _ => ("", url),
     };
     let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
-    let host = authority.rfind('@').map_or(authority, |at| &authority[at + 1..]);
-    let readable = port_of(host).is_some() && !path.contains('@');
+    let host_at = authority.rfind('@').map_or(0, |at| at + 1);
+    let host = &authority[host_at..];
+    let kept_from = scheme.len() + host_at;
+    let readable = port_of(host).is_some() && !whole[kept_from..].contains('@') && !unreadable;
     if readable { format!("{scheme}{host}{path}") } else { format!("{scheme}{UNREADABLE}") }
 }
 
@@ -767,7 +816,7 @@ impl Error for PanicMessage {}
 
 #[cfg(test)]
 mod tests {
-    use super::setting_url;
+    use super::{setting_url, setting_url_list};
 
     #[test]
     fn a_setting_url_keeps_scheme_host_port_and_path() {
@@ -784,14 +833,15 @@ mod tests {
         assert_eq!(setting_url("https://collector:4318?a=b#frag"), "https://collector:4318");
     }
 
-    /// The query and fragment end the authority, so an `@` inside them is not the userinfo's. An
-    /// `@` in the path may close a password holding an unencoded `/`, so the authority is not
-    /// reported.
+    /// An `@` after the host, in the path, the query or the fragment, may close a userinfo holding
+    /// an unencoded `/`, `?` or `#`, which would make the host a fragment of it, so the authority
+    /// is not reported. Planted break: only the path searched for an `@`.
     #[test]
-    fn an_at_sign_past_the_authority_is_not_userinfo() {
+    fn an_at_sign_past_the_host_leaves_the_authority_unreadable() {
         assert_eq!(setting_url("https://collector:4318/team@example/v1"), "https://[unreadable]");
-        assert_eq!(setting_url("http://host?login=me@corp"), "http://host");
-        assert_eq!(setting_url("http://host#me@corp"), "http://host");
+        assert_eq!(setting_url("http://host?login=me@corp"), "http://[unreadable]");
+        assert_eq!(setting_url("http://host#me@corp"), "http://[unreadable]");
+        assert_eq!(setting_url("redis://u:p@host?x=a@b"), "redis://[unreadable]");
     }
 
     #[test]
@@ -841,14 +891,43 @@ mod tests {
         }
     }
 
-    /// The two shapes the doc names as reported: what precedes an unencoded `?` or `#` reads as a
-    /// host, or as a host and a port of digits.
+    /// What precedes an unencoded `?` or `#` in a userinfo reads as a host, or as a host and a port
+    /// of digits, and the `@` after it leaves it unreadable. Planted break: the query and fragment
+    /// not searched.
     #[test]
-    fn a_userinfo_cut_into_a_host_and_port_is_reported() {
-        assert_eq!(setting_url("redis://token?x@cache"), "redis://token");
-        assert_eq!(setting_url("redis://token#x@cache"), "redis://token");
-        assert_eq!(setting_url("redis://user:12?x@cache"), "redis://user:12");
+    fn a_userinfo_cut_into_a_host_and_port_is_unreadable() {
+        assert_eq!(setting_url("redis://token?x@cache"), "redis://[unreadable]");
+        assert_eq!(setting_url("redis://token#x@cache"), "redis://[unreadable]");
+        assert_eq!(setting_url("redis://user:12?x@cache"), "redis://[unreadable]");
+        assert_eq!(setting_url("amqp://u:12?34@h/v"), "amqp://[unreadable]");
         assert_eq!(setting_url("redis://token/x@cache"), "redis://[unreadable]");
+    }
+
+    /// The forms a deployment writes keep their host: userinfo before it, a query holding no `@`.
+    #[test]
+    fn a_url_with_userinfo_and_a_query_keeps_its_host() {
+        assert_eq!(setting_url("amqp://user:pass@host:5672/vhost"), "amqp://host:5672/vhost");
+        assert_eq!(setting_url("redis://:pw@[::1]:6379/0?password=pw"), "redis://[::1]:6379/0");
+        assert_eq!(setting_url("https://collector:4318/v1?api_key=k#frag"), "https://collector:4318/v1");
+    }
+
+    /// An element of a comma-separated list could continue the element before it, a comma inside a
+    /// password or a query value, until an element opens with a scheme. Planted breaks: each element
+    /// read alone; a scheme not opening a new URL.
+    #[test]
+    fn a_list_element_that_could_continue_a_password_or_a_query_is_unreadable() {
+        assert_eq!(setting_url_list("nats://u:12,34@h:4222"), "nats://[unreadable],h:4222");
+        assert_eq!(setting_url_list("u:12,34@h:9092"), "[unreadable],h:9092");
+        assert_eq!(setting_url_list("nats://u:p@a:4222, nats://u:p@b:4222"), "nats://a:4222,nats://b:4222");
+        assert_eq!(setting_url_list("a:9092,b:9092"), "a:9092,b:9092");
+        assert_eq!(setting_url_list("u:p@a:9092,b:9092"), "a:9092,b:9092");
+        // A password holding an unencoded `@` and a comma: `p@a:1,2`.
+        assert_eq!(setting_url_list("u:p@a:1,2@b:9092"), "[unreadable],b:9092");
+        assert_eq!(setting_url_list("nats://u:p@a:1,2@b:4222"), "nats://[unreadable],b:4222");
+        // A query value holding a comma.
+        assert_eq!(setting_url_list("nats://h:4222?token=a,b"), "nats://h:4222,[unreadable]");
+        assert_eq!(setting_url_list("nats://h:4222?x=1,nats://g:4222"), "nats://h:4222,nats://g:4222");
+        assert_eq!(setting_url_list("u:p@broker1:9092,ssl://u:p@broker2:9093,broker3:9094"), "broker1:9092,ssl://broker2:9093,broker3:9094");
     }
 
     /// A leading `//` opens an authority, and a `://` after anything but a scheme does not.
@@ -859,5 +938,115 @@ mod tests {
         assert_eq!(setting_url("key@cache/x://y"), "cache/x://y");
         assert_eq!(setting_url("redis:\0//user:pw@cache"), "[unreadable]");
         assert_eq!(setting_url(" re\tdis://user:pw@cache:6379/0\n"), "redis://cache:6379/0");
+    }
+
+    /// Generated URLs and lists whose user names and secrets are drawn from an alphabet no host,
+    /// port, path or key uses, uppercase letters and the digits 5 to 9, with `:`, `@`, `,`, `?`,
+    /// `#` and `/` among the secret's characters and inserted raw at random places. A report
+    /// holding a character of that alphabet printed part of a credential. The shape left is a
+    /// credential holding `<scheme>://` or `//` where a list's element starts: it opens a new URL,
+    /// the text before it read as a URL of its own, and its scheme is reported as written, so a
+    /// scheme is set aside before the check. 100,000
+    /// singles and 100,000 lists left 29 such reports, 6 of them through a `//`; this seed draws
+    /// none of those, and two of the shape close the test with their reports. Planted breaks: the
+    /// query and fragment not searched for an `@`; a list's elements read alone.
+    #[test]
+    fn no_generated_credential_reaches_the_report_outside_a_scheme() {
+        struct Rng(u64);
+        impl Rng {
+            fn below(&mut self, n: usize) -> usize {
+                self.0 ^= self.0 << 13;
+                self.0 ^= self.0 >> 7;
+                self.0 ^= self.0 << 17;
+                (self.0 % n as u64) as usize
+            }
+            fn chance(&mut self, pct: usize) -> bool {
+                self.below(100) < pct
+            }
+            fn pick<'a>(&mut self, items: &[&'a str]) -> &'a str {
+                items[self.below(items.len())]
+            }
+            fn text(&mut self, alphabet: &[u8], max: usize) -> String {
+                let n = 1 + self.below(max);
+                (0..n).map(|_| alphabet[self.below(alphabet.len())] as char).collect()
+            }
+        }
+        const SECRET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ56789:@,?#/;=!*.-_~$&+% []";
+        const RAW: &[u8] = b":@,?#/;=[]% ";
+        fn url(r: &mut Rng, scheme_pct: usize) -> String {
+            let mut s = String::new();
+            if r.chance(scheme_pct) {
+                s.push_str(r.pick(&["nats://", "redis://", "amqp://", "mqtt://", "http://", "tls://", "//"]));
+            }
+            let user = r.text(b"ABCDEFGHJKLMNPQRSTUVWXYZ", 5);
+            match r.below(5) {
+                0 => {}
+                1 => s.push_str(&format!("{user}@")),
+                2 => s.push_str(&format!("{user}:{}@", r.text(SECRET, 10))),
+                3 => s.push_str(&format!(":{}@", r.text(SECRET, 10))),
+                _ => s.push_str(&format!("{user}{}@", r.text(SECRET, 10))),
+            }
+            s.push_str(r.pick(&["h", "cache", "a", "b.c", "[::1]", "[2001:db4::4]", "10.0.0.1"]));
+            if r.chance(70) {
+                s.push_str(r.pick(&[":1", ":4222", ":1234", ":0", ":12"]));
+            }
+            if r.chance(30) {
+                s.push_str(r.pick(&["/", "/v", "/%2f", "/0"]));
+            }
+            if r.chance(25) {
+                s.push_str(&format!("?{}={}", r.pick(&["password", "q", "login"]), r.text(SECRET, 10)));
+            }
+            if r.chance(15) {
+                s.push_str(&format!("#{}", r.text(SECRET, 10)));
+            }
+            s
+        }
+        fn mutate(r: &mut Rng, s: &mut String) {
+            for _ in 0..r.below(3) {
+                let at: Vec<usize> = s.char_indices().map(|(i, _)| i).chain([s.len()]).collect();
+                let at = at[r.below(at.len())];
+                s.insert(at, RAW[r.below(RAW.len())] as char);
+            }
+        }
+        fn leaks(report: &str) -> bool {
+            report.split(',').any(|element| {
+                let rest = match element.find("://") {
+                    Some(at) if super::is_scheme(&element[..at]) => &element[at + 3..],
+                    _ => element,
+                };
+                rest.replace("[unreadable]", "").chars().any(|c| c.is_ascii_uppercase() || ('5'..='9').contains(&c))
+            })
+        }
+        assert!(leaks("nats://h:4222,U:12") && leaks("redis://h/x5") && !leaks("HX://[unreadable],h:4222"), "the leak check is broken");
+
+        let mut r = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut leaked = Vec::new();
+        for _ in 0..4000 {
+            let mut single = url(&mut r, 80);
+            if r.chance(50) {
+                mutate(&mut r, &mut single);
+            }
+            let reported = setting_url(&single);
+            if leaks(&reported) {
+                leaked.push((single, reported));
+            }
+            let scheme_pct = [0, 50, 100][r.below(3)];
+            let mut list = (0..1 + r.below(4)).map(|_| url(&mut r, scheme_pct)).collect::<Vec<_>>().join(if r.chance(20) { ", " } else { "," });
+            if r.chance(50) {
+                mutate(&mut r, &mut list);
+            }
+            let reported = setting_url_list(&list);
+            if leaks(&reported) {
+                leaked.push((list, reported));
+            }
+        }
+        assert!(leaked.is_empty(), "{} reports printed part of a credential, the first {:?}", leaked.len(), leaked.first());
+
+        // The shape the rule leaves, which the check above flags: the text before a `//` or a
+        // `<scheme>://` inside a password reads as a URL of its own.
+        for (list, reported) in [("U:56,//X@h:1", "U:56,//h:1"), ("nats://U:56,NATS://X@h:4222", "nats://U:56,NATS://h:4222")] {
+            assert_eq!(setting_url_list(list), reported);
+            assert!(leaks(reported), "the leak check misses the shape the rule leaves: {reported}");
+        }
     }
 }

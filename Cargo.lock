@@ -8879,6 +8879,7 @@ dependencies = [
 name = "ulo-codegen-tests"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "command-fds",
  "futures-util",
  "http 1.5.0",
  "http-body 1.1.0",

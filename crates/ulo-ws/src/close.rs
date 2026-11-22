@@ -17,12 +17,14 @@ use ulo_transport::{CallError, ErrorKind};
 /// is left to applications, a subprotocol's own codes among them, as graphql-transport-ws's 4401.
 ///
 /// A close the gateway derives from an error kind, a refusal by kind or a hand-written gateway's
-/// `on_message` panic, carries the kind in its reason, `not_found: no such room`, where more than
-/// one kind closes with its code: 1008, 1011 and 1013. Every other close carries its reason
-/// alone: a code set with [`ConnectRefused::code`](crate::ConnectRefused::code) or
-/// [`WithCloseCode`], the drain's 1001, a slow consumer's 1008,
-/// [`Connection::close`](crate::Connection::close), and the protocol's own 1002, 1003, 1007 and
-/// 1009. A client reads a kind from a reason only on a close by kind.
+/// `on_message` panic, carries the kind in its reason, `not_found: no such room`, whatever its
+/// code, 3000, 3003 and 3008 included: an application closes with those codes too, through
+/// [`ConnectRefused::code`](crate::ConnectRefused::code), so the code alone does not tell the
+/// framework's close from the application's. Every other close carries its reason alone: a code
+/// set with [`ConnectRefused::code`](crate::ConnectRefused::code) or [`WithCloseCode`], the
+/// drain's 1001, a slow consumer's 1008, [`Connection::close`](crate::Connection::close), and the
+/// protocol's own 1002, 1003, 1007 and 1009. A client reads a kind from a reason only on a close
+/// by kind.
 ///
 /// ```
 /// use ulo_ws::CloseCode;
@@ -99,15 +101,11 @@ impl CloseCode {
         }
     }
 
-    /// More than one kind closes with this code under [`of_kind`](Self::of_kind), so a refusal by
-    /// kind with it carries the kind in its reason.
-    pub(crate) fn is_shared(self) -> bool {
-        KINDS.iter().filter(|kind| CloseCode::of_kind(**kind) == self).count() > 1
-    }
 }
 
 /// Every kind [`CloseCode::of_kind`] names. A kind added later closes with 1011, which
 /// `Internal` and `Unimplemented` already share.
+#[cfg(test)]
 const KINDS: [ErrorKind; 11] = [
     ErrorKind::BadRequest,
     ErrorKind::Unauthorized,
@@ -196,17 +194,20 @@ pub(crate) fn check_reason(reason: &str) -> Result<(), CloseCodeError> {
 }
 
 /// A close by `kind`, a refusal's or one mid-connection: the code [`CloseCode::of_kind`] gives,
-/// and as the reason `message`, after the kind and `: ` when more than one kind closes with that
-/// code and `message` does not already start with them. The message is cut to fit 123 bytes, the
-/// kind kept whole.
+/// and as the reason the kind, then `: ` and `message`. A `message` that already starts with the
+/// kind and `: `, or is the kind alone, is the reason as it stands, and an empty one leaves the
+/// kind alone. The message is cut to fit 123 bytes, the kind kept whole.
 pub(crate) fn by_kind(kind: ErrorKind, message: &str) -> (CloseCode, String) {
     let code = CloseCode::of_kind(kind);
-    let prefix = format!("{kind}: ");
-    let reason = if code.is_shared() && !message.starts_with(&prefix) {
-        let message = truncated_to(message.to_owned(), REASON_LIMIT - prefix.len());
-        prefix + &message
-    } else {
+    let name = kind.to_string();
+    let prefix = format!("{name}: ");
+    let reason = if message.is_empty() {
+        name
+    } else if message == name || message.starts_with(&prefix) {
         truncated(message.to_owned())
+    } else {
+        let room = REASON_LIMIT - prefix.len();
+        prefix + &truncated_to(message.to_owned(), room)
     };
     (code, reason)
 }
@@ -271,10 +272,11 @@ mod tests {
         assert_eq!(ascii.reason(), format!("internal: {}", "x".repeat(REASON_LIMIT - "internal: ".len())));
     }
 
-    /// Every code more than one kind closes with carries the kind; a code one kind owns carries
-    /// the message alone.
+    /// Every close by kind carries the kind, on a code it shares and on one it owns alike
+    /// (Q34-41/49). Planted break: the prefix on shared codes alone, which leaves 3000, 3003 and
+    /// 3008 reading as an application's close.
     #[test]
-    fn a_shared_code_carries_the_kind_and_an_owned_one_does_not() {
+    fn every_close_by_kind_carries_the_kind() {
         let cases = [
             (ErrorKind::BadRequest, 1008, "bad_request: why"),
             (ErrorKind::NotFound, 1008, "not_found: why"),
@@ -284,10 +286,11 @@ mod tests {
             (ErrorKind::Unavailable, 1013, "unavailable: why"),
             (ErrorKind::Internal, 1011, "internal: why"),
             (ErrorKind::Unimplemented, 1011, "unimplemented: why"),
-            (ErrorKind::Unauthorized, 3000, "why"),
-            (ErrorKind::Forbidden, 3003, "why"),
-            (ErrorKind::Timeout, 3008, "why"),
+            (ErrorKind::Unauthorized, 3000, "unauthorized: why"),
+            (ErrorKind::Forbidden, 3003, "forbidden: why"),
+            (ErrorKind::Timeout, 3008, "timeout: why"),
         ];
+        assert_eq!(cases.len(), KINDS.len(), "a case per kind");
         for (kind, code, reason) in cases {
             let refused = crate::ConnectRefused::kind(kind, "why");
             assert_eq!((refused.close_code().get(), refused.reason()), (code, reason), "{kind:?}");
@@ -295,10 +298,15 @@ mod tests {
     }
 
     /// A message already starting with its own kind's prefix carries it once, cut to 123 bytes
-    /// with the prefix whole; another kind's prefix is the message's text and gains the kind's.
+    /// with the prefix whole, and a message that is the kind alone, as a connect guard's `Ok(false)`
+    /// writes it, or is empty, is the kind alone (Q30-5); another kind's prefix is the message's
+    /// text and gains the kind's. Planted break: `forbidden` prefixed into `forbidden: forbidden`.
     #[test]
     fn a_message_already_carrying_the_prefix_is_not_prefixed_again() {
         assert_eq!(crate::ConnectRefused::kind(ErrorKind::NotFound, "not_found: x").reason(), "not_found: x");
+        assert_eq!(crate::ConnectRefused::kind(ErrorKind::Forbidden, "forbidden").reason(), "forbidden");
+        assert_eq!(crate::ConnectRefused::kind(ErrorKind::Forbidden, "").reason(), "forbidden");
+        assert_eq!(crate::ConnectRefused::kind(ErrorKind::Forbidden, "forbidden: x").reason(), "forbidden: x");
         let long = format!("internal: {}", "x".repeat(200));
         assert_eq!(crate::ConnectRefused::kind(ErrorKind::Internal, long.clone()).reason(), &long[..REASON_LIMIT]);
         assert_eq!(crate::ConnectRefused::kind(ErrorKind::NotFound, "conflict: x").reason(), "not_found: conflict: x");
@@ -311,5 +319,74 @@ mod tests {
         let code = CloseCode::new(4013).expect("an application's code");
         let refused = crate::ConnectRefused::from(CallError::new(ErrorKind::Unavailable, "why").with_close_code(code));
         assert_eq!((refused.close_code(), refused.reason()), (code, "why"));
+    }
+}
+
+#[cfg(test)]
+mod checker_tests {
+    use super::*;
+
+    /// Every kind against every message shape: the reason starts with the kind and `: ` or is the
+    /// kind alone, fits 123 bytes, never repeats the prefix it was given, and keeps as much of the
+    /// message as fits after the prefix, cut at a character boundary.
+    #[test]
+    fn by_kind_over_every_kind_and_message_shape() {
+        let long_ascii = "y".repeat(300);
+        let long_multi = "\u{1F600}".repeat(40);
+        for kind in KINDS {
+            let name = kind.to_string();
+            let prefix = format!("{name}: ");
+            let shapes: Vec<String> = vec![
+                String::new(),
+                name.clone(),
+                format!("{name}: x"),
+                format!("{name}:x"),
+                format!("why {name} mid-way"),
+                "\u{e9}\u{4e2d}\u{1F600}".to_owned(),
+                long_ascii.clone(),
+                long_multi.clone(),
+                format!("{prefix}{long_multi}"),
+                name.to_uppercase(),
+                " ".to_owned(),
+            ];
+            for message in shapes {
+                let (code, reason) = by_kind(kind, &message);
+                assert_eq!(code, CloseCode::of_kind(kind));
+                assert!(reason.len() <= REASON_LIMIT, "{kind:?} {message:?}: {} bytes", reason.len());
+                assert!(reason == name || reason.starts_with(&prefix), "{kind:?} {message:?}: {reason:?}");
+                assert!(!reason.starts_with(&format!("{prefix}{prefix}")), "{kind:?} {message:?}: doubled {reason:?}");
+                assert_ne!(reason, format!("{prefix}{name}"), "{kind:?} {message:?}: doubled {reason:?}");
+                let expected = if message.is_empty() || message == name {
+                    name.clone()
+                } else if message.starts_with(&prefix) {
+                    truncated(message.clone())
+                } else {
+                    let mut end = (REASON_LIMIT - prefix.len()).min(message.len());
+                    while !message.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{prefix}{}", &message[..end])
+                };
+                assert_eq!(reason, expected, "{kind:?} {message:?}");
+            }
+        }
+    }
+
+    /// The codes the framework closes with for a kind, and an application's own code with the
+    /// same number: the application's reason is its text alone, so the two are told apart by the
+    /// prefix unless the application writes it.
+    #[test]
+    fn an_application_3003_is_told_from_the_framework_s() {
+        let framework = crate::ConnectRefused::kind(ErrorKind::Forbidden, "not today");
+        let app = crate::ConnectRefused::code(CloseCode::FORBIDDEN, "not today").expect("a reason within 123 bytes");
+        assert_eq!(framework.close_code(), app.close_code());
+        assert_eq!(framework.reason(), "forbidden: not today");
+        assert_eq!(app.reason(), "not today");
+        let guard_false = crate::ConnectRefused::kind(ErrorKind::Forbidden, "forbidden");
+        let app_forbidden = crate::ConnectRefused::code(CloseCode::FORBIDDEN, "forbidden").expect("a reason");
+        assert_eq!(guard_false.reason(), app_forbidden.reason(), "the kind alone reads the same from either");
+        for (kind, code) in [(ErrorKind::BadRequest, 1008), (ErrorKind::Unavailable, 1013), (ErrorKind::Internal, 1011)] {
+            assert_eq!(crate::ConnectRefused::kind(kind, "m").close_code().get(), code);
+        }
     }
 }

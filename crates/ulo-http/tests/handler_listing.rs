@@ -73,7 +73,7 @@ fn operations(handlers: &[Arc<HandlerInfo>]) -> Vec<(String, String, String, &'s
         .iter()
         .map(|info| {
             let path = format!("{}{}", info.prefix().unwrap_or(""), info.route().unwrap_or(""));
-            let method = info.method().expect("an HTTP handler has a method").to_owned();
+            let method = info.request_method().expect("an HTTP handler has a method").to_owned();
             (method, path, info.module_name().to_string(), info.name())
         })
         .collect()

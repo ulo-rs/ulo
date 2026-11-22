@@ -224,7 +224,7 @@ async fn a_module_s_controllers_mount_and_their_handlers_see_what_that_module_se
         };
         assert!(info.module() == &identity, "{} lists its controller's module", info.name());
         assert_eq!(info.module_name(), name);
-        assert_eq!(info.method(), None, "a transport that names no request method lists none");
+        assert_eq!(info.request_method(), None, "a transport that names no request method lists none");
     }
 
     // The module a handler is mounted in is the visibility its calls resolve with: `PrivX` is X's

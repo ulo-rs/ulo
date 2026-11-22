@@ -1,8 +1,10 @@
 //! The connect phase (§9.2, §9.3): singletons in a stable topological order, each followed by
 //! its readiness check, then every `OnModuleInit` hook in the same order with a module's own
 //! hooks after its providers', then every `OnApplicationBootstrap` hook. The first failure
-//! stops the walk, the `OnModuleDestroy` hooks of every owner whose init stage completed run in
-//! reverse, and the failure is returned as a `ConnectError` carrying what those hooks recorded.
+//! stops the walk, the `OnModuleDestroy` hooks of every owner that had initialized run in
+//! reverse, and the failure is returned as a `ConnectError` carrying what those hooks recorded. A
+//! binding with no init hook has initialized once it is built and checked, and a module with none
+//! once every singleton it registers has.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,23 +31,73 @@ use crate::timer::{BoxError, BoundKind, Resolved, RuntimeShutDown, resolve_bound
 /// caller's: `App::connect` moves it around this call, and `load` runs while the app is Running.
 #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], modules: &[ModuleId]) -> Result<(), ConnectError> {
-    for &id in singletons {
-        if shared.singletons.get(id).is_none() {
-            build_singleton(shared, id).await?;
-        }
-        let graph = shared.graph();
-        if let Some(ready) = &graph.binding(id).record.ready {
-            run_readiness(shared, id, ready).await?;
+    for (position, &id) in singletons.iter().enumerate() {
+        if let Err(error) = build_and_check(shared, id).await {
+            let graph = shared.graph();
+            let plan = hook_plan(&graph, singletons, modules);
+            let initialized = initialized(&graph, &plan, &singletons[..position], None);
+            return Err(torn_down(shared, &initialized, error).await);
         }
     }
     let plan = hook_plan(&shared.graph(), singletons, modules);
     if let Err((error, failed_at)) = run_startup_hooks(shared, HookKind::OnModuleInit, &plan).await {
-        return Err(torn_down(shared, &plan[..failed_at], error).await);
+        let initialized = initialized(&shared.graph(), &plan, singletons, Some(failed_at));
+        return Err(torn_down(shared, &initialized, error).await);
     }
     if let Err((error, _)) = run_startup_hooks(shared, HookKind::OnApplicationBootstrap, &plan).await {
         return Err(torn_down(shared, &plan, error).await);
     }
     Ok(())
+}
+
+/// Builds the singleton `id` unless it is built, then runs its readiness check.
+#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
+async fn build_and_check(shared: &Arc<AppShared>, id: BindingId) -> Result<(), ConnectError> {
+    if shared.singletons.get(id).is_none() {
+        build_singleton(shared, id).await?;
+    }
+    let graph = shared.graph();
+    if let Some(ready) = &graph.binding(id).record.ready {
+        run_readiness(shared, id, ready).await?;
+    }
+    Ok(())
+}
+
+/// The owners of `plan` that had initialized when the walk failed, in `plan`'s order: `checked`
+/// the singletons built and checked, `failed_init` the position in `plan` of the owner whose
+/// `OnModuleInit` hook failed, `None` when the walk failed before the init stage. An owner with an
+/// init hook has initialized when the stage passed it. A binding with none has once it is checked,
+/// and a module with none once every singleton it registers has, wherever either sits.
+fn initialized(graph: &Graph, plan: &[HookOwner], checked: &[BindingId], failed_init: Option<usize>) -> Vec<HookOwner> {
+    let passed = |position: usize| failed_init.is_some_and(|failed| position < failed);
+    let mut done = std::collections::HashSet::new();
+    for (position, &owner) in plan.iter().enumerate() {
+        if let HookOwner::Binding(id) = owner
+            && checked.contains(&id)
+            && (!has_init_hook(graph, owner) || passed(position))
+        {
+            done.insert(id);
+        }
+    }
+    let registers = |module: ModuleId| {
+        plan.iter().filter_map(move |&owner| match owner {
+            HookOwner::Binding(id) if graph.binding(id).origin == module => Some(id),
+            _ => None,
+        })
+    };
+    plan.iter()
+        .enumerate()
+        .filter(|&(position, &owner)| match owner {
+            HookOwner::Binding(id) => done.contains(&id),
+            HookOwner::Module(_) if has_init_hook(graph, owner) => passed(position),
+            HookOwner::Module(module) => registers(module).all(|id| done.contains(&id)),
+        })
+        .map(|(_, &owner)| owner)
+        .collect()
+}
+
+fn has_init_hook(graph: &Graph, owner: HookOwner) -> bool {
+    hooks_of(graph, owner).iter().any(|hook| hook.kind == HookKind::OnModuleInit)
 }
 
 /// `error` after the destroy hooks of `initialized` have run (§9.2), the failures they recorded

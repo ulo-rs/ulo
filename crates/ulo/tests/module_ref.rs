@@ -338,3 +338,122 @@ async fn a_module_ref_kept_past_its_construction_reads_that_binding_again() {
     .await
     .unwrap();
 }
+
+/// A construction that opens a new execution through its `ModuleRef`, by `$open`, and reads
+/// `Back` there, whose construction reads the reader back: each step of the cycle runs in an
+/// execution of its own, so neither the cache nor the handle a step reads carries the earlier
+/// steps unless the execution does. `$depth` bounds the recursion as `reads_back!`'s does.
+macro_rules! reads_back_in_a_new_execution {
+    ($reader:ident, $back:ident, $scope:ty, $depth:ident, $open:expr) => {
+        static $depth: AtomicUsize = AtomicUsize::new(0);
+
+        struct $reader;
+
+        impl Construct for $reader {
+            type Scope = $scope;
+
+            fn dependencies(d: &mut Dependencies) {
+                d.field::<ModuleRef>("here");
+            }
+
+            async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+                if $depth.fetch_add(1, Ordering::SeqCst) >= 16 {
+                    return Err(ConstructError::Failed(Box::new(Boom::new("the construction recursed 16 deep"))));
+                }
+                let answer: Result<Dep<$back>, LookupError> = ($open)(r.module()).await;
+                answer?;
+                Ok($reader)
+            }
+        }
+
+        struct $back;
+
+        impl Construct for $back {
+            type Scope = $scope;
+
+            fn dependencies(d: &mut Dependencies) {
+                d.field::<Dep<$reader>>("reader");
+            }
+
+            async fn construct(r: &Resolver<'_>) -> Result<Self, ConstructError> {
+                r.dep::<$reader>().await?;
+                Ok($back)
+            }
+        }
+    };
+}
+
+reads_back_in_a_new_execution!(ExecuteTransient, ExecuteTransientBack, Transient, EXECUTE_TRANSIENT_DEPTH, |here: ModuleRef| async move {
+    here.execute(ExecOptions::new(), async |exec| exec.get::<ExecuteTransientBack>().await).await.expect("the execution opens")
+});
+reads_back_in_a_new_execution!(ExecutePerCall, ExecutePerCallBack, PerExecution, EXECUTE_PER_CALL_DEPTH, |here: ModuleRef| async move {
+    here.execute(ExecOptions::new(), async |exec| exec.handle().get::<ExecutePerCallBack>().await).await.expect("the execution opens")
+});
+reads_back_in_a_new_execution!(OpenPerCall, OpenPerCallBack, PerExecution, OPEN_PER_CALL_DEPTH, |here: ModuleRef| async move {
+    let exec = ulo::Execution::open(&here, ExecOptions::new()).expect("the execution opens");
+    exec.get::<OpenPerCallBack>().await
+});
+
+/// `f` on a thread with a stack far larger than the depth counter's bound needs, so a recursion
+/// the refusal fails to stop ends in the counter's error rather than aborting the test process.
+fn on_a_large_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new().stack_size(128 << 20).spawn(f).unwrap().join().unwrap()
+}
+
+/// What reading `Reader` in a standalone execution of an app providing `Reader` and `Back` answers.
+fn read_in_an_execution<Reader: Construct + Send + Sync + 'static, Back: Construct + Send + Sync + 'static>() -> Result<Dep<Reader>, LookupError> {
+    on_a_large_stack(|| {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let app = connects(Mod::<A>::new(|m| {
+                m.provide::<Reader>();
+                m.provide::<Back>();
+            }))
+            .await;
+            app.execute(ExecOptions::new(), async |exec| within("a read of a construction that reads itself back", exec.get::<Reader>()).await)
+                .await
+                .unwrap()
+        })
+    })
+}
+
+#[test]
+fn a_transient_construction_read_back_through_an_execution_its_module_ref_opens_is_refused() {
+    let (key, reader) = reentrant_keys(read_in_an_execution::<ExecuteTransient, ExecuteTransientBack>());
+    assert_eq!(key, Key::of::<ExecuteTransient, ()>());
+    assert_eq!(reader, Key::of::<ExecuteTransientBack, ()>());
+    assert_eq!(EXECUTE_TRANSIENT_DEPTH.load(Ordering::SeqCst), 1, "no construction recursed");
+}
+
+/// The execution `execute` opens has a cache of its own, where the reader is not under way; the
+/// chain it carries is what refuses the read, through a handle `Execution::handle` gives.
+#[test]
+fn an_execution_scoped_construction_read_back_through_an_execution_its_module_ref_opens_is_refused() {
+    let (key, reader) = reentrant_keys(read_in_an_execution::<ExecutePerCall, ExecutePerCallBack>());
+    assert_eq!(key, Key::of::<ExecutePerCall, ()>());
+    assert_eq!(reader, Key::of::<ExecutePerCallBack, ()>());
+    assert_eq!(EXECUTE_PER_CALL_DEPTH.load(Ordering::SeqCst), 1, "no construction recursed");
+}
+
+#[test]
+fn a_construction_read_back_through_an_execution_opened_on_its_module_ref_is_refused() {
+    let (key, reader) = reentrant_keys(read_in_an_execution::<OpenPerCall, OpenPerCallBack>());
+    assert_eq!(key, Key::of::<OpenPerCall, ()>());
+    assert_eq!(reader, Key::of::<OpenPerCallBack, ()>());
+    assert_eq!(OPEN_PER_CALL_DEPTH.load(Ordering::SeqCst), 1, "no construction recursed");
+}
+
+struct KeepsHandleToExecute(ModuleRef);
+
+/// A handle kept past its construction carries a chain that has ended: an execution opened through
+/// it builds the binding the construction was for.
+#[tokio::test]
+async fn an_execution_opened_through_a_module_ref_kept_past_its_construction_reads_that_binding_again() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.transient(|here: ModuleRef| async move { KeepsHandleToExecute(here) });
+    }))
+    .await;
+    let kept = app.execute(ExecOptions::new(), async |exec| exec.get::<KeepsHandleToExecute>().await.unwrap()).await.unwrap();
+    let again = kept.0.execute(ExecOptions::new(), async |exec| exec.get::<KeepsHandleToExecute>().await.is_ok()).await.unwrap();
+    assert!(again, "a construction that has ended refuses nothing");
+}
