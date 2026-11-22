@@ -133,6 +133,6 @@ pub use ulo_http_macros::{delete, get, head, options, patch, post, put};
 pub use bytes::Bytes;
 pub use http::{HeaderMap, HeaderValue, Method, StatusCode};
 pub use ulo_transport::{
-    CallError, Classify, Detail, Details, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
+    CallError, Classify, Detail, Details, ErrorBounds, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,
 };
 pub use {headers, http};

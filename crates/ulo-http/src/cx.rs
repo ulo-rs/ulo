@@ -6,7 +6,7 @@ use ulo::{AppHandle, ExecutionRef, Ext, Extensions, LookupError, MountedHandler,
 
 use crate::backend::HttpConfig;
 use crate::body::HttpBody;
-use crate::request::{ConnInfo, OnUpgrade};
+use crate::request::ConnInfo;
 use crate::transport::{Http, RequestHead};
 
 /// The per-request context: `Clone + Send + Sync`, every clone the same request (transports
@@ -30,7 +30,6 @@ pub(crate) struct CxInner {
     /// `None` for a request that matched no route, whose context the global error handlers read.
     pub(crate) route: Option<MatchedRoute>,
     pub(crate) body: Mutex<BodySlot>,
-    pub(crate) upgrade: Mutex<Option<OnUpgrade>>,
     /// Merged into the response's headers when it is written, the reply's own winning.
     pub(crate) response_headers: Mutex<HeaderMap>,
     pub(crate) config: Arc<HttpConfig>,
@@ -173,14 +172,6 @@ impl HttpCx {
                 Err(NoBody::Absent)
             }
         }
-    }
-
-    /// The upgrade future, once. A protocol switch is an [`UpgradeHandler`](crate::UpgradeHandler)'s
-    /// alone: the service answers a handler's 101, or any final 1xx, with a 500 in its place, and
-    /// the future yields the connection only after an upgrade handler's 101, so the future a
-    /// handler takes here resolves to an error.
-    pub fn take_upgrade(&self) -> Option<OnUpgrade> {
-        self.inner.upgrade.lock().unwrap_or_else(PoisonError::into_inner).take()
     }
 
     /// Headers merged into the response when it is written; the reply's own headers win.

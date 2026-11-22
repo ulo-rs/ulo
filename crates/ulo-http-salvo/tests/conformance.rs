@@ -121,7 +121,10 @@ impl Host for SalvoHost {
     }
 }
 
-ulo_http_conformance::http_conformance_suite!(SalvoHost);
+ulo_http_conformance::http_conformance_suite!(SalvoHost; not_applicable {
+    missing_host_refused: "the host owns its wire policy, a request without `Host` among it",
+    duplicate_host_closes_an_http10_keep_alive: "salvo 0.92 builds hyper's response with `hyper::Response::new`, which leaves the app's version out, so hyper writes an HTTP/1.1 answer to an HTTP/1.0 `keep-alive` request with `connection: keep-alive` in place of the app's `close` and reads the next request",
+});
 
 /// A server built over a `Closing` from another embedding's handle would keep its listener open
 /// through this embedding's drain; `run` refuses it.

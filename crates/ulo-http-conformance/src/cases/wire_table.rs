@@ -3,7 +3,7 @@
 //! on, kept as a floor. Each is raw HTTP/1.1, so the bytes are the evidence.
 
 use crate::app::{LATIN1_VALUE, LEAK, UTF8_VALUE};
-use crate::wire::{Running, has_header, start, status_of};
+use crate::wire::{PATIENCE, Running, has_header, is_reference, start, status_of, within};
 use crate::{Host, Mode};
 
 /// The UTF-8 encoding of U+FFFD, which a lossy conversion writes in place of a byte it cannot read.
@@ -229,6 +229,52 @@ pub async fn duplicate_host_refused<H: Host>(mode: Mode) {
         let what = format!("two `Host` lines, the second `{second}`");
         refused_and_closed(&exchange(&host, twice.as_bytes(), &what).await, &what);
     }
+    host.stop().await;
+}
+
+/// On ulo's hyper backend, the one host here reading requests off the wire for the app: an
+/// HTTP/1.1 request with no `Host` field is 400 with `Connection: close` and nothing pipelined
+/// behind it is answered (RFC 9112 §3.2), an absolute-form target included; one whose `Host` is
+/// empty, the form §3.2 gives a target with no authority, and an absolute-form target whose `Host`
+/// names another authority are answered, the target's authority taking the place of `Host`
+/// (§3.2.2), and so is an HTTP/2 request, which carries `:authority`. An embedding host owns its
+/// wire policy and declares the scenario not applicable; run there, it fails at once.
+pub async fn missing_host_refused<H: Host>(mode: Mode) {
+    assert!(is_reference::<H>(), "an embedding host owns its wire policy, `Host` included: declare `missing_host_refused` not applicable");
+    let host = start::<H>(mode).await;
+    let pipelined = request(&host, "GET", "/hit", &[]);
+    let bare = format!("GET {} HTTP/1.1\r\n\r\n", host.target("/hit")) + &pipelined;
+    refused_and_closed(&exchange(&host, bare.as_bytes(), "no `Host`").await, "no `Host`");
+    let absolute = format!("GET http://{}{} HTTP/1.1\r\n\r\n", host.authority(), host.target("/hit")) + &pipelined;
+    let what = "an absolute-form target, no `Host`";
+    refused_and_closed(&exchange(&host, absolute.as_bytes(), what).await, what);
+    for (what, line) in [("an empty `Host`", "host:".to_owned()), ("an absolute-form target naming another `Host`", "host: other.example".to_owned())] {
+        let target = if line == "host:" { host.target("/hit") } else { format!("http://{}{}", host.authority(), host.target("/hit")) };
+        let answered = format!("GET {target} HTTP/1.1\r\n{line}\r\nconnection: close\r\n\r\n");
+        let raw = exchange(&host, answered.as_bytes(), what).await;
+        assert_eq!(status_of(&raw), Some(200), "{what}: {}", text(&raw));
+    }
+    let mut send = crate::cases::drain::h2_connect(&host).await;
+    let request = http::Request::get(host.url("/hit")).body(()).expect("the request builds");
+    let (response, _) = send.send_request(request, true).expect("the stream opens");
+    let response = within(host.timer(), PATIENCE, response).await.expect("the stream answers within the patience").expect("the stream answers");
+    assert_eq!(response.status().as_u16(), 200, "HTTP/2, `:authority` and no `Host`");
+    host.stop().await;
+}
+
+/// The same refusal on an HTTP/1.0 request that asks to keep the connection alive: the 400 does
+/// not answer `keep-alive` and the connection closes, the request pipelined behind it never
+/// answered. An HTTP/1.0 connection persists only while the server answers `keep-alive` (RFC 9112
+/// §9.3), so a server answering it as HTTP/1.1 has `Connection: close` alone to end it.
+pub async fn duplicate_host_closes_an_http10_keep_alive<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    let pipelined = format!("GET {} HTTP/1.0\r\nhost: {}\r\n\r\n", host.target("/hit"), host.authority());
+    let twice = format!("GET {} HTTP/1.0\r\nconnection: keep-alive\r\nhost: {}\r\nhost: other.example\r\n\r\n", host.target("/hit"), host.authority()) + &pipelined;
+    let what = "two `Host` lines on an HTTP/1.0 keep-alive request";
+    let raw = exchange(&host, twice.as_bytes(), what).await;
+    assert_eq!(status_of(&raw), Some(400), "{what}: {}", text(&raw));
+    assert!(!has_header(&raw, "connection", "keep-alive"), "{what}: the 400 keeps the connection alive: {}", text(&raw));
+    assert_eq!(responses(&raw), 1, "{what}: the pipelined request was answered on the same connection: {}", text(&raw));
     host.stop().await;
 }
 

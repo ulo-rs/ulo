@@ -110,4 +110,6 @@ impl Host for PoemHost {
     }
 }
 
-ulo_http_conformance::http_conformance_suite!(PoemHost);
+ulo_http_conformance::http_conformance_suite!(PoemHost; not_applicable {
+    missing_host_refused: "the host owns its wire policy, a request without `Host` among it",
+});

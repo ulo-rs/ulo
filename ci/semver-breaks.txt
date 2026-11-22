@@ -8,7 +8,7 @@
 against 0.1.0-alpha.3
 
 break ulo-http feature_missing 1  # the `tokio-io` feature is removed, so a build enabling it on the hub cannot put tokio there for every crate beside it; a backend on tokio writes `Upgraded::from_futures(io.compat())` through `tokio-util`'s `compat`
-break ulo-http inherent_method_missing 1  # `Upgraded::from_tokio`, the removed feature's constructor; `Upgraded::from_futures(io.compat())` is the same conversion
+break ulo-http inherent_method_missing 2  # `Upgraded::from_tokio`, the removed feature's constructor, `Upgraded::from_futures(io.compat())` being the same conversion; and `HttpCx::take_upgrade`, whose future yields a connection only after an `UpgradeHandler`'s 101, so a route handler holding it could only fail; an upgrade is an `UpgradeHandler`'s, reading `Request::upgrade`
 break ulo-http trait_method_added 1  # `WithHttpStatus::http_status`, the read-back beside `with_http_status`; a type of a user's own implementing the trait adds it
 break ulo-handler-codegen constructible_struct_adds_field 1  # `Param::gates`, the parameter's `cfg` attributes every item written for it carries, so a parameter compiled out leaves nothing naming it; a transport macro crate building a `Param` by literal adds the field
 
@@ -53,3 +53,4 @@ break ulo-handler-codegen constructible_struct_adds_field 1  # `Param::gates`, t
 # unchecked ulo-http AppService  # an HTTP/1.x request carrying two `Host` lines, or `Content-Length` beside `Transfer-Encoding` on a host that hands over both, is answered 400 with `Connection: close` before an execution opens, where it was routed and, on rocket, the request pipelined behind it served
 # unchecked ulo-http AppService  # a 205 reaches the backend with an empty body and without the handler's `Content-Length`, so the host writes `content-length: 0`, where its body was written
 # unchecked ulo-ws Origins  # an empty `origins([])`, and an `origins([..])` entry whose host is not ASCII, fail `prepare` as `StartupError::Configure`, where the empty list admitted only a handshake sending no `Origin` and the entry matched no handshake
+# unchecked ulo-http-hyper Server  # an HTTP/1.1 request with no `Host` field is answered 400 with `Connection: close` by the backend before the app sees it, where the app answered it; an empty `Host`, HTTP/1.0 and HTTP/2 pass, and an embedding host keeps its own rule

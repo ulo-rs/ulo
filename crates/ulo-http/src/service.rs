@@ -510,7 +510,7 @@ impl ServiceInner {
             params,
             max_body: target.max_body,
         };
-        let cx = self.context(exec, head, conn, Some(route), None, None);
+        let cx = self.context(exec, head, conn, Some(route), None);
         let recovering = ulo::recover(Some(&target.handler), exec, &cx, Box::new(render::timed_out()));
         let mut grace = self.config.grace().map(|grace| self.timer.sleep(grace));
         let Some(outcome) = within(recovering, grace.as_mut()).await else {
@@ -565,14 +565,14 @@ impl ServiceInner {
     fn dispatch(self: &Arc<Self>, exec: ExecutionRef, req: Request, target: Arc<RouteTarget>, params: PathParams) -> BoxFuture<'static, Response> {
         let this = Arc::clone(self);
         Box::pin(async move {
-            let Request { head, body, conn, upgrade } = req;
+            let Request { head, body, conn, .. } = req;
             let route = MatchedRoute {
                 handler: target.handler.clone(),
                 pattern: Arc::clone(&target.pattern),
                 params,
                 max_body: target.max_body,
             };
-            let cx = this.context(&exec, Arc::new(RequestHead { parts: head }), conn, Some(route), Some(body), upgrade);
+            let cx = this.context(&exec, Arc::new(RequestHead { parts: head }), conn, Some(route), Some(body));
             let call = Arc::clone(&target.call);
             let response = match ulo::dispatch(&target.handler, &exec, &cx, move |cx| (*call)(cx)).await {
                 Ok(response) => response,
@@ -598,8 +598,8 @@ impl ServiceInner {
             Miss::MethodNotAllowed(allow) => Box::new(MethodNotAllowed::new(req.head.method.clone(), allow).into_error()),
             Miss::NotImplemented => Box::new(MethodNotImplemented::error(req.head.method.clone())),
         };
-        let Request { head, body, conn, upgrade } = req;
-        let cx = self.context(exec, Arc::new(RequestHead { parts: head }), conn, None, Some(body), upgrade);
+        let Request { head, body, conn, .. } = req;
+        let cx = self.context(exec, Arc::new(RequestHead { parts: head }), conn, None, Some(body));
         let response = match ulo::recover::<Http>(None, exec, &cx, err).await {
             Ok(response) => response,
             Err(err) => render::render_error(err, exec, &self.config),
@@ -615,7 +615,6 @@ impl ServiceInner {
         conn: ConnInfo,
         route: Option<MatchedRoute>,
         body: Option<HttpBody>,
-        upgrade: Option<OnUpgrade>,
     ) -> HttpCx {
         HttpCx {
             inner: Arc::new(CxInner {
@@ -625,7 +624,6 @@ impl ServiceInner {
                 conn,
                 route,
                 body: Mutex::new(BodySlot::new(body)),
-                upgrade: Mutex::new(upgrade),
                 response_headers: Mutex::new(HeaderMap::new()),
                 config: Arc::clone(&self.config),
                 mount: Arc::clone(&self.mount),
@@ -751,6 +749,9 @@ fn ambiguous(head: &http::request::Parts, config: &HttpConfig) -> Option<Respons
     tracing::debug!(reason = why, "a request was refused before routing: answered 400 and the connection closed");
     let mut refused = render::problem(&CallError::new(ErrorKind::BadRequest, why), config);
     refused.headers_mut().insert(CONNECTION, HeaderValue::from_static("close"));
+    // hyper reads the response's version to decide the connection's persistence: an HTTP/1.1
+    // answer to an HTTP/1.0 request asking for `keep-alive` has its `close` replaced.
+    *refused.version_mut() = head.version;
     refused.extensions_mut().insert(Routing::Unrouted);
     Some(refused)
 }

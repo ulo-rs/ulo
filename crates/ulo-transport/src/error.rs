@@ -59,6 +59,30 @@ impl fmt::Display for ErrorKind {
     }
 }
 
+/// What [`Classify`] requires of a type: `std::error::Error + Send + Sync + 'static`, under one
+/// name. Implemented for every such type and for no other, so it names the bound and adds none:
+/// `T: ErrorBounds` holds exactly where `T: Error + Send + Sync + 'static` does, and an impl
+/// written by hand conflicts with the blanket one.
+///
+/// `#[derive(Classify)]` checks it, so a type without `Error` gets one error naming this trait,
+/// with the advice to derive `Display` and `Error` through thiserror. The error speaks of the
+/// derive wherever the bound fails, so a bound of a user's own is better written as the four.
+///
+/// ```
+/// use ulo_transport::ErrorBounds;
+///
+/// fn holds<E: ErrorBounds>() {}
+/// holds::<std::fmt::Error>();
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`#[derive(Classify)]` needs `{Self}` to implement `std::error::Error` and be `Send + Sync + 'static`",
+    label = "not an `Error + Send + Sync + 'static` type",
+    note = "derive `Display` and `Error` with thiserror: `#[derive(Debug, thiserror::Error, Classify)]`, with an `#[error(\"..\")]` on the type or on each variant"
+)]
+pub trait ErrorBounds: Error + Send + Sync + 'static {}
+
+impl<T: Error + Send + Sync + 'static> ErrorBounds for T {}
+
 /// A domain error that knows its transport-neutral kind.
 ///
 /// `#[derive(Classify)]` with `#[classify(not_found)]` on the type or on each variant writes the

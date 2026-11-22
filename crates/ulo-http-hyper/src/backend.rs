@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 
+use futures_util::future::Either;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper_util::server::conn::auto;
@@ -197,13 +198,16 @@ macro_rules! drive {
 }
 
 /// One connection after its handshake: HTTP until the connection ends, each request converted and
-/// answered by the `AppService`.
+/// answered by the `AppService`, except one [`convert::missing_host`] refuses.
 async fn connection<L: Listener>(accepted: Accepted<L>, service: AppService, protocols: Arc<Protocols>) {
     let Accepted { io, conn, draining } = accepted;
     let detect_h2 = conn.tls.is_some() || protocols.h2c;
     let peer = conn.peer;
     let service = hyper::service::service_fn(move |req: http::Request<Incoming>| {
-        let reply = service.call(convert::request(req, &conn));
+        let reply = match convert::missing_host(&req) {
+            Some(refused) => Either::Left(std::future::ready(refused)),
+            None => Either::Right(service.call(convert::request(req, &conn))),
+        };
         async move { Ok::<_, Infallible>(reply.await) }
     });
     if detect_h2 {

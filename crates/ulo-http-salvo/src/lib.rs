@@ -34,6 +34,12 @@
 //! `Depot` crossing through a `forward` copy over [`SalvoRequest`]; no TLS info; streamed bodies; a
 //! dropped body observed at the disconnect.
 //!
+//! salvo 0.92 builds hyper's response with `hyper::Response::new`, which leaves out the version
+//! the app's response carries, so hyper answers every HTTP/1.0 request as HTTP/1.1: an HTTP/1.0
+//! request asking `Connection: keep-alive` that the app refuses 400 with `Connection: close`, for
+//! two `Host` lines, keeps its connection, hyper writing `keep-alive` in place of the `close`, and
+//! the next request on it is answered.
+//!
 //! Built-in forwards: `OriginalPath`, from `req.uri().path()`. The app's response, `Routing`
 //! included, goes into salvo's response extensions, where a hoop after the handler reads it.
 

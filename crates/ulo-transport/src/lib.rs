@@ -33,13 +33,14 @@ pub mod __private;
 /// deriving crate depends on.
 #[doc(hidden)]
 pub mod __derive {
+    pub use crate::ErrorBounds;
     pub use crate::__private::{classify, validate};
 }
 
 pub use admission::{Admission, ConnectionAdmission, Permit, SHED_LOG_INTERVAL, ShedLog};
 pub use count::Count;
 pub use details::{Detail, Details, FieldViolation, Link};
-pub use error::{CallError, Classify, ErrorKind, SHUTDOWN_MESSAGE};
+pub use error::{CallError, Classify, ErrorBounds, ErrorKind, SHUTDOWN_MESSAGE};
 pub use extract::{ExtractError, FromCall, Injected};
 pub use reply::{IntoReply, IntoReplyError};
 pub use task_set::TaskSet;

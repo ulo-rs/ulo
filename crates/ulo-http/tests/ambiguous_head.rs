@@ -43,13 +43,16 @@ async fn two_host_lines_or_both_length_headers_answer_400_and_close_on_http_1_al
         for version in [Version::HTTP_10, Version::HTTP_11, Version::HTTP_2] {
             let mut req = call().into_request();
             req.head.version = version;
-            let reply = read(app.service().call(req).await).await;
+            let response = app.service().call(req).await;
+            let answered = response.version();
+            let reply = read(response).await;
             if version == Version::HTTP_2 {
                 assert_eq!(reply.status, StatusCode::OK, "{what} over {version:?} is not checked");
                 continue;
             }
             assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{what} over {version:?}: {}", reply.text());
             assert_eq!(reply.header("connection"), Some("close"), "{what} over {version:?}");
+            assert_eq!(answered, version, "{what}: the 400 is written in the request's version, which hyper reads to end the connection");
             assert_eq!(reply.json()["detail"], detail, "{what} over {version:?}");
             assert!(matches!(reply.routing, Some(Routing::Unrouted)), "{what} over {version:?}: {:?}", reply.routing);
         }

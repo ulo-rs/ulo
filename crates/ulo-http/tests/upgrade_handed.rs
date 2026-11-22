@@ -1,8 +1,9 @@
 //! A request's upgrade future yields the connection only when the response the service hands the
 //! backend is an `UpgradeHandler`'s 101 (transports DESIGN decision 280). hyper hands the
 //! connection to whoever holds the future once its last exchange ends, whatever status the
-//! request was answered with, so a route handler holding the future would otherwise take over the
-//! connection after its 200 or the 500 that replaces its 101. Each request here carries a future
+//! request was answered with, so a pre-dispatch entry holding the future, which reads the request
+//! and its public `upgrade`, would otherwise take over the connection after the route's 200 or
+//! the 500 that replaces a handler's 101. Each request here carries a future
 //! that resolves when the test says the backend has handed the connection over, which is after
 //! the service has answered.
 
@@ -17,7 +18,7 @@ use o1_support::{Call, start};
 use tokio::sync::oneshot;
 use ulo::{BoxError, BoxFuture, ModuleDef, controller, handlers, injectable};
 use ulo_http::middleware::{Middleware, Next};
-use ulo_http::{HttpBody, HttpCx, OnUpgrade, PreDispatch, Request, Response, UpgradeHandler, Upgrades, Upgraded};
+use ulo_http::{HttpBody, OnUpgrade, PreDispatch, Request, Response, UpgradeHandler, Upgrades, Upgraded};
 
 /// The upgrade futures the handlers took, newest last.
 static TAKEN: Mutex<Vec<OnUpgrade>> = Mutex::new(Vec::new());
@@ -33,20 +34,29 @@ fn with_status(status: StatusCode) -> Response {
 }
 
 #[controller]
-struct Takes;
+struct Routes;
 
 #[handlers]
-impl Takes {
+impl Routes {
     #[ulo_http::get("/take")]
-    fn take(&self, cx: HttpCx) -> Response {
-        keep(cx.take_upgrade());
+    fn take(&self) -> Response {
         with_status(StatusCode::OK)
     }
 
     #[ulo_http::get("/take/switch")]
-    fn take_switch(&self, cx: HttpCx) -> Response {
-        keep(cx.take_upgrade());
+    fn take_switch(&self) -> Response {
         with_status(StatusCode::SWITCHING_PROTOCOLS)
+    }
+}
+
+/// Over `/take/*` and `/take`: takes the request's upgrade future, then runs the route.
+#[injectable]
+struct Takes;
+
+impl Middleware for Takes {
+    async fn handle(&self, mut req: Request, next: Next<'_>) -> Result<Response, BoxError> {
+        keep(req.upgrade.take());
+        next.run(req).await
     }
 }
 
@@ -76,9 +86,10 @@ impl Middleware for Refuse {
 }
 
 fn register(m: &mut ModuleDef<'_>) {
-    m.controller::<Takes>();
+    m.controller::<Routes>();
     m.provide::<Refuse>();
-    m.meta::<PreDispatch>().apply_for::<Refuse>(["/*"]);
+    m.provide::<Takes>();
+    m.meta::<PreDispatch>().apply_for::<Refuse>(["/*"]).apply_for::<Takes>(["/take", "/take/*"]);
     m.meta::<Upgrades>().register(Socket);
 }
 
