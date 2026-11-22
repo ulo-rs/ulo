@@ -69,7 +69,7 @@ pub trait Transport: 'static {
 
     /// The request method a handler of this transport answers, read off the value its controller
     /// passed to [`HandlerSpec::new`](crate::HandlerSpec::new) when the handler mounts, for
-    /// [`HandlerInfo::method`](crate::HandlerInfo::method). `None` unless the transport says
+    /// [`HandlerInfo::request_method`](crate::HandlerInfo::request_method). `None` unless the transport says
     /// otherwise: `ulo_http::Http` answers its `HttpHandler`'s method, and a transport that routes
     /// by a pattern, a gRPC path or an event alone has none.
     fn request_method(_handler: &dyn Any) -> Option<&str> {

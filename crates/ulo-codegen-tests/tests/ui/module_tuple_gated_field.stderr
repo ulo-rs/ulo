@@ -1,0 +1,5 @@
+error: a `#[cfg]` on a tuple module's field renumbers the fields after it; name the fields, or gate the last field alone
+ --> tests/ui/module_tuple_gated_field.rs:5:17
+  |
+5 | struct Settings(#[cfg(any())] u16, String);
+  |                 ^^^^^^^^^^^^^

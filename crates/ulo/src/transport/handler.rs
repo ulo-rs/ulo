@@ -107,7 +107,7 @@ pub struct HandlerInfo {
     pub(crate) transport: &'static str,
     pub(crate) controller: KeyName,
     pub(crate) name: &'static str,
-    pub(crate) method: Option<Box<str>>,
+    pub(crate) request_method: Option<Box<str>>,
     pub(crate) route: Option<Cow<'static, str>>,
     pub(crate) prefix: Option<Cow<'static, str>>,
     pub(crate) shape: Shape,
@@ -134,8 +134,8 @@ impl HandlerInfo {
     /// [`Transport::request_method`] reads it; `None` on a transport that routes by a pattern, a
     /// gRPC path or an event alone. With [`route`](Self::route) and [`prefix`](Self::prefix) it
     /// names one HTTP operation.
-    pub fn method(&self) -> Option<&str> {
-        self.method.as_deref()
+    pub fn request_method(&self) -> Option<&str> {
+        self.request_method.as_deref()
     }
 
     /// The identity of the module the handler's controller is registered in, which a report

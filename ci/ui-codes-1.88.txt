@@ -1,0 +1,7 @@
+# The `tests/ui/` cases of ulo-codegen-tests whose set of error codes on rustc 1.88 differs from
+# their 1.98.1 snapshot's, read by `scripts/ui_codes.py`: `<case> <codes on 1.88>  # reason`, `-`
+# for none. A case not listed must print its snapshot's codes, and a listed case exactly these; an
+# entry the run does not need fails the job. A case printing fewer errors of the same codes needs no
+# entry: the check compares the set, not the count.
+
+module_qualifier_unknown_type E0412  # an unknown qualifier type, `@ Primary`: both compilers print "cannot find type `Primary` in this scope" at the same span, 1.88 under E0412 and 1.98.1 under E0425

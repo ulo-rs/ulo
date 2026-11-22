@@ -840,7 +840,7 @@ mod tests {
     /// The server's shed log names the link by it as answered.
     #[test]
     fn the_endpoint_is_the_url_without_its_credentials() {
-        for (url, expected) in [("redis://:pw@cache:6379/2?protocol=resp3", "redis://cache:6379/2"), ("rediss://u:p,w@cache:6380", "rediss://cache:6380")] {
+        for (url, expected) in [("redis://:pw@cache:6379/2?protocol=resp3", "redis://cache:6379/2"), ("rediss://u:p,w@cache:6380", "rediss://cache:6380"), ("redis://token?x@cache", "redis://[unreadable]")] {
             assert_eq!(Link::endpoint(&Redis::url(url)).as_deref(), Some(expected), "{url}");
         }
     }

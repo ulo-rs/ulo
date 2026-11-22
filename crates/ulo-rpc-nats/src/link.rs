@@ -343,7 +343,7 @@ impl Link for Nats {
 
     /// Each comma-separated server, as `servers` reads the setting.
     fn endpoint(&self) -> Option<String> {
-        Some(self.url.split(',').map(|server| ulo::secrets::setting_url(server.trim())).collect::<Vec<_>>().join(","))
+        Some(ulo::secrets::setting_url_list(&self.url))
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -1925,6 +1925,14 @@ mod tests {
         let endpoint = Link::endpoint(&Nats::url(url)).expect("an endpoint");
         assert_eq!(endpoint, "nats://a:4222,tls://b:4222,nats://c:4222");
         assert!(!endpoint.contains("pw"), "a credential reached the endpoint: {endpoint}");
+    }
+
+    /// A password holding a comma is split by the client into a server with no userinfo before one
+    /// with: what the first keeps could be the password's start, so it is not reported.
+    #[test]
+    fn the_endpoint_reports_no_server_whose_text_could_precede_a_later_userinfo() {
+        let endpoint = Link::endpoint(&Nats::url("nats://u:12,34@h:4222")).expect("an endpoint");
+        assert_eq!(endpoint, "nats://[unreadable],h:4222");
     }
 
     /// A connect bound's message names an IPv6 server as `[host]:port`, as the url wrote it

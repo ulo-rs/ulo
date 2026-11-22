@@ -45,12 +45,14 @@ impl ModuleRef {
 
     /// A standalone execution resolving with this module's visibility. Refused from Draining on
     /// with `Closed`; completion fires no cancellation (§6.3). A stream built from the execution
-    /// is consumed inside the closure: it ends when `execute` returns.
+    /// is consumed inside the closure: it ends when `execute` returns. Opened through a handle read
+    /// during a construction, the execution carries that construction as `get` does, so a read in
+    /// it that comes back to a binding still being built is refused with `LookupError::Reentrant`.
     pub async fn execute<F, R>(&self, opts: ExecOptions, f: F) -> Result<R, Closed>
     where
         F: AsyncFnOnce(&Execution) -> R,
     {
-        self.app.execute(self.module, opts, f).await
+        self.app.execute(self.module, opts, self.building.clone(), f).await
     }
 
     pub fn name(&self) -> ModuleName {

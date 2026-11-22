@@ -2052,7 +2052,7 @@ mod tests {
     /// The server's shed log names the link by it as answered.
     #[test]
     fn the_endpoint_is_the_url_without_its_credentials() {
-        for (url, expected) in [("mqtt://user:pw@broker:1883?client_id=x", "mqtt://broker:1883"), ("mqtts://u:p,w@[::1]:8883", "mqtts://[::1]:8883")] {
+        for (url, expected) in [("mqtt://user:pw@broker:1883?client_id=x", "mqtt://broker:1883"), ("mqtts://u:p,w@[::1]:8883", "mqtts://[::1]:8883"), ("mqtt://u:12?34@broker:1883", "mqtt://[unreadable]")] {
             assert_eq!(Link::endpoint(&Mqtt::url(url)).as_deref(), Some(expected), "{url}");
         }
     }
