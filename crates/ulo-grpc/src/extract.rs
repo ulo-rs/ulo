@@ -13,7 +13,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
-use tonic::codec::{BufferSettings, DecodeBuf, Decoder};
+use tonic::codec::{BufferSettings, Decoder};
 use tonic::{Code, Status};
 use tonic_prost::ProstDecoder;
 use ulo_http::HttpBody;
@@ -121,50 +121,37 @@ where
     tonic::Streaming::new_request(decoder, body, cx.inner.encoding, Some(MESSAGE_LIMIT))
 }
 
-/// A request body breaking gRPC's message framing: a compressed flag on a call whose
-/// `grpc-encoding` names no compression, a flag other than 0 and 1, a compressed message that does
-/// not inflate, a body ending inside a message. Carried as an `ExtractError::Malformed`'s source,
-/// and sent as INTERNAL, the code the compression specification requires for the first of them.
+/// A request body that does not decode as the method's messages, the failures tonic's codec gives
+/// INTERNAL: a compressed flag on a call whose `grpc-encoding` names no compression, a flag other
+/// than 0 and 1, a compressed message that does not inflate, a body ending inside a message, and a
+/// message framed whole that prost does not decode. Carried as an `ExtractError::Malformed`'s
+/// source, and sent as INTERNAL, the code the compression specification requires for the first
+/// and gRPC's status code table gives "error parsing request proto", as a `Streaming` item that
+/// does not decode is sent. A body read that tonic fails INTERNAL is carried the same way: a
+/// stream the caller reset mid-message with `INTERNAL_ERROR` or `PROTOCOL_ERROR`, whose reply no
+/// one reads.
 #[derive(Debug)]
-pub(crate) struct Framing(Status);
+pub(crate) struct Undecodable(Status);
 
-impl fmt::Display for Framing {
+impl fmt::Display for Undecodable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.0.message())
     }
 }
 
-impl Error for Framing {}
-
-/// prost's decoder with its failure moved off INTERNAL, the code tonic gives a framing failure
-/// too, so [`first_message`] tells a message that does not decode from a body that breaks the
-/// framing.
-struct Unframed<T>(ProstDecoder<T>);
-
-impl<T: prost::Message + Default> Decoder for Unframed<T> {
-    type Item = T;
-    type Error = Status;
-
-    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<T>, Status> {
-        self.0.decode(src).map_err(|status| Status::invalid_argument(status.message()))
-    }
-
-    fn buffer_settings(&self) -> BufferSettings {
-        self.0.buffer_settings()
-    }
-}
+impl Error for Undecodable {}
 
 /// The first message of the request body. A body another extractor took, or one ending before
 /// any message, is `Missing`; one over [`MESSAGE_LIMIT`], as it arrives or once inflated, is
-/// `TooLarge`; one that does not decode as `T` is `Malformed`, the decoder's status redacted
-/// through the app; one breaking the framing is `Malformed` with a [`Framing`] as its source.
+/// `TooLarge`; one that does not decode as `T`, or breaks the framing, is `Malformed` with an
+/// [`Undecodable`] as its source, redacted through the app.
 #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn first_message<T>(cx: &GrpcCx, param: &'static str) -> Result<T, ExtractError>
 where
     T: prost::Message + Default + Send + 'static,
 {
     let body = cx.take_body().ok_or(ExtractError::Missing { param })?;
-    let mut messages = decoding(cx, body, Unframed(ProstDecoder::<T>::new(BufferSettings::default())));
+    let mut messages = decoding(cx, body, ProstDecoder::<T>::new(BufferSettings::default()));
     match messages.message().await {
         Ok(Some(message)) => Ok(message),
         Ok(None) => Err(ExtractError::Missing { param }),
@@ -172,7 +159,7 @@ where
             Err(ExtractError::TooLarge { param, limit: MESSAGE_LIMIT as u64 })
         }
         Err(status) if status.code() == Code::Internal => {
-            Err(ExtractError::Malformed { param, source: cx.app().redact(Box::new(Framing(status))) })
+            Err(ExtractError::Malformed { param, source: cx.app().redact(Box::new(Undecodable(status))) })
         }
         Err(status) => Err(ExtractError::Malformed { param, source: cx.app().redact(Box::new(status)) }),
     }
