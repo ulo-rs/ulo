@@ -18,13 +18,12 @@
 //! `ulo new my-app` writes a working project, and `examples/` in the repository holds one runnable
 //! application per concept.
 //!
-//! A module, one controller with one route, and the phases that start an application
+//! A module, one controller with one route, and the runtime crate's `run`, which serves it
 //! (`examples/01-hello`), with `ulo-http`, `ulo-http-hyper` and `ulo-runtime-tokio` beside `ulo`:
 //!
 //! ```no_run
-//! use ulo::{App, controller, handlers, module};
+//! use ulo::{controller, handlers, module};
 //! use ulo_http_hyper::Server;
-//! use ulo_runtime_tokio::{Tokio, shutdown_signal};
 //!
 //! #[controller]
 //! pub struct HelloController;
@@ -40,20 +39,15 @@
 //! #[module(controllers = [HelloController])]
 //! pub struct AppModule;
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let app = App::builder(AppModule)
-//!         .runtime(Tokio::current())
-//!         .wire()?
-//!         .connect()
-//!         .await?
-//!         .bind(Server::new("127.0.0.1:3000"))
-//!         .listen()
-//!         .await?;
-//!     app.serve(shutdown_signal()).await?;
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     ulo_runtime_tokio::run(AppModule, Server::new("127.0.0.1:3000"))?;
 //!     Ok(())
 //! }
 //! ```
+//!
+//! `run` performs the phases of [`App`]: [`App::builder`] with the runtime, `wire`, `connect`,
+//! `bind`, `listen` and `serve` until SIGINT or SIGTERM. An application that sets a builder knob
+//! or reads the app between two phases writes them itself.
 
 // The README blocks are compiled, not rendered: the `//!` docs above stay the crate's page.
 #[cfg(doctest)]

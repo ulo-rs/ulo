@@ -106,7 +106,7 @@ impl Transport {
                 handler: include_str!("../templates/new/http/controller.rs"),
                 handler_type: "GreetingController",
                 main_uses: vec!["use ulo_http_hyper::Server;".into()],
-                server: "Server::new(settings.server.address.clone())".into(),
+                server: "Server::new(address)".into(),
                 key: "address",
                 value: "127.0.0.1:3000",
                 app_uses: vec!["use ulo_health::HealthModule;", "use ulo_health_http::HealthHttp;"],
@@ -125,7 +125,7 @@ impl Transport {
                 handler: include_str!("../templates/new/ws/gateway.rs"),
                 handler_type: "GreetingGateway",
                 main_uses: vec!["use ulo_http_hyper::Server;".into()],
-                server: "Server::new(settings.server.address.clone())".into(),
+                server: "Server::new(address)".into(),
                 key: "address",
                 value: "127.0.0.1:3000",
                 app_uses: vec![
@@ -152,7 +152,7 @@ impl Transport {
                 handler: include_str!("../templates/new/grpc/controller.rs"),
                 handler_type: "GreeterController",
                 main_uses: vec!["use ulo_grpc::Server;".into()],
-                server: "Server::new(settings.server.address.clone())".into(),
+                server: "Server::new(address)".into(),
                 key: "address",
                 value: "127.0.0.1:50051",
                 app_uses: vec![
@@ -189,7 +189,7 @@ impl Transport {
                     handler: include_str!("../templates/new/rpc/controller.rs"),
                     handler_type: "GreetingController",
                     main_uses: vec!["use ulo_rpc::Server;".into(), link.import.into()],
-                    server: format!("Server::new({}(settings.server.{}.clone()))", link.constructor, link.key),
+                    server: format!("Server::new({}({}))", link.constructor, link.key),
                     key: link.key,
                     value: link.value,
                     app_uses: Vec::new(),
@@ -448,7 +448,6 @@ impl Plan {
         let mut dependencies: Vec<String> = lines(&[
             r#"serde = { version = "1", features = ["derive"] }"#,
             r#"tokio = { version = "1", features = ["macros", "rt-multi-thread"] }"#,
-            r#"tracing = "0.1""#,
             r#"tracing-subscriber = { version = "0.3", features = ["env-filter"] }"#,
             r#"ulo = "=@@version@@""#,
             r#"ulo-config = "=@@version@@""#,
@@ -490,9 +489,7 @@ impl Plan {
         let mut modules = vec!["mod app;".to_owned(), format!("mod {};", layout.handler_module), "mod greeter;".to_owned()];
         let mut main_uses = vec![
             "use app::{AppConfig, AppModule};".to_owned(),
-            "use ulo::App;".to_owned(),
-            "use ulo_config::{Config, Env, File};".to_owned(),
-            "use ulo_runtime_tokio::{Tokio, shutdown_signal};".to_owned(),
+            "use ulo_config::{Config, Env, File, Section};".to_owned(),
         ];
         main_uses.extend(layout.main_uses.iter().cloned());
         main_uses.sort();
@@ -504,7 +501,12 @@ impl Plan {
         let modules = modules.join("\n");
         let main = render(
             include_str!("../templates/new/common/main.rs"),
-            &[("uses", main_uses.as_str()), ("modules", modules.as_str()), ("server", layout.server.as_str())],
+            &[
+                ("uses", main_uses.as_str()),
+                ("modules", modules.as_str()),
+                ("key", layout.key),
+                ("server", layout.server.as_str()),
+            ],
         )?;
 
         let mut external: Vec<String> = [

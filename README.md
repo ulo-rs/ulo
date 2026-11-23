@@ -22,7 +22,6 @@ ulo-http = "=0.1.0-alpha.3"
 ulo-http-hyper = "=0.1.0-alpha.3"
 ulo-runtime-tokio = "=0.1.0-alpha.3"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 Or start from a template. `ulo new` writes a working application with health probes and tests; a
@@ -53,13 +52,12 @@ APP_SERVER__ADDRESS=0.0.0.0:3000 cargo run
 
 ## Quick start
 
-A module, one controller with one route, and the phases that start an application. This is
-`examples/01-hello` in one file.
+A module, one controller with one route, and `run`, which serves it. This is `examples/01-hello`
+in one file.
 
 ```rust,no_run
-use ulo::{App, controller, handlers, module};
+use ulo::{controller, handlers, module};
 use ulo_http_hyper::Server;
-use ulo_runtime_tokio::{Tokio, shutdown_signal};
 
 #[controller]
 pub struct HelloController;
@@ -75,27 +73,18 @@ impl HelloController {
 #[module(controllers = [HelloController])]
 pub struct AppModule;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let app = App::builder(AppModule)
-        .runtime(Tokio::current())
-        .wire()?
-        .connect()
-        .await?
-        .bind(Server::new("127.0.0.1:3000"))
-        .listen()
-        .await?;
-    for bound in app.addresses() {
-        println!("listening on http://{}", bound.addr);
-    }
-    app.serve(shutdown_signal()).await?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ulo_runtime_tokio::run(AppModule, Server::new("127.0.0.1:3000"))?;
     Ok(())
 }
 ```
 
-`cargo run`, then `curl http://127.0.0.1:3000/`. `wire` checks the whole module graph and reports
-every problem at once, `connect` builds the providers and runs their hooks, `listen` acquires the
-sockets, and `serve` runs until the signal future resolves, then drains.
+`cargo run`, then `curl http://127.0.0.1:3000/`. `run` builds a tokio runtime and starts the
+application in five phases: `wire` checks the whole module graph and reports every problem at once,
+`connect` builds the providers and runs their hooks, `bind` and `listen` acquire the sockets, and
+`serve` runs until Ctrl-C or SIGTERM, then drains and closes. An application that sets a knob, a
+drain timeout or a test clock, writes the phases itself, starting from
+`App::builder(AppModule).runtime(Tokio::current())` (example 10).
 
 A handler names what it needs in its signature. Extractors read and validate the request, and a
 provider is injected as `Dep<T>` (`examples/15-http-requests` is the full version of this):
@@ -195,7 +184,7 @@ transports), and `ulo-cli` (`ulo new`, `ulo generate`, `ulo dev`).
 
 | Example | Shows |
 | --- | --- |
-| `01-hello` | One module, one controller, one route, and the five phases that start an application |
+| `01-hello` | One module, one controller, one route, served by `run` |
 | `02-providers` | The two ways to declare a provider, injected as `Dep<T>` |
 | `03-traits-and-qualifiers` | Binding a provider under a trait, and qualifiers for two instances of one type |
 | `04-collections-and-optional` | Many providers under one key (`Many<dyn T>`) and an optional dependency |

@@ -2679,10 +2679,8 @@ name = "ex-22-http-on-smol"
 version = "0.0.0"
 dependencies = [
  "async-net",
- "async-signal",
  "ex-support",
  "futures",
- "futures-util",
  "ulo",
  "ulo-http",
  "ulo-http-hyper",
@@ -9871,8 +9869,12 @@ version = "0.1.0-alpha.3"
 dependencies = [
  "async-executor",
  "async-io",
+ "async-signal",
  "blocking",
  "event-listener 5.4.1",
+ "futures-core",
+ "tracing",
+ "tracing-subscriber",
  "ulo",
  "ulo-runtime-conformance",
 ]
@@ -9884,6 +9886,7 @@ dependencies = [
  "futures-executor",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "ulo",
  "ulo-runtime-conformance",
 ]
