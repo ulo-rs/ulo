@@ -37,7 +37,9 @@
 //!
 //! Message compression is gzip ([`Encoding`]): the server decompresses a gzip request unless
 //! [`Server::accept_encodings`] says otherwise, and compresses a reply in gzip only when
-//! [`Server::send_encodings`] lists it and the caller's `grpc-accept-encoding` does too.
+//! [`Server::send_encodings`] lists it and the caller's `grpc-accept-encoding` does too. A reply
+//! built from a [`Response`] marked [`uncompressed`](Response::uncompressed) is sent uncompressed
+//! whatever the two agree.
 
 mod client;
 mod compression;
