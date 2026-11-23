@@ -23,6 +23,11 @@ impl Harness for OnTokio {
             .block_on(fut)
     }
 
+    /// The scenario's runtime's workers; the thread in `block_on` polls only the future it runs.
+    fn workers() -> usize {
+        tokio::runtime::Handle::current().metrics().num_workers()
+    }
+
     /// A multi-thread runtime, so its worker takes up what the scenario spawns before the stop,
     /// dropped on a thread of its own: dropping a runtime inside another's `block_on` panics. The
     /// clock-only `Timer` from either constructor is held to the same refusal, and so is

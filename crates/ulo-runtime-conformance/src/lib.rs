@@ -18,6 +18,13 @@ pub trait Harness {
     /// the runtime spawns while `fut` waits. Each scenario calls it once.
     fn block_on<F: Future>(fut: F) -> F::Output;
 
+    /// How many threads poll the tasks of the runtime [`runtime`](Self::runtime) answers, the
+    /// thread running `block_on` among them where it polls tasks too. The blocking scenario hands
+    /// over more pieces of blocking work than this, so a runtime running blocking work on those
+    /// threads has none left for the task that releases them. Called inside the future `block_on`
+    /// runs.
+    fn workers() -> usize;
+
     /// A runtime of its own, running, with what shuts it down, for the scenarios on a runtime that
     /// has shut down. `None` for a runtime that cannot shut down while a value of it is held,
     /// whose suite then declares those scenarios not applicable. Called inside the future
@@ -71,6 +78,7 @@ pub type Run = Box<dyn Fn(BoxFuture<'static, ()>) -> BoxFuture<'static, Result<(
 /// #     type Runtime = Smol;
 /// #     fn runtime() -> Smol { Smol::current().expect("inside `block_on`") }
 /// #     fn block_on<F: Future>(fut: F) -> F::Output { Smol::new(Arc::new(Executor::new())).block_on(fut) }
+/// #     fn workers() -> usize { 1 }
 /// #     fn stoppable() -> Option<Stoppable<Smol>> { None }
 /// # }
 /// runtime_suite!(OnSmol; not_applicable {
@@ -130,7 +138,7 @@ macro_rules! runtime_suite {
             abort_all_aborts_every_task => set::abort_all,
             join_all_returns_once_every_task_has_ended => set::join_all,
             a_dropped_set_aborts_its_tasks => set::dropped,
-            blocking_work_runs_beside_the_runtime_s_tasks => blocking::beside_tasks,
+            blocking_work_runs_beside_the_runtime_s_tasks => blocking::beside_tasks [workers],
             blocking_work_runs_off_the_caller_s_thread_and_answers_its_value => blocking::answered,
             blocking_work_that_panics_is_panicked_and_goes_no_further => blocking::panicked,
             the_app_binds_the_runtime_as_one_object => app::one_object,
@@ -140,7 +148,7 @@ macro_rules! runtime_suite {
             run_on_a_shut_down_runtime_answers_runtime_shut_down => refusal::run_refused [stoppable],
         );
     };
-    (@cases $harness:ty; $($name:ident => $module:ident :: $case:ident $([$stoppable:ident])?),* $(,)?) => {
+    (@cases $harness:ty; $($name:ident => $module:ident :: $case:ident $([$takes:ident])?),* $(,)?) => {
         #[allow(dead_code, non_upper_case_globals)]
         mod __ulo_runtime_conformance_scenarios {
             $(pub(super) const $name: () = ();)*
@@ -148,7 +156,7 @@ macro_rules! runtime_suite {
         $(
             __ulo_runtime_conformance_stamp!($name, fn $name() {
                 <$harness as $crate::Harness>::block_on(async {
-                    $crate::runtime_suite!(@run $harness, $name, $module::$case $(, $stoppable)?).await
+                    $crate::runtime_suite!(@run $harness, $name, $module::$case $(, $takes)?).await
                 });
             });
         )*
@@ -164,6 +172,9 @@ macro_rules! runtime_suite {
                 "` not applicable with the reason",
             )),
         )
+    };
+    (@run $harness:ty, $name:ident, $module:ident :: $case:ident, workers) => {
+        $crate::cases::$module::$case(<$harness as $crate::Harness>::runtime(), <$harness as $crate::Harness>::workers())
     };
     (@run $harness:ty, $name:ident, $module:ident :: $case:ident) => {
         $crate::cases::$module::$case(<$harness as $crate::Harness>::runtime())

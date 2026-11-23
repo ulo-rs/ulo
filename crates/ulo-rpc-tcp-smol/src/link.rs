@@ -55,7 +55,8 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 /// A host name, `billing:7000`, is resolved through the system resolver, `ToSocketAddrs`, so
 /// `/etc/hosts`, nsswitch and the search list apply, as that runtime's blocking work
 /// (`Runtime::spawn_blocking`, `blocking::unblock` on `ulo_runtime_smol::Smol`). A server resolves
-/// it once, in `prepare`, binds the first of its addresses that binds, and reports a name resolving to no address as a
+/// it once, in `prepare`, binds the first of its addresses that binds, logging the address bound at
+/// `info`, and reports a name resolving to no address as a
 /// `Configure` refusal beside its other problems. A client resolves it at every connect and tries
 /// each address in the resolver's order until one connects, so a reconnect follows the name to new
 /// addresses; a name resolving to no address fails that connect, the call failing `Unavailable`

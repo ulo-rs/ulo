@@ -96,25 +96,84 @@ pub struct EndpointError {
 enum Expected {
     Address,
     AddressOrHost,
+    /// A host name and port whose name has an empty label.
+    EmptyLabel,
 }
 
 impl EndpointError {
     pub(crate) fn address_or_host(text: &str) -> EndpointError {
         EndpointError { text: text.to_owned(), expected: Expected::AddressOrHost }
     }
+
+    pub(crate) fn empty_label(text: &str) -> EndpointError {
+        EndpointError { text: text.to_owned(), expected: Expected::EmptyLabel }
+    }
 }
 
 impl fmt::Display for EndpointError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = Escaped(&self.text);
         match self.expected {
-            Expected::Address => write!(f, "`{}` is not a socket address such as `0.0.0.0:8080`", self.text),
-            Expected::AddressOrHost => write!(
+            Expected::Address => write!(f, "`{text}` is not a socket address such as `0.0.0.0:8080`"),
+            Expected::AddressOrHost => {
+                write!(f, "`{text}` is neither a socket address such as `0.0.0.0:8080` nor a host name and port such as `billing:7000`")
+            }
+            Expected::EmptyLabel => write!(
                 f,
-                "`{}` is neither a socket address such as `0.0.0.0:8080` nor a host name and port such as `billing:7000`",
-                self.text
+                "`{text}` is neither a socket address such as `0.0.0.0:8080` nor a host name and port such as `billing:7000`: \
+                 its name has an empty label, a dot beginning it or two dots together; a single trailing dot is accepted"
             ),
         }
     }
+}
+
+/// Text as written with each control character and each format character escaped, `\u{0}` for a
+/// NUL and `\u{202e}` for a right-to-left override, so a refusal prints on one line, in the order
+/// written, and holds nothing a terminal or a log reader acts on.
+pub(crate) struct Escaped<'a>(pub(crate) &'a str);
+
+impl fmt::Display for Escaped<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for c in self.0.chars() {
+            if c.is_control() || is_format(c) {
+                write!(f, "{}", c.escape_default())?;
+            } else {
+                fmt::Write::write_char(f, c)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Unicode general category Cf as of Unicode 15.1, which `char` has no test for: the bidi
+/// embeddings, overrides and isolates, zero-width spaces and joiners, the byte-order mark, and the
+/// rest of the format characters.
+const FORMAT: &[(char, char)] = &[
+    ('\u{ad}', '\u{ad}'),
+    ('\u{600}', '\u{605}'),
+    ('\u{61c}', '\u{61c}'),
+    ('\u{6dd}', '\u{6dd}'),
+    ('\u{70f}', '\u{70f}'),
+    ('\u{890}', '\u{891}'),
+    ('\u{8e2}', '\u{8e2}'),
+    ('\u{180e}', '\u{180e}'),
+    ('\u{200b}', '\u{200f}'),
+    ('\u{202a}', '\u{202e}'),
+    ('\u{2060}', '\u{2064}'),
+    ('\u{2066}', '\u{206f}'),
+    ('\u{feff}', '\u{feff}'),
+    ('\u{fff9}', '\u{fffb}'),
+    ('\u{110bd}', '\u{110bd}'),
+    ('\u{110cd}', '\u{110cd}'),
+    ('\u{13430}', '\u{1343f}'),
+    ('\u{1bca0}', '\u{1bca3}'),
+    ('\u{1d173}', '\u{1d17a}'),
+    ('\u{e0001}', '\u{e0001}'),
+    ('\u{e0020}', '\u{e007f}'),
+];
+
+pub(crate) fn is_format(c: char) -> bool {
+    FORMAT.iter().any(|&(first, last)| (first..=last).contains(&c))
 }
 
 impl Error for EndpointError {}

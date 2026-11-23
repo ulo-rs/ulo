@@ -212,7 +212,7 @@ impl ServiceInner {
         let Some(permit) = self.admission.try_admit() else {
             return render::shed(&self.config);
         };
-        if let Some(refused) = ambiguous(&req.head, &self.config) {
+        if let Some(refused) = ambiguous(req.head.version, &req.head.headers, &self.config) {
             return refused;
         }
         let mut opts = ExecOptions::new();
@@ -734,14 +734,15 @@ fn carries_none(status: StatusCode) -> bool {
 /// `Content-Length` of such a request as it parses the head and closes the connection after the
 /// answer, so on hyper and the hosts built on it the request arrives here with its
 /// `Transfer-Encoding` alone and is read by it. HTTP/2 carries the authority in `:authority`, and an h2 server
-/// refuses `Transfer-Encoding` before the service sees the request.
-fn ambiguous(head: &http::request::Parts, config: &HttpConfig) -> Option<Response> {
-    if head.version > Version::HTTP_11 {
+/// refuses `Transfer-Encoding` before the service sees the request. `ulo-ws-hyper` answers a
+/// handshake on its own port through it as well (`__private::ambiguous_head`).
+pub(crate) fn ambiguous(version: Version, headers: &HeaderMap, config: &HttpConfig) -> Option<Response> {
+    if version > Version::HTTP_11 {
         return None;
     }
-    let why = if head.headers.get_all(HOST).iter().nth(1).is_some() {
+    let why = if headers.get_all(HOST).iter().nth(1).is_some() {
         "the request carries more than one `Host` line"
-    } else if head.headers.contains_key(CONTENT_LENGTH) && head.headers.contains_key(TRANSFER_ENCODING) {
+    } else if headers.contains_key(CONTENT_LENGTH) && headers.contains_key(TRANSFER_ENCODING) {
         "the request carries `Content-Length` beside `Transfer-Encoding`"
     } else {
         return None;
@@ -751,7 +752,7 @@ fn ambiguous(head: &http::request::Parts, config: &HttpConfig) -> Option<Respons
     refused.headers_mut().insert(CONNECTION, HeaderValue::from_static("close"));
     // hyper reads the response's version to decide the connection's persistence: an HTTP/1.1
     // answer to an HTTP/1.0 request asking for `keep-alive` has its `close` replaced.
-    *refused.version_mut() = head.version;
+    *refused.version_mut() = version;
     refused.extensions_mut().insert(Routing::Unrouted);
     Some(refused)
 }

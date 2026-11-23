@@ -383,13 +383,17 @@ async fn connection<L: Listener>(accepted: Accepted<L>, table: GatewayTable, htt
 }
 
 /// One request: the handshake decision written as hyper's response, and on a 101 the upgraded
-/// connection handed to the driver. An HTTP/1.1 request with no `Host` is answered first, with the
-/// HTTP backend's own refusal, and reaches no gateway: the check belongs to the server reading the
-/// wire, as on the HTTP server's port, and `GatewayTable::handshake` admits a head without the
-/// field, so a server of a host's own keeps its host's rule. HTTP/1.0 reaches the handshake, which
-/// refuses it for its version.
+/// connection handed to the driver. An HTTP/1.1 request with no `Host`, and an HTTP/1.x request
+/// two readers could read differently, more than one `Host` line among them, are answered first,
+/// each with the HTTP server's own refusal, and reach no gateway: the checks belong to the server
+/// reading the wire, as on the HTTP server's port, and `GatewayTable::handshake` admits such a
+/// head, so a server of a host's own keeps its host's rule. HTTP/1.0 with no `Host` reaches the
+/// handshake, which refuses it for its version.
 async fn respond(table: &GatewayTable, mut req: http::Request<Incoming>, peer: Option<SocketAddr>) -> http::Response<HttpBody> {
     if let Some(refused) = ulo_http::__private::missing_host(req.version(), req.headers()) {
+        return refused;
+    }
+    if let Some(refused) = ulo_http::__private::ambiguous_head(req.version(), req.headers()) {
         return refused;
     }
     let pending = hyper::upgrade::on(&mut req);

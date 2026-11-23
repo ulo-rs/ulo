@@ -24,6 +24,11 @@ impl Harness for OnSmol {
         Smol::new(Arc::new(Executor::new())).with_workers(WORKERS).block_on(fut)
     }
 
+    /// The test's thread runs the executor too.
+    fn workers() -> usize {
+        WORKERS + 1
+    }
+
     fn stoppable() -> Option<Stoppable<Smol>> {
         None
     }

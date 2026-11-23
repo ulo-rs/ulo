@@ -1,11 +1,14 @@
-//! An HTTP/1.1 request with no `Host` field on the standalone server's port, over a raw socket:
-//! RFC 6455 §4.2.1 requires `Host` in a handshake, and this server reads requests off the wire, so
-//! it answers the HTTP server's own refusal, the 400 problem document with `Connection: close`,
-//! and nothing pipelined behind it is answered. An absolute-form target with no `Host` is refused
-//! too; an empty `Host`, an absolute-form target naming another `Host` and a handshake carrying
-//! one switch protocols, and HTTP/1.0 reaches the handshake, which refuses it for its version. The
-//! HTTP server's port answers the same handshake with the same refusal, and a handshake carrying
-//! `Host` there switches. Run on tokio and on smol, the two listeners sharing the connection code.
+//! The `Host` lines of a request on the standalone server's port, over a raw socket. RFC 6455
+//! §4.2.1 requires `Host` in a handshake and RFC 9112 §3.2 refuses a request with more than one,
+//! and this server reads requests off the wire, so it answers each with the HTTP server's own
+//! refusal, the 400 problem document with `Connection: close`, and nothing pipelined behind it is
+//! answered. With no `Host`: an absolute-form target is refused too; an empty `Host`, an
+//! absolute-form target naming another `Host` and a handshake carrying one switch protocols, and
+//! HTTP/1.0 reaches the handshake, which refuses it for its version. Two `Host` lines are refused
+//! whether their values are equal or differ, on HTTP/1.0 as well, the answer carrying the
+//! request's version. The HTTP server's port answers the same handshakes with the same refusals,
+//! and a handshake carrying one `Host` there switches. Run on tokio and on smol, the two listeners
+//! sharing the connection code.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -25,7 +28,10 @@ use ulo_ws_hyper::ServerOn;
 const WAIT: Duration = Duration::from_secs(5);
 
 /// The detail of the HTTP server's refusal of a request with no `Host`.
-const DETAIL: &str = "an HTTP/1.1 request carries no `Host`";
+const NO_HOST: &str = "an HTTP/1.1 request carries no `Host`";
+
+/// The detail of the HTTP server's refusal of a request with more than one `Host` line.
+const TWO_HOSTS: &str = "the request carries more than one `Host` line";
 
 #[controller]
 struct Own;
@@ -150,8 +156,24 @@ async fn connect(addr: SocketAddr, request: &str) -> TcpStream {
 
 /// A handshake's request line, `Host` line or none, and the lines RFC 6455 §4.2.1 asks for.
 fn handshake(line: &str, host: Option<&str>) -> String {
-    let host = host.map(|host| format!("Host:{host}\r\n")).unwrap_or_default();
-    format!("{line}\r\n{host}Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+    handshake_hosts(line, host.as_slice())
+}
+
+/// A handshake's request line, a `Host` line for each of `hosts`, and the lines RFC 6455 §4.2.1
+/// asks for.
+fn handshake_hosts(line: &str, hosts: &[&str]) -> String {
+    let hosts: String = hosts.iter().map(|host| format!("Host:{host}\r\n")).collect();
+    format!("{line}\r\n{hosts}Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+}
+
+/// The two-`Host` handshakes on `path`, the values equal and differing, over HTTP/1.1, and their
+/// status line's version.
+fn two_hosts(path: &str, authority: &str) -> [(&'static str, String, &'static str); 3] {
+    [
+        ("two equal `Host` lines", handshake_hosts(&format!("GET {path} HTTP/1.1"), &[authority, authority]), "HTTP/1.1"),
+        ("two differing `Host` lines", handshake_hosts(&format!("GET {path} HTTP/1.1"), &[authority, "other.example"]), "HTTP/1.1"),
+        ("two `Host` lines on HTTP/1.0", handshake_hosts(&format!("GET {path} HTTP/1.0"), &[authority, authority]), "HTTP/1.0"),
+    ]
 }
 
 /// The status lines in `answer`: `HTTP/1.x`, a space and three digits, which the refusal's detail,
@@ -175,10 +197,16 @@ fn body(answer: &str) -> &str {
 
 /// The answer is the HTTP server's refusal of a request with no `Host`, and the only one written.
 fn refused(what: &str, answer: &str) {
-    assert!(answer.starts_with("HTTP/1.1 400 "), "{what}: {answer:?}");
+    refused_with(what, answer, "HTTP/1.1", NO_HOST);
+}
+
+/// The answer is the HTTP server's 400 problem document with `detail`, on `version`'s status line
+/// with `Connection: close`, and the only one written.
+fn refused_with(what: &str, answer: &str, version: &str, detail: &str) {
+    assert!(answer.starts_with(&format!("{version} 400 ")), "{what}: {answer:?}");
     assert_eq!(header(answer, "connection"), Some("close"), "{what}: {answer:?}");
     assert_eq!(header(answer, "content-type"), Some("application/problem+json"), "{what}: {answer:?}");
-    assert!(body(answer).contains(DETAIL), "{what}: {answer:?}");
+    assert!(body(answer).contains(detail), "{what}: {answer:?}");
     assert_eq!(status_lines(answer), 1, "{what}: the request pipelined behind it was answered: {answer:?}");
 }
 
@@ -208,10 +236,14 @@ async fn standalone_cases(app: &Served) {
     let answer = app.to_close(addr, &handshake("GET /own HTTP/1.0", None)).await;
     assert!(answer.contains(" 400 "), "HTTP/1.0, no `Host`: {answer:?}");
     assert_eq!(body(&answer), "a WebSocket handshake is HTTP/1.1", "HTTP/1.0, no `Host`, is refused by the handshake for its version: {answer:?}");
+
+    for (what, request, version) in two_hosts("/own", &authority) {
+        refused_with(what, &app.to_close(addr, &(request + &valid)).await, version, TWO_HOSTS);
+    }
 }
 
 #[tokio::test]
-async fn the_standalone_server_refuses_a_handshake_with_no_host_as_the_http_port_does() {
+async fn the_standalone_server_refuses_a_handshake_with_no_host_or_two_as_the_http_port_does() {
     let app = Served::start::<ulo_listener_tokio::TokioListener>(ulo_runtime_tokio::Tokio::current(), true).await;
     standalone_cases(&app).await;
 
@@ -223,13 +255,24 @@ async fn the_standalone_server_refuses_a_handshake_with_no_host_as_the_http_port
         assert_eq!(header(&own, name), header(&shared, name), "`{name}` on the two ports: {own:?} and {shared:?}");
     }
     assert_eq!(body(&own), body(&shared), "the refusal's body on the two ports");
+    let (own_authority, http_authority) = (app.own.to_string(), http.to_string());
+    for ((what, own_request, _), (_, shared_request, version)) in two_hosts("/own", &own_authority).into_iter().zip(two_hosts("/shared", &http_authority)) {
+        let own = app.to_close(app.own, &own_request).await;
+        let shared = app.to_close(http, &shared_request).await;
+        refused_with(&format!("{what} on the HTTP port"), &shared, version, TWO_HOSTS);
+        assert_eq!(own.lines().next(), shared.lines().next(), "{what}: the status line on the two ports");
+        for name in ["connection", "content-type", "content-length"] {
+            assert_eq!(header(&own, name), header(&shared, name), "{what}: `{name}` on the two ports: {own:?} and {shared:?}");
+        }
+        assert_eq!(body(&own), body(&shared), "{what}: the refusal's body on the two ports");
+    }
     let head = app.head(http, &handshake("GET /shared HTTP/1.1", Some(&http.to_string()))).await;
     assert!(head.starts_with("HTTP/1.1 101 "), "a handshake with `Host` on the HTTP port: {head:?}");
     app.stop().await;
 }
 
 #[test]
-fn the_standalone_server_on_smol_refuses_a_handshake_with_no_host() {
+fn the_standalone_server_on_smol_refuses_a_handshake_with_no_host_or_two() {
     OnSmol::block_on(async {
         let app = Served::start::<SmolListener>(OnSmol::runtime(), false).await;
         standalone_cases(&app).await;

@@ -367,7 +367,9 @@ impl Core {
         }
         let listener = bind_first(&prepared.endpoints)?;
         let local = listener.local_addr();
+        let endpoint = self.endpoint.target()?;
         let listener = adopt(listener, prepared.tls.clone())?;
+        tracing::info!(ulo.transport = "rpc", link = "tcp", endpoint = %endpoint, address = %local, "the RPC server listens on `address`");
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", local).tls(prepared.tls.is_some())];
         let (deliveries, received) = mpsc::channel(DELIVERY_QUEUE);
         let (forwarded, inbound) = mpsc::channel(DELIVERY_QUEUE);

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use ulo::{Redacted, Runtime, TaskEnd, spawn_blocking_with};
 
-use crate::endpoint::EndpointError;
+use crate::endpoint::{EndpointError, Escaped};
 
 /// A host name and port, `billing:7000`, which a link resolves to socket addresses through the
 /// system resolver.
@@ -20,8 +20,11 @@ impl HostPort {
     /// `billing:7000`, `billing.default.svc.cluster.local.:7000`: a name, then a decimal port after
     /// the last `:`. The name is kept as written, a trailing dot included, since `/etc/hosts` and
     /// search lists read `billing.` and `billing` differently. Refused: no port, a port above
-    /// 65535, an empty name, and a name holding a `:`, a bracket, whitespace or one of `/@?#`,
-    /// none of which a host name holds. An IP address and port is a socket address, which
+    /// 65535, an empty name, a name holding a `:`, a bracket, whitespace, a control character or
+    /// one of `/@?#`, none of which a host name holds, and a name with an empty label other than
+    /// the one a trailing dot ends, `.`, `..`, `a..b` or `.a`, which no lookup answers. A label
+    /// over 63 bytes, a name over 253 and an underscore are left to the resolver, since
+    /// `/etc/hosts` can hold such names. An IP address and port is a socket address, which
     /// `Endpoint::parse` reads; this one does not tell the two apart.
     pub fn parse(text: &str) -> Result<HostPort, EndpointError> {
         let refused = || EndpointError::address_or_host(text);
@@ -33,6 +36,9 @@ impl HostPort {
         let foreign = |c: char| c.is_whitespace() || c.is_control() || matches!(c, ':' | '[' | ']' | '/' | '@' | '?' | '#');
         if host.is_empty() || host.contains(foreign) {
             return Err(refused());
+        }
+        if host.strip_suffix('.').unwrap_or(host).split('.').any(str::is_empty) {
+            return Err(EndpointError::empty_label(text));
         }
         Ok(HostPort { host: host.to_owned(), port })
     }
@@ -145,7 +151,8 @@ impl ResolveError {
 
 impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let host = &self.host;
+        let written = self.host.to_string();
+        let host = Escaped(&written);
         match &self.cause {
             ResolveCause::Lookup(error) => write!(f, "`{host}` resolved to no address: {error}"),
             ResolveCause::NoAddress => write!(f, "`{host}` resolved to no address: the resolver answered none"),
@@ -169,6 +176,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_format_character_in_a_name_that_resolved_to_nothing_is_escaped_in_the_message() {
+        let error = ResolveError { host: HostPort::parse("bil\u{202e}ling:7000").expect("a name with a format character parses"), cause: ResolveCause::NoAddress };
+        let text = error.to_string();
+        assert!(!text.contains('\u{202e}'), "the message prints the override raw: {text}");
+        assert!(text.contains("bil\\u{202e}ling:7000"), "{text}");
+    }
+
+    #[test]
     fn a_host_name_and_port_parse_and_everything_else_is_refused() {
         for (text, host, port) in [("billing:7000", "billing", 7000), ("billing.default.svc.cluster.local.:7000", "billing.default.svc.cluster.local.", 7000), ("Billing_1:0", "Billing_1", 0)] {
             let parsed = HostPort::parse(text).unwrap_or_else(|error| panic!("`{text}` was refused: {error}"));
@@ -177,6 +192,51 @@ mod tests {
         }
         for text in ["billing", "billing:", ":7000", "billing:70000", "billing:+70", "billing:7a", "::1:7000", "[::1]:x", "bil ling:7000", "user@billing:7000", "billing/x:7000"] {
             assert!(HostPort::parse(text).is_err(), "`{text}` parsed as a host name and port");
+        }
+    }
+
+    /// An empty label is refused at parse, where a link is set up, except the one a trailing dot
+    /// ends; a long label and an underscore are left to the resolver.
+    #[test]
+    fn a_name_with_an_empty_label_is_refused_and_one_the_resolver_decides_is_not() {
+        for text in [".:7000", "..:7000", "a..b:7000", ".a:7000", "billing..:7000"] {
+            match HostPort::parse(text) {
+                Ok(parsed) => panic!("`{text}` parsed as {parsed:?}"),
+                Err(refused) => assert!(refused.to_string().contains("its name has an empty label"), "`{text}`: {refused}"),
+            }
+        }
+        let long = format!("{}.example:7000", "a".repeat(64));
+        for text in ["billing.:7000", "a_b:7000", long.as_str()] {
+            let parsed = HostPort::parse(text).unwrap_or_else(|error| panic!("`{text}` was refused: {error}"));
+            assert_eq!(parsed.to_string(), text, "`{text}` kept as written");
+        }
+    }
+
+    /// A control character in the text is refused, and the refusal prints it escaped, so the
+    /// message holds no raw NUL.
+    #[test]
+    fn a_control_character_is_refused_and_escaped_in_the_refusal() {
+        for (text, shown) in [("bil\0ling:7000", "bil\\u{0}ling:7000"), ("billing\n:7000", "billing\\n:7000"), ("\u{1b}[2J:7000", "\\u{1b}[2J:7000")] {
+            let refused = HostPort::parse(text).expect_err("a name holding a control character");
+            let message = refused.to_string();
+            assert!(!message.contains(|c: char| c.is_control()), "`{text:?}`: the refusal holds a control character: {message:?}");
+            assert!(message.contains(&format!("`{shown}`")), "`{text:?}`: the refusal does not show the text escaped: {message:?}");
+        }
+    }
+
+    /// A format character in refused text, a bidi override or isolate, a zero-width space or a
+    /// byte-order mark, is printed escaped, so the refusal reads in the order the text was written.
+    #[test]
+    fn a_format_character_in_the_refusal_is_escaped() {
+        for (text, shown) in [
+            ("bil\u{202e}ling", "bil\\u{202e}ling"),
+            ("bil\u{200b}ling", "bil\\u{200b}ling"),
+            ("\u{feff}billing", "\\u{feff}billing"),
+            ("bil\u{2066}ling", "bil\\u{2066}ling"),
+        ] {
+            let message = HostPort::parse(text).expect_err("text with no port").to_string();
+            assert!(message.contains(&format!("`{shown}`")), "{text:?}: the refusal does not show the text escaped: {message:?}");
+            assert!(!message.contains(|c: char| crate::endpoint::is_format(c)), "{text:?}: the refusal holds a format character: {message:?}");
         }
     }
 }
