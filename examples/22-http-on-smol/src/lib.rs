@@ -14,7 +14,8 @@ impl HelloController {
 #[module(controllers = [HelloController])]
 pub struct AppModule;
 
-/// The application, before a runtime is chosen: `main` and the tests each name theirs.
+/// The application, before a runtime is chosen, for the tests that write the phases out; `main`
+/// hands `AppModule` to `run`.
 pub fn builder() -> AppBuilder {
     App::builder(AppModule)
 }

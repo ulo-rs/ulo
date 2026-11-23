@@ -144,6 +144,7 @@ async-io = "2.6"
 async-lock = "3.4"
 async-nats = { version = "0.46", default-features = false }
 async-net = "2"
+async-signal = "0.2"
 async-trait = "0.1.86"
 async-tungstenite = { version = "0.33", default-features = false }
 axum = { version = "0.8", default-features = false }
