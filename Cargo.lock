@@ -10012,11 +10012,9 @@ name = "ulo-ws-hyper"
 version = "0.1.0-alpha.3"
 dependencies = [
  "async-net",
- "bytes",
  "futures-io",
  "futures-util",
  "http 1.5.0",
- "http-body-util",
  "hyper 1.11.1",
  "rmp-serde",
  "serde",
@@ -10030,6 +10028,7 @@ dependencies = [
  "ulo-conformance-support",
  "ulo-http",
  "ulo-http-conformance",
+ "ulo-http-hyper",
  "ulo-listener-smol",
  "ulo-listener-tokio",
  "ulo-net",

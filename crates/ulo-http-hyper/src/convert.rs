@@ -13,7 +13,7 @@ use ulo_server_hyper::FuturesIo;
 /// also answers requests an application builds in a test and an embedding host hands over, and a
 /// host keeps its own policy for the requests it reads.
 pub(crate) fn missing_host(req: &http::Request<Incoming>) -> Option<ulo_http::Response> {
-    (req.version() == http::Version::HTTP_11 && !req.headers().contains_key(http::header::HOST)).then(|| ulo_http::__private::missing_host(req.version()))
+    ulo_http::__private::missing_host(req.version(), req.headers())
 }
 
 /// The request as `ulo-http` reads it: parts, body, the connection as the accept loop reported
