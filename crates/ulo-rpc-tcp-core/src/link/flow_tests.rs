@@ -696,6 +696,9 @@ mod checker {
                 waker.wake();
             }
         }
+        fn taken(&self) -> usize {
+            lock(&self.0).taken.len()
+        }
         fn frames(&self) -> Vec<Frame> {
             let state = lock(&self.0);
             let mut frames = Vec::new();
@@ -829,41 +832,121 @@ mod checker {
         drop(reply);
     }
 
-    /// A peer reading 1 KiB a second is progress: a streamed item of 200 KiB, which takes it over
-    /// three minutes, is written whole and its call is not cancelled, the stall timed from the
-    /// writer's last write the socket took bytes from. Planted break: the stall timed from the
-    /// frame the writer took, which cancels the call at 60 s with the item a third written.
-    #[test]
-    fn a_peer_reading_slowly_keeps_a_large_item_s_call() {
-        const ITEM: usize = 200 * 1024;
-        let manual = Manual::new();
-        let cancelled = Arc::new(AtomicUsize::new(0));
-        let counted = Arc::clone(&cancelled);
-        let item = Data::new(format!("\"{}\"", "a".repeat(ITEM)).into_bytes());
-        let running = start_with(&manual, |_| {}, move |manual, delivery| match (delivery.frame, delivery.reply) {
-            (Frame::Req { id, .. }, Some(reply)) => {
-                let item = item.clone();
+    /// A server answering each request with `reply(id)`, sent on a task that then holds the call
+    /// open when `hold` is set; `cancelled` counts the `cancel`s the connection's end delivers.
+    fn answering(manual: &Manual, reply: impl Fn(u64) -> Frame + Send + 'static, hold: bool, cancelled: &Arc<AtomicUsize>) -> Running {
+        let counted = Arc::clone(cancelled);
+        start_with(manual, |_| {}, move |manual, delivery| match (delivery.frame, delivery.reply) {
+            (Frame::Req { id, .. }, Some(path)) => {
+                let frame = reply(id);
                 drop(manual.spawn(Box::pin(async move {
-                    let _ = reply.send(Frame::Item { id, data: item }).await;
-                    pending::<()>().await;
+                    let _ = path.send(frame).await;
+                    if hold {
+                        pending::<()>().await;
+                    }
                 })));
             }
             (Frame::Cancel { .. }, None) => {
                 counted.fetch_add(1, AtomicOrdering::SeqCst);
             }
             _ => {}
-        });
+        })
+    }
+
+    /// Q36-5: a peer reading 1 KiB a second, which would take over three minutes over a streamed
+    /// item of 200 KiB, is cut at the idle timeout with the item part written. Progress is a frame
+    /// written whole, so the stall is timed from the instant the writer took the item, and its
+    /// call is cancelled `Disconnected` at 60 s; a reply larger than a peer can read within the
+    /// timeout is what `max_frame` bounds. Planted break: the stall mark moved to each write the
+    /// socket takes bytes from, which keeps the call until the item is written whole.
+    #[test]
+    fn a_peer_reading_a_large_item_slowly_is_cut_at_the_idle_timeout() {
+        const ITEM: usize = 200 * 1024;
+        let manual = Manual::new();
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let item = Data::new(format!("\"{}\"", "a".repeat(ITEM)).into_bytes());
+        let running = answering(&manual, move |id| Frame::Item { id, data: item.clone() }, true, &cancelled);
         let (fed, gated) = (Fed::default(), Gated::default());
         running.connect(FedHalf(fed.clone()), gated.clone());
         manual.run();
         fed.push(&framed(&request(1)));
         manual.run();
-        for _ in 0..(ITEM / 1024 + 4) {
+        for _ in 1..DEFAULT_IDLE_TIMEOUT.as_secs() {
             gated.open(1024);
             manual.advance(Duration::from_secs(1));
         }
-        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "a call whose peer read 1 KiB a second was cancelled as stalled");
-        assert_eq!(gated.frames().len(), 1, "the item was written whole");
+        gated.open(1024);
+        manual.advance(Duration::from_secs(1) - Duration::from_millis(1));
+        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "the call was cancelled before the idle timeout");
+        assert_eq!(gated.taken(), 60 * 1024, "the peer took 1 KiB each second");
+        manual.advance(Duration::from_millis(1));
+        assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 1, "a call whose peer read 1 KiB a second of a 200 KiB item outlived the idle timeout");
+        assert!(gated.frames().is_empty(), "the item was written whole");
+        manual.advance(CUT_GRACE);
+        assert!(fed.dropped(), "the slow reader's connection outlived its idle timeout and grace");
+    }
+
+    /// Q36-5: a peer taking one byte of a frame within each timeout makes no progress, on a
+    /// streamed reply's call in flight and on a unary reply's connection holding no call alike,
+    /// the one definition being a frame written whole: each connection is cut 60 s after its
+    /// writer took the frame, the byte taken at 59 s moving nothing. Planted breaks: the stall mark
+    /// moved at each write, which keeps the streamed reply's call open while the peer trickles;
+    /// and, beside it, a connection holding no call touched at each write, which keeps the unary
+    /// reply's connection open past 60 s.
+    #[test]
+    fn a_peer_taking_a_byte_per_timeout_is_cut_on_a_stream_and_on_a_unary_reply() {
+        for (what, streamed) in [("a streamed item", true), ("a unary reply", false)] {
+            let manual = Manual::new();
+            let cancelled = Arc::new(AtomicUsize::new(0));
+            let data = Data::new(format!("\"{}\"", "a".repeat(64)).into_bytes());
+            let reply = move |id| if streamed { Frame::Item { id, data: data.clone() } } else { Frame::Res { id, data: data.clone() } };
+            let running = answering(&manual, reply, streamed, &cancelled);
+            let (fed, gated) = (Fed::default(), Gated::default());
+            running.connect(FedHalf(fed.clone()), gated.clone());
+            manual.run();
+            fed.push(&framed(&request(1)));
+            manual.run();
+            manual.advance(DEFAULT_IDLE_TIMEOUT - Duration::from_secs(1));
+            gated.open(1);
+            manual.run();
+            assert_eq!(gated.taken(), 1, "{what}: the peer took a byte at 59 s");
+            manual.advance(Duration::from_secs(1) - Duration::from_millis(1));
+            assert_eq!(cancelled.load(AtomicOrdering::SeqCst), 0, "{what}: cancelled before the idle timeout");
+            manual.advance(Duration::from_millis(1));
+            assert_eq!(cancelled.load(AtomicOrdering::SeqCst), usize::from(streamed), "{what}: the calls cancelled `Disconnected` at the idle timeout");
+            manual.advance(CUT_GRACE);
+            assert!(fed.dropped(), "{what}: a peer taking a byte per timeout held its connection past the idle timeout and grace");
+        }
+    }
+
+    /// A peer that reads none of a unary reply and sends a frame the server drops, a `cancel`
+    /// naming no call, every 50 s is cut 60 s after the writer took the reply: a frame read whole
+    /// keeps a connection holding no call from idling, and a writer holding a frame it has not
+    /// written whole idles it whatever calls it holds, none included. Planted break: the stall
+    /// read only while a call is in flight, which keeps the connection open for as long as the
+    /// peer sends.
+    #[test]
+    fn a_stalled_writer_closes_a_connection_holding_no_call_whatever_the_peer_sends() {
+        let manual = Manual::new();
+        let cancelled = Arc::new(AtomicUsize::new(0));
+        let data = Data::new(format!("\"{}\"", "a".repeat(64)).into_bytes());
+        let running = answering(&manual, move |id| Frame::Res { id, data: data.clone() }, false, &cancelled);
+        let (fed, gated) = (Fed::default(), Gated::default());
+        running.connect(FedHalf(fed.clone()), gated.clone());
+        manual.run();
+        fed.push(&framed(&request(1)));
+        manual.run();
+        let cancel = Codec::Json.encode_frame(&Frame::Cancel { id: 999 }).expect("a cancel encodes").to_vec();
+        manual.advance(Duration::from_secs(50));
+        fed.push(&framed(&cancel));
+        manual.run();
+        manual.advance(Duration::from_secs(10) - Duration::from_millis(1));
+        assert!(!fed.dropped(), "closed before the idle timeout");
+        manual.advance(Duration::from_millis(1));
+        assert!(!fed.dropped(), "the connection dropped before the grace");
+        manual.advance(CUT_GRACE);
+        assert_eq!(gated.taken(), 0, "the peer read part of the reply");
+        assert!(fed.dropped(), "a writer stalled for the idle timeout left its connection open, the peer sending frames the server drops");
     }
 
     /// A writer that fails, as a reset peer's does, ends a reader waiting for room at once.

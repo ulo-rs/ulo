@@ -23,18 +23,16 @@ conformance-probe = ["ulo-ws/conformance-probe"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.3" }
-# `Upgraded`, the `futures-io` stream `ulo-ws`'s driver serves.
+# `Upgraded`, the `futures-io` stream `ulo-ws`'s driver serves; `HttpBody`, the responses' bodies;
+# and the HTTP server's refusal of a request with no `Host`, which this server answers too.
 ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.3" }
 ulo-server-hyper = { path = "../ulo-server-hyper", version = "=0.1.0-alpha.3" }
 ulo-listener-tokio = { path = "../ulo-listener-tokio", version = "=0.1.0-alpha.3", optional = true }
 ulo-net = { path = "../ulo-net", version = "=0.1.0-alpha.3" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.3" }
 ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.3" }
-bytes.workspace = true
 futures-util.workspace = true
 http.workspace = true
-# The responses' bodies.
-http-body-util.workspace = true
 hyper = { workspace = true, features = ["server", "http1"] }
 tracing.workspace = true
 
@@ -52,10 +50,13 @@ ulo-listener-smol = { path = "../ulo-listener-smol" }
 ulo-conformance-support = { path = "../ulo-conformance-support", features = ["smol"] }
 ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+# The HTTP server whose port `tests/missing_host.rs` answers the same handshake on.
+ulo-http-hyper = { path = "../ulo-http-hyper" }
 async-net.workspace = true
 futures-io.workspace = true
-# `sink`: the tests write through `SinkExt` on the client's socket.
-futures-util = { workspace = true, features = ["sink"] }
+# `sink`: the tests write through `SinkExt` on the client's socket. `io`: `tests/missing_host.rs`
+# reads and writes its raw requests through `AsyncReadExt` and `AsyncWriteExt`.
+futures-util = { workspace = true, features = ["sink", "io"] }
 # The MessagePack gateway's frames, which `messages.rs` encodes and decodes.
 rmp-serde.workspace = true
 serde = { workspace = true, features = ["derive"] }

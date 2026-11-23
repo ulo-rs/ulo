@@ -393,7 +393,9 @@ async fn within<F: Future>(what: &str, fut: F) -> F::Output {
     tokio::time::timeout(WAIT, fut).await.unwrap_or_else(|_| panic!("{what} did not happen within {WAIT:?}"))
 }
 
-/// A valid upgrade request's head for `path`, which `edit` may spoil.
+/// A valid upgrade request's head for `path`, which `edit` may spoil. It carries no `Host`: the
+/// table leaves that field to the server reading the wire, so every switch here also shows a head
+/// without one admitted.
 fn head(path: &str, edit: impl FnOnce(&mut Parts)) -> Parts {
     let mut head = http::Request::builder()
         .method(Method::GET)

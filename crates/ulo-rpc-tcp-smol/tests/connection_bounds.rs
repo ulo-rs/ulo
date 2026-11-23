@@ -71,7 +71,10 @@ fn an_idle_connection_is_sent_goaway_and_closed() {
         let serving = ulo::spawn_with(&OnSmol::runtime(), server.serve(std::future::pending::<Signal>()));
         let mut peer = TcpStream::connect(addr).expect("the peer connects");
         let began = Instant::now();
-        while clock.live(IDLE) == 0 {
+        // The connection's handshake bound is a sleep of the same length, created before the idle
+        // wait's and never polled on a plain socket. Advanced on a live sleep alone, the clock can move
+        // before the connection reads it, and its idle wait, timed from 60 s, never ends.
+        while clock.pending_at(IDLE).is_none() {
             assert!(began.elapsed() < PATIENCE, "the connection armed no idle wait within {PATIENCE:?}");
             OnSmol::runtime().sleep(Duration::from_millis(5)).await;
         }

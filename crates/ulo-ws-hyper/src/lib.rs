@@ -23,13 +23,11 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
 use futures_util::future::{self, Either};
-use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use ulo::{Bound, BoundAddr, BoxError, DrainToken, Mounted, Transport};
-use ulo_http::Upgraded;
+use ulo_http::{HttpBody, Upgraded};
 use ulo_server_hyper::{Accepted, FuturesIo, Listener, RuntimeTimer, Serve, ServeConfig};
 pub use ulo_server_hyper::ReadCount;
 use ulo_net::rustls::ServerConfig;
@@ -58,7 +56,10 @@ pub type Server = ServerOn<ulo_listener_tokio::TokioListener>;
 /// table refuses, a server with no such gateway among it, and every zero limit; it resolves the
 /// endpoints and loads TLS. Its failures are reported together, always in one order: the server's
 /// two timeouts, what the table refuses, the endpoints, then TLS. `bind` binds every endpoint,
-/// all-or-nothing. A request off the gateway paths is answered 404.
+/// all-or-nothing. A request off the gateway paths is answered 404. An HTTP/1.1 request with no
+/// `Host` field, which RFC 6455 §4.2.1 requires of a handshake, is answered 400 with
+/// `Connection: close` before any gateway sees it, the refusal `ulo_http_hyper::Server` answers on
+/// the HTTP server's port; a `Host` with an empty value passes.
 ///
 /// It serves the gateways declared `port = own`; the others are the HTTP server's, through the
 /// hand-off `WsModule` registers. Rooms and broadcasts are the application's `WsModule`'s; an
@@ -382,16 +383,23 @@ async fn connection<L: Listener>(accepted: Accepted<L>, table: GatewayTable, htt
 }
 
 /// One request: the handshake decision written as hyper's response, and on a 101 the upgraded
-/// connection handed to the driver.
-async fn respond(table: &GatewayTable, mut req: http::Request<Incoming>, peer: Option<SocketAddr>) -> http::Response<Full<Bytes>> {
+/// connection handed to the driver. An HTTP/1.1 request with no `Host` is answered first, with the
+/// HTTP backend's own refusal, and reaches no gateway: the check belongs to the server reading the
+/// wire, as on the HTTP server's port, and `GatewayTable::handshake` admits a head without the
+/// field, so a server of a host's own keeps its host's rule. HTTP/1.0 reaches the handshake, which
+/// refuses it for its version.
+async fn respond(table: &GatewayTable, mut req: http::Request<Incoming>, peer: Option<SocketAddr>) -> http::Response<HttpBody> {
+    if let Some(refused) = ulo_http::__private::missing_host(req.version(), req.headers()) {
+        return refused;
+    }
     let pending = hyper::upgrade::on(&mut req);
     let (head, _body) = req.into_parts();
     match table.handshake(head, peer).await {
         Handshake::Switch(switch) => {
-            let response = switch.response().map(|()| Full::new(Bytes::new()));
+            let response = switch.response().map(|()| HttpBody::empty());
             switch.serve(async move { pending.await.map(|io| Upgraded::from_futures(FuturesIo::new(io))).map_err(BoxError::from) });
             response
         }
-        Handshake::Refuse(refusal) => refusal.into_response().map(|reason| Full::new(Bytes::from(reason))),
+        Handshake::Refuse(refusal) => refusal.into_response().map(HttpBody::from),
     }
 }
