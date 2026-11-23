@@ -207,7 +207,6 @@ impl<P> NotHost for HostProbe<P> {
 
 /// `query`, an absent one read as empty, as `T` by `Query<T>`'s rules, a failure redacted through
 /// `app`: a WebSocket handshake's `UpgradeHead::query`.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub fn query<T: DeserializeOwned>(query: Option<&str>, app: &ulo::AppHandle) -> Result<T, ulo_transport::ExtractError> {
     crate::extract::decode_query(query, app)
 }

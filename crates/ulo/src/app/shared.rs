@@ -306,7 +306,7 @@ impl AppShared {
             Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
             Outcome::Refused(refused) => shut_down(secrets, refused),
         };
-        Err(LookupError::Construct { key, reason })
+        Err(LookupError::Construct { key, reason: Box::new(reason) })
     }
 
     /// An alias reads its target from its own module's visibility and answers in the target

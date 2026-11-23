@@ -72,7 +72,6 @@ pub struct Running {
 
 /// Starts the app, or answers what `listen()` refused it with: the route table and the
 /// pre-dispatch stage are built there.
-#[allow(clippy::result_large_err)]
 async fn launch(root: Root, drain: Option<Duration>) -> Result<Running, StartupError> {
     let keeper = Keeper::default();
     let builder = App::builder(root).runtime(ulo_runtime_tokio::Tokio::current());

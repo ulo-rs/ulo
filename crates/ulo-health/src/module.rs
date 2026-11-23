@@ -92,6 +92,8 @@ pub struct ZeroBound {
     pub(crate) check: String,
 }
 
+const _: () = assert!(size_of::<ZeroBound>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl ZeroBound {
     /// The name of the check that declared the zero bound.
     pub fn check(&self) -> &str {

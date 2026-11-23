@@ -169,7 +169,7 @@ async fn a_close_during_a_running_shutdown_waits_for_it_and_receives_its_outcome
     assert_eq!((first.report.signal.name(), second.report.signal.name()), ("first", "first"), "the second close reports the shutdown's own signal");
     assert!(Arc::ptr_eq(&first.failures, &second.failures), "one outcome, shared by every receiver");
     assert!(
-        matches!(&*first.failures, [ShutdownFailure::Hook { hook: HookKind::OnModuleDestroy, reason: FailureReason::Panicked(_), .. }]),
+        matches!(&*first.failures, [ShutdownFailure::Hook { hook: HookKind::OnModuleDestroy, reason, .. }] if matches!(**reason, FailureReason::Panicked(_))),
         "got: {first}"
     );
     assert!(ulo::is_panic(&ulo::BoxError::from(first.clone())), "`is_panic` answers true for a hook whose reason is `Panicked`");
@@ -233,19 +233,21 @@ async fn a_shutdown_hook_that_panics_times_out_or_cannot_read_its_parameter_is_r
     match first {
         ShutdownFailure::Hook { hook, key, reason } => {
             assert_eq!((*hook, key.key()), (HookKind::BeforeApplicationShutdown, Key::of::<S1, ()>()));
-            assert!(matches!(reason, FailureReason::Panicked(_)), "got: {reason}");
+            assert!(matches!(**reason, FailureReason::Panicked(_)), "got: {reason}");
         }
         other => panic!("expected a hook failure, got: {other}"),
     }
     match second {
-        ShutdownFailure::Hook { hook, key, reason: FailureReason::TimedOut { after, limit } } => {
+        ShutdownFailure::Hook { hook, key, reason } => {
+            let FailureReason::TimedOut { after, limit } = &**reason else { panic!("expected a hook timeout, got: {second}") };
             assert_eq!((*hook, key.key()), (HookKind::OnModuleDestroy, Key::of::<S2, ()>()));
             assert_eq!((*after, *limit), (Duration::from_secs(3), Limit::Item));
         }
         other => panic!("expected a hook timeout, got: {other}"),
     }
     match third {
-        ShutdownFailure::Hook { hook, key, reason: FailureReason::Errored(source) } => {
+        ShutdownFailure::Hook { hook, key, reason } => {
+            let FailureReason::Errored(source) = &**reason else { panic!("expected a failed read, got: {third}") };
             assert_eq!((*hook, key.key()), (HookKind::OnApplicationShutdown, Key::of::<S3, ()>()));
             assert!(
                 matches!(source.downcast_ref::<LookupError>(), Some(LookupError::Construct { .. })),
@@ -287,7 +289,7 @@ async fn an_expired_cap_skips_every_hook_not_yet_run_and_closes_a_server_that_ca
         match failure {
             ShutdownFailure::Hook { hook, reason, .. } => {
                 assert_eq!(*hook, kind);
-                assert!(matches!(reason, FailureReason::Skipped), "got: {reason}");
+                assert!(matches!(**reason, FailureReason::Skipped), "got: {reason}");
             }
             other => panic!("expected a skipped hook, got: {other}"),
         }
@@ -347,7 +349,8 @@ async fn a_hook_still_running_when_the_cap_runs_out_is_dropped_with_the_caps_lim
     assert_eq!(error.failures.len(), 2, "{error}");
     for (failure, kind) in error.failures.iter().zip([HookKind::BeforeApplicationShutdown, HookKind::OnModuleDestroy]) {
         match failure {
-            ShutdownFailure::Hook { hook, reason: FailureReason::TimedOut { after, limit }, .. } => {
+            ShutdownFailure::Hook { hook, reason, .. } => {
+                let FailureReason::TimedOut { after, limit } = &**reason else { panic!("expected a hook cut by the cap, got: {failure}") };
                 assert_eq!(*hook, kind);
                 assert_eq!((*after, *limit), (Duration::from_secs(10), Limit::ShutdownCap), "the cap wins over the hook's own bound");
             }

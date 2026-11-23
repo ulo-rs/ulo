@@ -16,6 +16,8 @@ pub struct UnsupportedRuntime {
     pub given: &'static str,
 }
 
+const _: () = assert!(size_of::<UnsupportedRuntime>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl UnsupportedRuntime {
     pub(crate) fn new(module: &'static str, required: &'static str, given: &'static str) -> Self {
         UnsupportedRuntime { module, required, given }
@@ -51,6 +53,8 @@ pub struct MigrationFailed {
     pub source: BoxError,
     retry: Retry,
 }
+
+const _: () = assert!(size_of::<MigrationFailed>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 /// What retrying the start can do for a [`MigrationFailed`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,6 +196,8 @@ pub struct LockTimedOut {
     pub bound: Duration,
 }
 
+const _: () = assert!(size_of::<LockTimedOut>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl LockTimedOut {
     pub fn new(bound: Duration) -> Self {
         LockTimedOut { bound }
@@ -250,6 +256,8 @@ pub struct LazyWithMigrations {
     lazy_at: &'static Location<'static>,
     migrate_at: &'static Location<'static>,
 }
+
+const _: () = assert!(size_of::<LazyWithMigrations>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl LazyWithMigrations {
     pub(crate) fn new(store: &'static str, lazy_at: &'static Location<'static>, migrate_at: &'static Location<'static>) -> Self {

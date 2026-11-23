@@ -312,7 +312,6 @@ impl AppBuilder {
 
     /// Builds the graph and validates everything, collecting every error in one pass. No
     /// instances, no I/O.
-    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub fn wire(self) -> Result<App<Wired>, StartupError> {
         let env = wire::WireEnv {
             timer: self.config.timer.clone(),
@@ -357,7 +356,6 @@ impl App<Wired> {
     /// none once it is built and checked, and a module with none once every singleton it registers
     /// has; one with no init hook also waits for every singleton its destroy hooks read, so no hook
     /// runs whose dependency was never built.
-    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub async fn connect(self) -> Result<App<Connected>, StartupError> {
         let shared = self.shared;
         shared.phase.advance(Stage::Connecting);
@@ -377,7 +375,7 @@ impl App<Wired> {
                 Err(error) => {
                     let initialized = connect::hook_plan(&graph, &graph.connect_order, &modules);
                     let connect::TornDown { error, teardown } =
-                        connect::torn_down(&shared, &initialized, trace_source_failure(&graph, error)).await;
+                        connect::torn_down(&shared, &initialized, Box::new(trace_source_failure(&graph, error))).await;
                     return Err(StartupError::Connect { error, teardown });
                 }
             }
@@ -392,7 +390,7 @@ fn trace_source_failure(graph: &crate::graph::Graph, error: LookupError) -> Conn
     let key = Key::of::<dyn TraceSource, ()>().name(BindingKind::Single);
     let module = graph.module(graph.root).name.clone();
     let reason = match error {
-        LookupError::Construct { reason, .. } => reason,
+        LookupError::Construct { reason, .. } => *reason,
         other => {
             let text = other.to_string();
             FailureReason::Errored(Redacted::from_parts(Box::new(other), text))
@@ -426,7 +424,6 @@ impl App<Connected> {
     ///
     /// Refuses an app that binds a transport with no `Runtime` before either step, one given
     /// `.timer(..)` alone included: `StartupError::Bind` carrying `RuntimeMissing` in its `source`.
-    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub async fn listen(mut self) -> Result<App<Bound>, StartupError> {
         let mut queued = std::mem::take(&mut self.servers);
         if self.shared.config.runtime.is_none()

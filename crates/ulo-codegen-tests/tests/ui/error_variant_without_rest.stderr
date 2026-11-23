@@ -1,0 +1,21 @@
+error[E0638]: `..` required with variant marked as non-exhaustive
+ --> tests/ui/error_variant_without_rest.rs:7:21
+  |
+7 |     matches!(error, ConnectError::Hook { hook: _, key: _, reason: _ })
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+help: add `..` at the end of the field list to ignore all other fields
+  |
+7 |     matches!(error, ConnectError::Hook { hook: _, key: _, reason: _ , .. })
+  |                                                                     ++++
+
+error[E0638]: `..` required with variant marked as non-exhaustive
+  --> tests/ui/error_variant_without_rest.rs:11:21
+   |
+11 |     matches!(error, StartupError::Bind { transport: _, source: _ })
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: add `..` at the end of the field list to ignore all other fields
+   |
+11 |     matches!(error, StartupError::Bind { transport: _, source: _ , .. })
+   |                                                                  ++++

@@ -285,6 +285,8 @@ pub struct BroadcastError {
     pub(crate) source: BoxError,
 }
 
+const _: () = assert!(size_of::<BroadcastError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl BroadcastError {
     pub fn new(source: impl Into<BoxError>) -> Self {
         BroadcastError { source: source.into() }

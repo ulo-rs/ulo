@@ -173,7 +173,10 @@ async fn a_failed_execution_scoped_build_runs_once_and_its_error_is_kept_for_the
         }
         assert_eq!(built.get(), 1, "the readers waiting on the failed build share it");
         for answer in &answers {
-            let Err(LookupError::Construct { reason: FailureReason::Errored(source), .. }) = answer else {
+            let Err(LookupError::Construct { reason, .. }) = answer else {
+                panic!("each reader gets the build's failure, got: {:?}", answer.as_ref().err());
+            };
+            let FailureReason::Errored(source) = &**reason else {
                 panic!("each reader gets the build's failure, got: {:?}", answer.as_ref().err());
             };
             assert_eq!(source.downcast_ref::<Boom>().map(|boom| boom.0.as_str()), Some("the tenant is unknown"), "the original, by type");
@@ -181,8 +184,11 @@ async fn a_failed_execution_scoped_build_runs_once_and_its_error_is_kept_for_the
 
         let later = exec.get::<Svc>().await;
         assert_eq!(built.get(), 1, "a later reader in the execution runs no build");
-        let Err(LookupError::Construct { reason: FailureReason::Errored(source), .. }) = later else {
+        let Err(LookupError::Construct { reason, .. }) = later else {
             panic!("a later reader gets the kept failure, got: {:?}", later.err());
+        };
+        let FailureReason::Errored(source) = *reason else {
+            panic!("a later reader gets the kept failure, got: {reason:?}");
         };
         assert!(source.downcast_ref::<Boom>().is_some(), "the kept failure still holds the original");
     })

@@ -200,8 +200,11 @@ async fn a_fallible_factory_that_errs_fails_connect_with_the_binding_named() {
     }))
     .await;
 
-    let StartupError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a construction failure, got: {error}");
+    };
+    let ConnectError::Construct { key, module, reason, .. } = *connect_error else {
+        panic!("expected a construction failure, got: {connect_error}");
     };
     assert_eq!(key.key(), Key::of::<Cfg, ()>());
     assert_eq!(module.to_string(), mod_name::<A>());

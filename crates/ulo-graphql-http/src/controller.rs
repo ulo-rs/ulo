@@ -295,11 +295,10 @@ fn is_json(headers: &HeaderMap) -> bool {
 /// A query parameter holding JSON text, as an object; absent and `null` alike are `None`. Text
 /// that is not a JSON object is a request that is not well-formed: the draft asks for `variables`
 /// and `extensions` as maps, and a GET carries no body whose JSON could fail to parse.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-fn json_object(text: Option<&str>, name: &str) -> Result<Option<Map<String, Value>>, GqlResponse> {
+fn json_object(text: Option<&str>, name: &str) -> Result<Option<Map<String, Value>>, Box<GqlResponse>> {
     let Some(text) = text else { return Ok(None) };
     serde_json::from_str::<Option<Map<String, Value>>>(text)
-        .map_err(|error| request_error(RequestFault::NotWellFormed, &format!("`{name}` is not a JSON object: {error}")))
+        .map_err(|error| Box::new(request_error(RequestFault::NotWellFormed, &format!("`{name}` is not a JSON object: {error}"))))
 }
 
 fn request_error(fault: RequestFault, message: &str) -> GqlResponse {

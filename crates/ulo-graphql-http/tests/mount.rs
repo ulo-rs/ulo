@@ -6,9 +6,6 @@
 //! The engine is a stub that answers by what the query names, so these tests pin the binding and
 //! not a GraphQL library. Every call runs under a real-clock deadline.
 
-// `StartupError` is large by design; `try_start` returns it as `listen()` does.
-#![allow(clippy::result_large_err)]
-
 mod common;
 
 use std::sync::Arc;

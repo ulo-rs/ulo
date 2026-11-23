@@ -27,7 +27,7 @@ pub trait GrpcClient: Send + Sync + 'static {
 /// The URI is parsed when the app wires, a bad one reported with the wiring errors. The TLS roots
 /// are loaded and the channel built when the app connects; the channel opens its connection on
 /// the first call.
-pub struct GrpcClientModule<C: GrpcClient> {
+pub struct GrpcClientModule<C> {
     pub(crate) endpoint: GrpcEndpoint,
     pub(crate) _client: PhantomData<fn() -> C>,
 }

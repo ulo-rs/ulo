@@ -41,6 +41,8 @@ pub trait Timer: Send + Sync + 'static {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Refused;
 
+const _: () = assert!(size_of::<Refused>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("the runtime has shut down")
@@ -67,6 +69,8 @@ pub const RUNTIME_SHUT_DOWN: &str = "runtime_shut_down";
 pub struct RuntimeShutDown {
     source: BoxError,
 }
+
+const _: () = assert!(size_of::<RuntimeShutDown>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl RuntimeShutDown {
     pub fn new(refused: Refused) -> RuntimeShutDown {

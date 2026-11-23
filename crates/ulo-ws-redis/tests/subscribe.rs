@@ -73,7 +73,6 @@ impl Module for Root {
 }
 
 /// `listen()` over `adapter` on an app timed by `clock`.
-#[allow(clippy::result_large_err, reason = "`StartupError` is the error `listen` returns, handed through whole")]
 async fn listen_on(adapter: Redis, clock: impl Timer) -> Result<(), StartupError> {
     App::builder(Root::over(adapter))
         .runtime(Tokio::current())
@@ -109,9 +108,9 @@ fn is_refusal(error: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 /// The error a failed `Bind` carries, unredacted: `Redacted` reports no `source()` of its own.
-fn bind_cause(error: StartupError) -> ulo::BoxError {
+fn bind_cause(error: &StartupError) -> &(dyn std::error::Error + 'static) {
     match error {
-        StartupError::Bind { source, .. } => source.into_inner(),
+        StartupError::Bind { source, .. } => source.original(),
         other => panic!("expected `Bind`, got: {other}"),
     }
 }
@@ -126,14 +125,14 @@ async fn listen_over_a_refusing_redis_fails_as_bind_naming_the_connection_error(
     assert!(!listening.is_finished(), "listen returned before the app's clock reached the bound");
     clock.advance(WITHIN);
     let error = listening.await.expect("listen did not panic").expect_err("listen succeeded with no Redis");
-    let StartupError::Bind { transport, source } = &error else { panic!("expected `Bind`, got: {error}") };
+    let StartupError::Bind { transport, source, .. } = &error else { panic!("expected `Bind`, got: {error}") };
     assert!(transport.to_string().contains("Ws"), "the failed transport is the WebSocket server: {transport}");
     let text = source.to_string();
     assert!(text.contains("did not confirm the broadcast subscription"), "the cause names the subscription: {text}");
     assert!(text.contains(&format!("{WITHIN:?}")), "the cause names the bound: {text}");
     assert!(is_refusal(source), "the cause carries the last connection error, not only the timeout: {text}");
     assert!(!is_permanent(&error), "an unreachable Redis is retryable");
-    let cause = bind_cause(error);
+    let cause = bind_cause(&error);
     assert!(cause.source().is_some_and(is_refusal), "the last connection error is the cause's `source()`: {cause:?}");
 }
 
@@ -165,7 +164,7 @@ async fn listen_over_a_silent_redis_fails_as_bind_saying_it_did_not_answer() {
     assert!(text.contains("did not confirm the broadcast subscription"), "{text}");
     assert!(text.contains("Redis did not answer"), "a hang has no connection error, and says so: {text}");
     assert!(!is_permanent(&error), "a silent Redis is retryable");
-    let cause = bind_cause(error);
+    let cause = bind_cause(&error);
     assert!(cause.source().is_none(), "no attempt failed, so the cause has no source: {cause:?}");
 }
 
@@ -200,7 +199,7 @@ async fn an_adapter_runtime_with_no_time_driver_still_reports_a_refusing_redis()
     let error = outcome.expect_err("listen succeeded with no Redis");
     let StartupError::Bind { source, .. } = &error else { panic!("expected `Bind`, got: {error}") };
     assert!(source.to_string().contains("did not confirm the broadcast subscription"), "{source}");
-    let cause = bind_cause(error);
+    let cause = bind_cause(&error);
     assert!(cause.source().is_some_and(is_refusal), "the last connection error is the cause's source: {cause:?}");
 }
 
@@ -230,7 +229,7 @@ async fn a_clock_that_refuses_the_reconnect_delay_ends_the_subscription_as_a_per
     let outcome = listening.await.expect("listen did not end on the refused reconnect delay");
     let error = outcome.expect_err("listen succeeded with no Redis");
     assert!(is_permanent(&error), "a subscription that cannot pace itself cannot be retried: {error}");
-    let cause = bind_cause(error);
+    let cause = bind_cause(&error);
     let ended = cause
         .downcast_ref::<Permanent>()
         .and_then(|permanent| permanent.source())
@@ -283,7 +282,10 @@ async fn a_zero_bound_fails_connect() {
         .wire()
         .expect("the app wires");
     match wired.connect().await {
-        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) => {
+        Err(StartupError::Connect { error, .. }) => {
+            let ConnectError::Hook { reason: FailureReason::Errored(error), .. } = *error else {
+                panic!("expected `WsModule`'s init hook to fail `connect`, got: {error}");
+            };
             assert!(error.to_string().contains("`connect_within` is zero"), "the refusal names the setting: {error}");
         }
         Err(other) => panic!("expected `WsModule`'s init hook to fail `connect`, got: {other}"),
@@ -312,7 +314,10 @@ async fn an_adapter_on_a_runtime_without_io_fails_connect_naming_enable_io() {
     let connected = wired.connect().await;
     runtime.shutdown_background();
     match connected {
-        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) => {
+        Err(StartupError::Connect { error, .. }) => {
+            let ConnectError::Hook { reason: FailureReason::Errored(error), .. } = *error else {
+                panic!("expected `WsModule`'s init hook to fail `connect`, got: {error}");
+            };
             assert!(error.to_string().contains("enable_io"), "the refusal names `enable_io`: {error}");
         }
         Err(other) => panic!("expected `WsModule`'s init hook to fail `connect`, got: {other}"),

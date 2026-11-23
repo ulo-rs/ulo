@@ -696,6 +696,8 @@ pub struct NoDestination {
     pub pattern: String,
 }
 
+const _: () = assert!(size_of::<NoDestination>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for NoDestination {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "nothing listens on pattern `{}`", self.pattern)
@@ -713,6 +715,8 @@ impl Error for NoDestination {}
 pub struct NoTimer {
     pub link: &'static str,
 }
+
+const _: () = assert!(size_of::<NoTimer>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for NoTimer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -746,6 +750,8 @@ pub struct ConnectTimedOut {
     address: String,
     link: &'static str,
 }
+
+const _: () = assert!(size_of::<ConnectTimedOut>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl ConnectTimedOut {
     /// `link` is the transport's name as it reads in prose (`NATS`, `RabbitMQ`), and `address` the
@@ -791,6 +797,8 @@ pub struct Misconfigured {
     pub source: BoxError,
 }
 
+const _: () = assert!(size_of::<Misconfigured>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for Misconfigured {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.source, f)
@@ -810,6 +818,8 @@ pub struct FrameTooLarge {
     pub size: u64,
     pub limit: u64,
 }
+
+const _: () = assert!(size_of::<FrameTooLarge>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for FrameTooLarge {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -844,6 +854,8 @@ pub struct NameTooLong {
     pub limit: u64,
 }
 
+const _: () = assert!(size_of::<NameTooLong>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for NameTooLong {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "the {} `{}` is {} bytes, over the link's limit of {} bytes on it", self.what, self.name, self.name.len(), self.limit)
@@ -875,6 +887,8 @@ pub struct NameInvalid {
     pub allowed: &'static str,
 }
 
+const _: () = assert!(size_of::<NameInvalid>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for NameInvalid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "the {} `{}` is not a name the link carries: {}", self.what, self.name, self.allowed)
@@ -892,6 +906,8 @@ pub struct FrameUnencodable {
     pub codec: Codec,
     pub source: BoxError,
 }
+
+const _: () = assert!(size_of::<FrameUnencodable>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for FrameUnencodable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

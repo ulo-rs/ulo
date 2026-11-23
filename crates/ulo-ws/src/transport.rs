@@ -274,6 +274,8 @@ pub struct NoHandler {
     pub(crate) event: String,
 }
 
+const _: () = assert!(size_of::<NoHandler>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl NoHandler {
     /// The event the message named.
     pub fn event(&self) -> &str {
@@ -342,7 +344,6 @@ impl UpgradeHead {
     /// empty one, a name written more than once filling a `Vec` field and refused into any other.
     /// A required field the query lacks is `ExtractError::Missing` naming it, a value that does
     /// not parse `Malformed` naming it, its source redacted through the app.
-    #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub fn query<T: DeserializeOwned>(&self) -> Result<T, ExtractError> {
         ulo_http::__private::query(self.parts.uri.query(), &self.app)
     }

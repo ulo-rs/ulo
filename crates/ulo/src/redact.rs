@@ -20,14 +20,20 @@ use crate::timer::BoxError;
 /// An error from outside the core, after the redaction function. Formatting writes the redacted
 /// text and never the original; `source()` is `None`, so a reporter walking the chain stops at
 /// the text too. The original is reached through [`downcast_ref`](Self::downcast_ref) and
-/// [`into_inner`](Self::into_inner) alone, which is what lets an error handler map a
-/// constructor's domain error to a status.
+/// [`original`](Self::original) alone, which is what lets an error handler map a constructor's
+/// domain error to a status.
 ///
 /// The failure of an execution-scoped build is cached for its execution, and every reader of it
-/// receives a `Redacted` sharing one original (§3.8): `downcast_ref` reaches the original from
-/// each of them, and `into_inner` answers it inside a box of the core's own type, since a shared
-/// original cannot be moved out to one reader.
+/// receives a `Redacted` sharing one original (§3.8); both methods reach that original from each
+/// of them.
 pub struct Redacted {
+    parts: Box<Parts>,
+}
+
+const _: () = assert!(size_of::<Redacted>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
+/// One allocation, so an error carrying a `Redacted` holds a pointer.
+struct Parts {
     inner: BoxError,
     text: String,
 }
@@ -38,41 +44,40 @@ impl Redacted {
         self.original().downcast_ref::<E>()
     }
 
-    pub fn into_inner(self) -> BoxError {
-        self.inner
+    /// The original, unredacted, for a walk of its own chain, which `source()` stops short of.
+    /// Its `Display`, its `Debug` and every link of its `source()` chain print what the redaction
+    /// replaced, so a caller writing any of them to a log or a reply prints the secret.
+    pub fn original(&self) -> &(dyn Error + 'static) {
+        match self.parts.inner.downcast_ref::<SharedOriginal>() {
+            Some(shared) => &*shared.0,
+            None => &*self.parts.inner,
+        }
     }
 
     pub(crate) fn from_parts(inner: BoxError, text: String) -> Self {
-        Redacted { inner, text }
-    }
-
-    /// The original, for the core's own walks of an error chain, which `source()` stops short of.
-    pub(crate) fn original(&self) -> &(dyn Error + 'static) {
-        match self.inner.downcast_ref::<SharedOriginal>() {
-            Some(shared) => &*shared.0,
-            None => &*self.inner,
-        }
+        Redacted { parts: Box::new(Parts { inner, text }) }
     }
 
     /// The same error with its original behind a shared pointer, so [`share`](Self::share) can
     /// hand a copy to each reader of one cached failure.
     pub(crate) fn into_shared(self) -> Redacted {
-        if self.inner.is::<SharedOriginal>() {
+        if self.parts.inner.is::<SharedOriginal>() {
             return self;
         }
-        Redacted { inner: Box::new(SharedOriginal(Arc::from(self.inner))), text: self.text }
+        let Parts { inner, text } = *self.parts;
+        Redacted::from_parts(Box::new(SharedOriginal(Arc::from(inner))), text)
     }
 
     /// Another handle on this error's original, when [`into_shared`](Self::into_shared) made it
     /// shareable.
     pub(crate) fn share(&self) -> Option<Redacted> {
-        let shared = self.inner.downcast_ref::<SharedOriginal>()?;
-        Some(Redacted { inner: Box::new(SharedOriginal(Arc::clone(&shared.0))), text: self.text.clone() })
+        let shared = self.parts.inner.downcast_ref::<SharedOriginal>()?;
+        Some(Redacted::from_parts(Box::new(SharedOriginal(Arc::clone(&shared.0))), self.parts.text.clone()))
     }
 }
 
-/// One original held by every `Redacted` that [`Redacted::share`] handed out. It writes the
-/// original's own text, which only the core's walks reach: a `Redacted` formats its redacted text.
+/// One original held by every `Redacted` that [`Redacted::share`] handed out. No caller sees it:
+/// [`Redacted::original`] answers the error it holds.
 struct SharedOriginal(Arc<dyn Error + Send + Sync>);
 
 impl fmt::Display for SharedOriginal {
@@ -95,13 +100,13 @@ impl Error for SharedOriginal {
 
 impl fmt::Display for Redacted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.text)
+        f.write_str(&self.parts.text)
     }
 }
 
 impl fmt::Debug for Redacted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.text)
+        f.write_str(&self.parts.text)
     }
 }
 
@@ -802,7 +807,7 @@ fn chain_text(error: &(dyn Error + 'static)) -> String {
 }
 
 /// What a panic payload becomes inside a `Redacted`: the message, unredacted, reached only
-/// through `into_inner`. `is_panic` recognises a `Redacted` holding one.
+/// through `original`. `is_panic` recognises a `Redacted` holding one.
 #[derive(Debug)]
 pub(crate) struct PanicMessage(String);
 

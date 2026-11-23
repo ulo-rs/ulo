@@ -211,7 +211,7 @@ impl<'a> Resolver<'a> {
         let refusal = UndeclaredRead::new(reading.reader.type_name(), what);
         let _ = self.violation.set(refusal.clone());
         let error = redact(&self.graph.secrets, Box::new(Permanent::new(refusal)));
-        Err(LookupError::Construct { key: reading.reader.name(BindingKind::Single), reason: FailureReason::Errored(error) })
+        Err(LookupError::Construct { key: reading.reader.name(BindingKind::Single), reason: Box::new(FailureReason::Errored(error)) })
     }
 
     /// An instance of one binding in this resolver's context: the stored singleton, the

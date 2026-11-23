@@ -308,6 +308,8 @@ pub mod wire {
         Malformed(String),
     }
 
+    const _: () = assert!(size_of::<Undecodable>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
     impl fmt::Display for Undecodable {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {

@@ -102,6 +102,8 @@ pub struct ZeroTimeout {
     instead: &'static str,
 }
 
+const _: () = assert!(size_of::<ZeroTimeout>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl ZeroTimeout {
     pub(crate) fn of_module(setter: &'static str, link: &'static str, ends: &'static str) -> Self {
         ZeroTimeout::of_bound(setter, link, ends)
@@ -153,6 +155,8 @@ pub struct ZeroCount {
     link: &'static str,
 }
 
+const _: () = assert!(size_of::<ZeroCount>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl ZeroCount {
     pub(crate) fn new(setter: &'static str, link: &'static str) -> Self {
         ZeroCount { setter, link }
@@ -197,6 +201,8 @@ pub struct ZeroBytes {
     link: &'static str,
 }
 
+const _: () = assert!(size_of::<ZeroBytes>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl ZeroBytes {
     pub(crate) fn new(setter: &'static str, link: &'static str) -> Self {
         ZeroBytes { setter, link }
@@ -225,6 +231,8 @@ pub struct UnusableLink {
     link: &'static str,
     source: BoxError,
 }
+
+const _: () = assert!(size_of::<UnusableLink>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl UnusableLink {
     pub(crate) fn of_module(link: &'static str, source: BoxError) -> Self {
@@ -1701,6 +1709,8 @@ pub struct RpcError {
     /// that panicked.
     source: Option<Box<dyn Error + Send + Sync>>,
 }
+
+const _: () = assert!(size_of::<RpcError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl RpcError {
     pub(crate) fn new(kind: ErrorKind, message: impl Into<String>) -> Self {

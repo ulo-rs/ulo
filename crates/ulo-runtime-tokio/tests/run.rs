@@ -3,7 +3,6 @@
 //! hooks and the server's `close` ran, in the sequence's order, and `run` answered the signal. In
 //! this process, a startup that fails, a port already held or an init hook's error, answers
 //! `RunError::Startup` and serves nothing.
-#![expect(clippy::result_large_err, reason = "`bounded` answers what `run` answers, `RunError` holding the core's `StartupError` unchanged")]
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
