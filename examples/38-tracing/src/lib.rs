@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
-use tonic::Request;
-use tonic::transport::Channel;
 use ulo::{App, AppBuilder, BoxError, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, controller, handlers};
+use ulo_grpc::tonic::Request;
+use ulo_grpc::tonic::transport::Channel;
 use ulo_grpc::{GrpcClientModule, GrpcEndpoint, Message};
 use ulo_http::{Json, Path};
 use ulo_otel::Otel;

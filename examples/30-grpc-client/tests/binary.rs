@@ -4,9 +4,9 @@ use ex_30_grpc_client::pb::Probe;
 use ex_30_grpc_client::pb::front_client::FrontClient;
 use ex_30_grpc_client::{Calls, callee_builder};
 use ex_support::{Bin, serve};
-use tonic::Request;
-use tonic::transport::Endpoint;
 use ulo_grpc::Server;
+use ulo_grpc::tonic::Request;
+use ulo_grpc::tonic::transport::Endpoint;
 use ulo_runtime_tokio::Tokio;
 
 // `terminate` blocks the calling thread until the binary exits. The client's connection task has to

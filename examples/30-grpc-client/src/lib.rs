@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use tonic::transport::Channel;
-use tonic::{Request, Status};
 use ulo::{App, AppBuilder, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, controller, handlers};
+use ulo_grpc::tonic::transport::Channel;
+use ulo_grpc::tonic::{Request, Status};
 use ulo_grpc::{GrpcClientModule, GrpcEndpoint, Message};
 
 pub mod pb {

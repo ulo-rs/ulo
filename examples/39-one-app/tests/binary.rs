@@ -4,7 +4,7 @@ use ex_support::rpc::bounded;
 use ex_support::ws::{connect, hang_up, next, send};
 use ex_support::{Bin, get};
 use serde_json::json;
-use tonic::transport::Endpoint;
+use ulo_grpc::tonic::transport::Endpoint;
 use ulo_rpc::RpcClient;
 use ulo_rpc_tcp::Tcp;
 use ulo_runtime_tokio::Tokio;

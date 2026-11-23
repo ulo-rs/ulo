@@ -2,11 +2,11 @@ use ex_29_grpc_service::pb::catalog_client::CatalogClient;
 use ex_29_grpc_service::pb::{GetItemRequest, Item, ListItemsRequest};
 use ex_29_grpc_service::{TOKEN, builder};
 use ex_support::{Served, serve};
-use prost::Message as _;
-use tonic::transport::{Channel, Endpoint};
-use tonic::{Code, Request, Status};
 use tonic_types::StatusExt;
 use ulo_grpc::Server;
+use ulo_grpc::prost::Message as _;
+use ulo_grpc::tonic::transport::{Channel, Endpoint};
+use ulo_grpc::tonic::{Code, Request, Status};
 use ulo_runtime_tokio::Tokio;
 
 async fn start() -> (Served, CatalogClient<Channel>) {
@@ -32,7 +32,7 @@ fn authorized<T>(message: T) -> Request<T> {
     request
 }
 
-fn failed<T: std::fmt::Debug>(reply: Result<tonic::Response<T>, Status>) -> Status {
+fn failed<T: std::fmt::Debug>(reply: Result<ulo_grpc::tonic::Response<T>, Status>) -> Status {
     reply.expect_err("the call should fail")
 }
 

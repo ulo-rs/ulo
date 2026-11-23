@@ -4,10 +4,10 @@ use ex_30_grpc_client::pb::front_client::FrontClient;
 use ex_30_grpc_client::pb::Probe;
 use ex_30_grpc_client::{Calls, Front, callee_builder, front_builder};
 use ex_support::{Served, serve};
-use tonic::transport::Endpoint;
-use tonic::{Code, Request};
 use ulo::{ExecOptions, Signal};
 use ulo_grpc::Server;
+use ulo_grpc::tonic::transport::Endpoint;
+use ulo_grpc::tonic::{Code, Request};
 use ulo_runtime_tokio::Tokio;
 
 async fn grpc(builder: ulo::AppBuilder) -> Served {

@@ -1,8 +1,8 @@
 use ex_29_grpc_service::pb::GetItemRequest;
 use ex_29_grpc_service::pb::catalog_client::CatalogClient;
 use ex_support::Bin;
-use tonic::Request;
-use tonic::transport::Endpoint;
+use ulo_grpc::tonic::Request;
+use ulo_grpc::tonic::transport::Endpoint;
 
 // `terminate` blocks the calling thread until the binary exits. The client's connection task has to
 // keep running meanwhile to answer the server's GOAWAY, which a current-thread runtime cannot do.
