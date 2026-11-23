@@ -182,6 +182,10 @@ impl Spawn for Holding {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.inner, Box::pin(Held { task: fut, done: false, hold: Arc::clone(&self.hold) }))
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.inner.spawn_blocking(work)
+    }
 }
 
 impl Timer for Holding {
@@ -223,7 +227,7 @@ async fn run_a_server_s_grace_runs_from_the_end_of_a_close_that_took_time() {
     let hold = Arc::new(Hold { armed: AtomicBool::new(false), entered: Mutex::new(entered), release: Mutex::new(release) });
 
     let mut core = Core::new("127.0.0.1:0".into());
-    core.prepare(Ok(()), Some(Arc::new(clock.clone()))).expect("the link prepares");
+    core.prepare(Ok(()), Some(Arc::new(clock.clone())), None).await.expect("the link prepares");
     let runtime = Arc::new(Holding { inner: OnSmol::runtime(), hold: Arc::clone(&hold) });
     let mut inbound = core
         .listen(runtime, |listener, _tls| Ok(Plain(TcpListener::try_from(listener.into_std())?)))

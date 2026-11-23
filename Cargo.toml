@@ -148,6 +148,7 @@ async-trait = "0.1.86"
 async-tungstenite = { version = "0.33", default-features = false }
 axum = { version = "0.8", default-features = false }
 base64 = "0.22"
+blocking = "1.7"
 bytes = "1"
 ciborium = "0.2"
 command-fds = "0.3.3"

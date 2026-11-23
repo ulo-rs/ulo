@@ -83,4 +83,8 @@ impl Spawn for Counting {
         self.spawned.fetch_add(1, Ordering::SeqCst);
         Spawn::try_spawn(&self.smol, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.smol.spawn_blocking(work)
+    }
 }

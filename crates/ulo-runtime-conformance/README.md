@@ -3,9 +3,10 @@
 The conformance suite every `ulo` runtime runs. A runtime is what `ulo` spawns tasks and sleeps
 through: `ulo-runtime-tokio`, `ulo-runtime-smol`, or one written outside the `ulo` repository. One
 macro stamps the suite's scenarios as `#[test]`s against the runtime: what a task's handle answers
-after a return, an abort, a panic and a drop, what `spawn_with` and a `TaskSet` answer over it, an
-app binding the runtime as one object that redacts a spawned task's panic with the app's secrets,
-and a runtime that has shut down refusing to spawn, to time and to run a future, without a panic. A
+after a return, an abort, a panic and a drop, what `spawn_with` and a `TaskSet` answer over it,
+blocking work running on threads that do not poll the runtime's tasks, an app binding the runtime as
+one object that redacts a spawned task's panic with the app's secrets, and a runtime that has shut
+down refusing to spawn, to run blocking work, to time and to run a future, without a panic. A
 runtime whose `tests/conformance.rs` passes keeps the same promises as the two `ulo` ships, each of
 which runs the suite in CI.
 
@@ -102,6 +103,10 @@ modules, each taking the runtime by value, so a runtime crate runs one alone to 
 - **Runtimes:** the suite names none and depends on none. Every wait a scenario makes is bounded
   through the runtime's own `Timer`, so a runtime that loses a task fails the scenario after
   `cases::PATIENCE`, five seconds, instead of hanging it.
+- **Blocking threads:** one scenario holds `cases::blocking::HELD_AT_ONCE`, 64, pieces of blocking
+  work at once, each waiting for a release a task of the runtime gives, so a runtime fails it when
+  its blocking pool cannot run 64 at once, as it does when blocking work runs on the threads that
+  poll its tasks.
 - **Output:** a scenario that observes a panic causes one inside a task, and the panic hook prints
   it to standard error while the scenario passes.
 - **Logging:** the two scenarios reading the core's `warn` install a recording `tracing`

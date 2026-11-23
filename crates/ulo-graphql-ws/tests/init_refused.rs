@@ -60,6 +60,10 @@ impl Spawn for Handed {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.spawn, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.spawn.spawn_blocking(work)
+    }
 }
 
 /// [`Handed`] whose wait of `INIT` is refused once [`Held::release`] is called, so the refusal
@@ -117,6 +121,10 @@ impl Spawn for Held {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         self.handed.try_spawn(fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.handed.spawn_blocking(work)
+    }
 }
 
 /// [`Handed`] whose wait of `INIT` is refused only once it is due: the clock moves past `INIT` as
@@ -149,6 +157,10 @@ impl Spawn for Late {
 
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         self.0.try_spawn(fut)
+    }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.0.spawn_blocking(work)
     }
 }
 

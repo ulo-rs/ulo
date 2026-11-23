@@ -37,6 +37,19 @@ pub trait Spawn: Send + Sync + 'static {
     /// `spawn`: answering `Ok` there drops that runtime's refusal.
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused>;
 
+    /// Runs `work` on a thread set aside for work that blocks, never one that polls the runtime's
+    /// tasks, so a task makes progress while `work` blocks: a call into the system resolver, a file
+    /// read, a library with no async API. An implementation builds the handle with
+    /// [`TaskHandle::launch_blocking`], which is what makes a panic end it as `TaskEnd::Panicked`.
+    /// tokio's is `Handle::spawn_blocking`, smol's `blocking::unblock`.
+    ///
+    /// The handle answers `Finished` once `work` has returned. Work that has begun runs to its end:
+    /// `abort` stops only work not yet begun, which then ends `Aborted`, and dropping the handle
+    /// lets it run on. A runtime that has shut down drops `work` unrun, and the handle answers
+    /// `Aborted`, so on a handle nothing aborted `Aborted` means the work never ran. A wrapper
+    /// forwards this to the runtime it wraps, as it forwards `try_spawn`.
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle;
+
     /// The runtime's name, which an integration that supports one runtime reads to refuse the
     /// others at `connect` rather than look a runtime up from the thread. `ulo-runtime-tokio`
     /// answers `"tokio"` and `ulo-runtime-smol` `"smol"`. A runtime that answers nothing of its
@@ -99,6 +112,11 @@ impl Spawn for Clocked {
         Ok(self.spawner.try_spawn(Box::pin(launched))?.reading(recorded))
     }
 
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        let (unblocked, recorded) = Unblocked::new(work, Some(self.redactor.clone()));
+        self.spawner.spawn_blocking(Box::new(move || unblocked.run())).reading(recorded)
+    }
+
     /// The runtime's, so an app whose clock `AppBuilder::timer` replaced still answers the name of
     /// the runtime its tasks run on.
     fn name(&self) -> &'static str {
@@ -157,6 +175,10 @@ impl TaskEnd {
 ///   it from its own drop, on a task in any state, and calls nothing after it. Detaching an
 ///   aborted task leaves it aborted.
 ///
+/// For blocking work, from [`TaskHandle::launch_blocking`], the runtime runs a closure in place of
+/// polling a future: `poll_ended` is `Ready` once the closure has returned or been dropped unrun,
+/// and `abort` keeps a closure not yet begun from running and leaves one under way to finish.
+///
 /// On tokio the runtime's handle is a `JoinHandle<()>`: `abort` is `JoinHandle::abort`,
 /// `poll_ended` polls the `JoinHandle`, and `detach` drops it. On smol the `Task<()>` is held in an
 /// `Option`: `abort` takes it out to cancel it, and `detach` calls `Task::detach` on it if it is
@@ -205,6 +227,22 @@ impl TaskHandle {
     {
         let (launched, recorded) = Launched::new(fut, None);
         let task = start(Box::pin(launched));
+        TaskHandle { task: Mutex::new(Some(Box::new(task))), recorded, end: None }
+    }
+
+    /// Builds the handle for blocking work a runtime runs, from inside its
+    /// [`Spawn::spawn_blocking`]. `start` receives `work` wrapped, hands what it receives to the
+    /// runtime's blocking threads, and answers the runtime's own handle to it. The wrapper catches
+    /// a panic in `work` with `catch_unwind` and returns normally whether `work` returned or
+    /// panicked; dropped unrun, it drops `work` under `catch_unwind` too and logs a panic there at
+    /// `warn`.
+    pub fn launch_blocking<T, S>(work: Box<dyn FnOnce() + Send>, start: S) -> TaskHandle
+    where
+        T: RuntimeTask,
+        S: FnOnce(Box<dyn FnOnce() + Send>) -> T,
+    {
+        let (unblocked, recorded) = Unblocked::new(work, None);
+        let task = start(Box::new(move || unblocked.run()));
         TaskHandle { task: Mutex::new(Some(Box::new(task))), recorded, end: None }
     }
 
@@ -312,6 +350,46 @@ fn drop_caught(fut: Option<CatchUnwind<dyn Future<Output = ()> + Send>>, redacto
     }
 }
 
+/// The work a runtime's blocking thread runs: the work handed to `spawn_blocking` under the core's
+/// panic catch, which records how it ended before returning.
+struct Unblocked {
+    /// `None` once it has run.
+    work: Option<Box<dyn FnOnce() + Send>>,
+    record: Arc<Mutex<Option<Recorded>>>,
+    redactor: Option<Redactor>,
+}
+
+impl Unblocked {
+    fn new(work: Box<dyn FnOnce() + Send>, redactor: Option<Redactor>) -> (Unblocked, Arc<Mutex<Option<Recorded>>>) {
+        let recorded = Arc::new(Mutex::new(None));
+        (Unblocked { work: Some(work), record: Arc::clone(&recorded), redactor }, recorded)
+    }
+
+    /// The work's captures drop inside the call, so they are gone before the end is recorded.
+    fn run(mut self) {
+        let Some(work) = self.work.take() else { return };
+        let end = match catch_unwind(AssertUnwindSafe(work)) {
+            Ok(()) => Recorded::Finished,
+            Err(payload) => Recorded::Panicked(redacted(self.redactor.as_ref(), payload)),
+        };
+        *self.record.lock().unwrap_or_else(PoisonError::into_inner) = Some(end);
+    }
+}
+
+/// A runtime dropping the work unrun, shut down or aborted before it began, drops it here,
+/// recording nothing, so the handle answers `Aborted`. A panic there would otherwise reach the
+/// runtime's blocking pool.
+impl Drop for Unblocked {
+    fn drop(&mut self) {
+        if let Some(work) = self.work.take()
+            && let Err(payload) = catch_unwind(AssertUnwindSafe(move || drop(work)))
+        {
+            let message = redacted(self.redactor.as_ref(), payload);
+            tracing::warn!(%message, "blocking work panicked while it was dropped unrun, so it ends `Aborted`");
+        }
+    }
+}
+
 impl Drop for TaskHandle {
     fn drop(&mut self) {
         if let Some(task) = self.task.get_mut().unwrap_or_else(PoisonError::into_inner).take() {
@@ -339,9 +417,26 @@ where
     ValueHandle { task, slot }
 }
 
-/// A spawned task that answers a value, as [`spawn_with`] starts it: `Ok` with the value, or `Err`
-/// with `TaskEnd::Aborted` or `TaskEnd::Panicked`. Polling after the value was taken answers
-/// `Err(TaskEnd::Finished)`.
+/// Runs `work` through `runtime`'s [`Spawn::spawn_blocking`] and answers a handle that resolves to
+/// its value, as [`spawn_with`] does for a future. `abort` stops only work not yet begun.
+pub fn spawn_blocking_with<T, F, R>(runtime: &R, work: F) -> ValueHandle<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+    R: Spawn + ?Sized,
+{
+    let slot = Arc::new(Mutex::new(None));
+    let fill = Arc::clone(&slot);
+    let task = runtime.spawn_blocking(Box::new(move || {
+        let value = work();
+        *fill.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
+    }));
+    ValueHandle { task, slot }
+}
+
+/// A spawned task that answers a value, as [`spawn_with`] or [`spawn_blocking_with`] starts it:
+/// `Ok` with the value, or `Err` with `TaskEnd::Aborted` or `TaskEnd::Panicked`. Polling after the
+/// value was taken answers `Err(TaskEnd::Finished)`.
 pub struct ValueHandle<T> {
     task: TaskHandle,
     slot: Arc<Mutex<Option<T>>>,
@@ -399,6 +494,27 @@ mod tests {
         fn try_spawn(&self, _fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
             Err(Refused)
         }
+
+        /// Drops the work unrun, as a runtime that has shut down does.
+        fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+            TaskHandle::launch_blocking(work, |work| {
+                drop(work);
+                Ended
+            })
+        }
+    }
+
+    /// The runtime's handle to work it dropped unrun.
+    struct Ended;
+
+    impl RuntimeTask for Ended {
+        fn abort(&mut self) {}
+
+        fn poll_ended(&mut self, _cx: &mut Context<'_>) -> Poll<()> {
+            Poll::Ready(())
+        }
+
+        fn detach(self: Box<Self>) {}
     }
 
     fn refused_sleep(timer: &dyn Timer) -> Poll<Result<(), Refused>> {
@@ -413,5 +529,11 @@ mod tests {
         let clocked = Clocked::new(Arc::clone(&runtime), Arc::clone(&runtime) as Arc<dyn Timer>, Redactor::default());
         assert!(clocked.try_spawn(Box::pin(async {})).is_err(), "the app's runtime answered a refused `try_spawn` with a handle");
         assert_eq!(refused_sleep(&clocked), Poll::Ready(Err(Refused)), "the app's runtime answered a refused `try_sleep` otherwise");
+        let ran = Arc::new(Mutex::new(false));
+        let flag = Arc::clone(&ran);
+        let mut work = clocked.spawn_blocking(Box::new(move || *flag.lock().unwrap() = true));
+        let end = Pin::new(&mut work).poll(&mut Context::from_waker(Waker::noop()));
+        assert!(matches!(end, Poll::Ready(TaskEnd::Aborted)), "the app's runtime answered blocking work its runtime dropped unrun with {end:?}");
+        assert!(!*ran.lock().unwrap(), "the app's runtime ran blocking work the runtime it wraps refused");
     }
 }

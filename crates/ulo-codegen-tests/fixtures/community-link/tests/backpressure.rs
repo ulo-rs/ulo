@@ -36,6 +36,10 @@ impl Spawn for Unused {
     fn try_spawn(&self, _: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
         unreachable!("the link spawns no task")
     }
+
+    fn spawn_blocking(&self, _work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        unreachable!("the link runs no blocking work")
+    }
 }
 
 #[test]

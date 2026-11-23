@@ -222,6 +222,13 @@ impl ulo::Spawn for Smol {
         Ok(ulo::Spawn::spawn(self, fut))
     }
 
+    /// On `blocking`'s pool, `blocking::unblock`, which is smol's: one pool per process, shared
+    /// by every `Smol` and outside any executor, whose threads start as work needs them, up to 500
+    /// unless `BLOCKING_MAX_THREADS` sets another bound.
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        TaskHandle::launch_blocking(work, |work| Task::Running(blocking::unblock(work).fallible()))
+    }
+
     fn name(&self) -> &'static str {
         "smol"
     }

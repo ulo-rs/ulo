@@ -246,6 +246,14 @@ impl ulo::Spawn for Tokio {
         if refused { Err(Refused) } else { Ok(task) }
     }
 
+    /// On the held runtime's blocking pool, `Handle::spawn_blocking`, whose threads the runtime
+    /// starts as work needs them, up to its builder's `max_blocking_threads`, 512 unset. A runtime
+    /// that has shut down drops the work unrun. A runtime shutting down waits for work under way,
+    /// unbounded unless its owner shuts it down with `shutdown_timeout`.
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        TaskHandle::launch_blocking(work, |work| Task(Some(self.handle.spawn_blocking(work))))
+    }
+
     fn name(&self) -> &'static str {
         "tokio"
     }

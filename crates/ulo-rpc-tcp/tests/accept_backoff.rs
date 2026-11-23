@@ -51,6 +51,10 @@ impl Spawn for Handed {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.spawn, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.spawn.spawn_blocking(work)
+    }
 }
 
 /// A listener whose every accept fails, as one out of descriptors does, counting the accepts and
@@ -82,7 +86,7 @@ async fn the_accept_loop_ends_when_its_runtime_refuses_the_backoff() {
     clock.refuse(ACCEPT_BACKOFF);
     let (accepts, dropped) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicBool::new(false)));
     let mut core = Core::new(EndpointSpec::from("127.0.0.1:0"));
-    core.prepare(Ok(()), Some(Arc::new(ScriptedTimer::new()))).expect("the link prepares");
+    core.prepare(Ok(()), Some(Arc::new(ScriptedTimer::new())), None).await.expect("the link prepares");
     let runtime: Arc<dyn Runtime> = Arc::new(Handed { clock: clock.clone(), spawn: Tokio::current() });
     let (counting, dropping) = (Arc::clone(&accepts), Arc::clone(&dropped));
     let mut inbound = core

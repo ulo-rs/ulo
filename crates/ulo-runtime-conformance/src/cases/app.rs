@@ -1,6 +1,6 @@
 //! The runtime through the app: `AppBuilder::runtime` binds it as `Dep<dyn Runtime>` and as
-//! `Dep<dyn Timer>`, one object, which `AppHandle` hands out too, and a task spawned through it
-//! has the app's secrets redacted from its panic's message.
+//! `Dep<dyn Timer>`, one object, which `AppHandle` hands out too, and a task spawned through it,
+//! or blocking work handed to it, has the app's secrets redacted from its panic's message.
 
 use std::future::pending;
 use std::sync::Arc;
@@ -92,16 +92,31 @@ async fn panic_text(spawner: &dyn Spawn, timer: &dyn Timer, through: &str) -> St
     }
 }
 
-/// A task spawned through the app's runtime, `Dep<dyn Runtime>` or `AppHandle::runtime()`, has
-/// every secret the app registered replaced in its panic's message, and the userinfo stripped; so
-/// does the `warn` logging a panic raised while its aborted future drops. A task spawned on the
-/// runtime before any app holds it has only the userinfo stripped.
+/// The text of the end of blocking work that panicked with [`SECRET_PANIC`], handed to `spawner`.
+async fn blocking_panic_text(spawner: &dyn Spawn, timer: &dyn Timer, through: &str) -> String {
+    let work = spawner.spawn_blocking(Box::new(|| panic!("{SECRET_PANIC}")));
+    match within(timer, work).await {
+        Some(TaskEnd::Panicked(message)) => message.to_string(),
+        other => panic!("blocking work handed to {through} that panicked ended {other:?}"),
+    }
+}
+
+/// A task spawned through the app's runtime, `Dep<dyn Runtime>` or `AppHandle::runtime()`, and
+/// blocking work handed to it, have every secret the app registered replaced in a panic's message,
+/// and the userinfo stripped; so does the `warn` logging a panic raised while an aborted task's
+/// future drops. A task spawned on the runtime before any app holds it, and blocking work handed
+/// to it then, have only the userinfo stripped.
 pub async fn redacted<R: Runtime>(rt: R) {
     let recorder = Recorder::installed();
     let bare = panic_text(&rt, &rt, "the bare runtime").await;
     assert!(
         bare.contains(SECRET) && bare.contains("postgres://[redacted]@db.invalid/app") && !bare.contains("hunter2"),
         "a task spawned on the bare runtime: the userinfo stripped and nothing else, got {bare:?}"
+    );
+    let bare = blocking_panic_text(&rt, &rt, "the bare runtime").await;
+    assert!(
+        bare.contains(SECRET) && bare.contains("postgres://[redacted]@db.invalid/app") && !bare.contains("hunter2"),
+        "blocking work handed to the bare runtime: the userinfo stripped and nothing else, got {bare:?}"
     );
 
     let app = App::builder(Holding(Secret::new(SECRET.to_owned())))
@@ -119,6 +134,11 @@ pub async fn redacted<R: Runtime>(rt: R) {
         assert!(
             !text.contains(SECRET) && text.contains("carrying [redacted] and postgres://[redacted]@db.invalid/app"),
             "a task spawned through {through}: the app's secret replaced and the userinfo stripped, got {text:?}"
+        );
+        let text = blocking_panic_text(spawner, spawner, through).await;
+        assert!(
+            !text.contains(SECRET) && text.contains("carrying [redacted] and postgres://[redacted]@db.invalid/app"),
+            "blocking work handed to {through}: the app's secret replaced and the userinfo stripped, got {text:?}"
         );
     }
 

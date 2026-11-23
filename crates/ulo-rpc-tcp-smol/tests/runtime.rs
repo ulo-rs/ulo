@@ -110,6 +110,10 @@ impl Spawn for Counting {
         self.spawned.fetch_add(1, Ordering::SeqCst);
         Spawn::try_spawn(&self.inner, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.inner.spawn_blocking(work)
+    }
 }
 
 /// The tasks the link starts for one client connection: its writer and its reply reader.

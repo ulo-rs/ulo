@@ -82,6 +82,10 @@ impl Spawn for Handed {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.spawn, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.spawn.spawn_blocking(work)
+    }
 }
 
 #[test]
