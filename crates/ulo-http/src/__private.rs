@@ -38,15 +38,21 @@ pub fn internal_error() -> crate::Response {
     render::problem(&CallError::new(ulo_transport::ErrorKind::Internal, "internal error"), &HttpConfig::default())
 }
 
-/// The 400 problem document a backend reading requests off the wire answers an HTTP/1.1 request
-/// carrying no `Host` field with (RFC 9112 §3.2), with `Connection: close`, `Routing::Unrouted`
-/// and the request's version, so the connection closes whatever the client asked of it.
-pub fn missing_host(version: http::Version) -> crate::Response {
+/// The 400 problem document a server reading requests off the wire answers an HTTP/1.1 request
+/// carrying no `Host` field with (RFC 9112 §3.2, RFC 6455 §4.2.1 for a WebSocket handshake), with
+/// `Connection: close`, `Routing::Unrouted` and the request's version, so the connection closes
+/// whatever the client asked of it; `None` for a request of another version or carrying `Host`,
+/// an empty one included. `ulo-http-hyper` and `ulo-ws-hyper` each answer with it before their
+/// service reads the request.
+pub fn missing_host(version: http::Version, headers: &HeaderMap) -> Option<crate::Response> {
+    if version != http::Version::HTTP_11 || headers.contains_key(http::header::HOST) {
+        return None;
+    }
     let mut refused = render::problem(&CallError::new(ulo_transport::ErrorKind::BadRequest, "an HTTP/1.1 request carries no `Host`"), &HttpConfig::default());
     refused.headers_mut().insert(http::header::CONNECTION, HeaderValue::from_static("close"));
     *refused.version_mut() = version;
     refused.extensions_mut().insert(crate::Routing::Unrouted);
-    refused
+    Some(refused)
 }
 
 /// What the server answering a WebSocket handshake adds to its refusals, as it adds them to its

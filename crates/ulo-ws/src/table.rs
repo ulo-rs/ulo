@@ -387,6 +387,10 @@ impl GatewayTable {
     /// answers its error with, as [`ConnectRefused`](crate::ConnectRefused) states, a connection
     /// over `max_connections` 503 with `Retry-After`.
     ///
+    /// A head with no `Host` is not refused here: the field is checked by the server reading the
+    /// request off the wire, `ulo_ws_hyper::Server` answering an HTTP/1.1 request without one 400
+    /// before calling this, so a server of a host's own applies its host's rule.
+    ///
     /// The challenge of a 401 whose error names none and the `Retry-After` of a 503 the server
     /// gives for its own state are the table's [`GatewayDefaults::challenge`] and
     /// [`GatewayDefaults::shed_retry_after`], `Bearer` and one second unset; on the HTTP server's
