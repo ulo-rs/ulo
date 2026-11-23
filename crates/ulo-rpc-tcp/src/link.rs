@@ -267,7 +267,6 @@ fn halves(stream: TlsStream<TcpStream>) -> (Reader, Writer) {
 
 #[cfg(test)]
 mod tests {
-    use std::net::TcpListener as StdListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, mpsc};
     use std::time::Duration;
@@ -323,7 +322,7 @@ mod tests {
     /// F416: a connect tries each address the name resolves to, in order, until one connects.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_connect_tries_each_address_until_one_connects() {
-        let closed = StdListener::bind("127.0.0.1:0").and_then(|listener| listener.local_addr()).expect("a port, closed once its listener drops");
+        let closed = ulo_conformance_support::relay::refusing_addr();
         let live = listening().await;
         let answers = vec![closed, live.local_addr().expect("an address")];
         let tcp = on("billing:7000", Lookup::from_fn(move |_| Ok(answers.clone())));
