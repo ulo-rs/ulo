@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use ex_34_health::{Cache, LAG, builder};
 use ex_support::serve;
-use tonic::transport::{Channel, Endpoint};
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::HealthCheckRequest;
 use ulo::{Dep, Signal};
 use ulo::testing::ScriptedTimer;
+use ulo_grpc::tonic::transport::{Channel, Endpoint};
 use ulo_runtime_tokio::Tokio;
 
 const PATIENCE: Duration = Duration::from_secs(10);

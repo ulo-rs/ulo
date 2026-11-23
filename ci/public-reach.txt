@@ -56,20 +56,9 @@ allow ulo_graphql_ws ulo_graphql_ws::GraphqlWs ulo_ws::gateway::Gateway  # the g
 allow ulo_graphql_ws ulo_graphql_ws::GraphqlWs ulo_ws::gateway::GatewayConfig  # the gateway traits `GraphqlWs` is mounted through; no user names them
 allow ulo_grpc ulo_grpc::Grpc ulo_http::__private::Carried  # the seal `Grpc` implements for the shared stage; no user names it
 allow ulo_grpc ulo_grpc::Grpc ulo_http::transport::HttpCarried  # the seal `Grpc` implements for the shared stage; no user names it
-allow ulo_grpc ulo_grpc::GrpcClient tonic::transport::channel::Channel  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
-allow ulo_grpc ulo_grpc::GrpcCx tonic::status::Status  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_grpc ulo_grpc::GrpcHealth tonic_health::ServingStatus  # tonic-health's serving status, which `GrpcHealth` sets; re-exporting it is open
-allow ulo_grpc ulo_grpc::GrpcMetadata tonic::metadata::map::MetadataMap  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_grpc ulo_grpc::PreDispatch ulo_http::pre_dispatch::PreDispatch  # the type behind the alias `ulo_grpc::PreDispatch`, which is the name a user writes
-allow ulo_grpc ulo_grpc::Reply tonic::body::Body  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_grpc ulo_grpc::Streaming futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
-allow ulo_grpc ulo_grpc::WithGrpcCode tonic::status::Code  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
-allow ulo_grpc ulo_grpc::from_status tonic::status::Status  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
-allow ulo_grpc ulo_grpc::code_for tonic::status::Code  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
-allow ulo_grpc ulo_grpc::code_for_http tonic::status::Code  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
-allow ulo_grpc ulo_grpc::outgoing tonic::request::Request  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
-allow ulo_grpc ulo_grpc::outgoing tonic::status::Status  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
-allow ulo_grpc ulo_grpc::to_status tonic::status::Status  # a gRPC application depends on `tonic`: the code `ulo-build` generates names `::tonic`
 allow ulo_http ulo_http::Backend rustls::server::server_conn::ServerConfig  # the backend SPI; a backend crate depends on `ulo-net`, which re-exports rustls
 allow ulo_http ulo_http::Backend ulo_net::listener::BoundListener  # the backend SPI; a backend crate depends on `ulo-net`, which re-exports rustls
 allow ulo_http ulo_http::BodyStream futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits

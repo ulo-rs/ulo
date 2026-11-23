@@ -59,8 +59,10 @@ its trailers. `CacheableUnaryCall`, `HalfDuplexCall` and `UnimplementedCall` hav
 `expect_compressed` is checked against each request message's compressed flag, which a
 pre-dispatch entry records as the request body passes it, and a mismatch answers
 `INVALID_ARGUMENT`. The server compresses replies in gzip when the client accepts it
-(`send_encodings`), every message of the reply: it has no setting for one reply or one message, so
-`response_compressed: false` is not honoured, which `compression_cases.txt` allows.
+(`send_encodings`), every message of the reply, except a unary reply whose request reads
+`response_compressed: false`, which is sent uncompressed (`Response::uncompressed`). No setting
+sends one message of a reply stream uncompressed apart from the rest, so
+`ResponseParameters::compressed` is not honoured, which `compression_cases.txt` allows.
 
 The binary listens on `HOST` and `PORT` (default `127.0.0.1:10000`) and prints
 `listening on http://ADDR`. With `TLS_CERT` and `TLS_KEY` naming a PEM certificate chain and its

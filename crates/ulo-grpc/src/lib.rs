@@ -35,9 +35,16 @@
 //! serves on its own port; nothing routes an `application/grpc` request arriving on the HTTP
 //! server's port to it.
 //!
+//! The code `ulo-build` writes reaches [`prost`], [`prost_types`], [`tonic`] and tonic-prost's codec
+//! through this crate's re-exports, so an application's manifest names none of them. Code calling
+//! a generated client names tonic's types from here: `ulo_grpc::tonic::Request`,
+//! `ulo_grpc::tonic::Status`, `ulo_grpc::tonic::transport::Channel`.
+//!
 //! Message compression is gzip ([`Encoding`]): the server decompresses a gzip request unless
 //! [`Server::accept_encodings`] says otherwise, and compresses a reply in gzip only when
-//! [`Server::send_encodings`] lists it and the caller's `grpc-accept-encoding` does too.
+//! [`Server::send_encodings`] lists it and the caller's `grpc-accept-encoding` does too. A reply
+//! built from a [`Response`] marked [`uncompressed`](Response::uncompressed) is sent uncompressed
+//! whatever the two agree.
 
 mod client;
 mod compression;
@@ -95,6 +102,9 @@ pub use transport::{Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, IntoGrpcReply, Int
 #[doc(no_inline)]
 pub use ulo_http::{PeerCertificates, TlsInfo};
 pub use http;
+pub use prost;
+pub use prost_types;
+pub use tonic;
 pub use ulo_grpc_macros::method;
 pub use ulo_transport::{
     CallError, Classify, Detail, Details, ErrorBounds, ErrorKind, ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Valid, Validate,

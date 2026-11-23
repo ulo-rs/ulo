@@ -5,4 +5,4 @@ error[E0308]: mismatched types
    |            ^^^^^^^ expected `()`, found `MetaMismatch<Grpc, Http>`
    |
    = note: expected unit type `()`
-                 found struct `ulo::__private::MetaMismatch<Grpc, Http>`
+                 found struct `ulo::__private::MetaMismatch<ulo_grpc::Grpc, Http>`

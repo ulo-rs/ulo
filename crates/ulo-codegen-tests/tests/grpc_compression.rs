@@ -1,8 +1,9 @@
 //! gzip message compression on the server: a request decompressed per message, on unary and
 //! streamed calls, from a tonic client with gzip enabled and from hand-written frames; a reply
 //! compressed only when the caller's `grpc-accept-encoding` and the server's `send_encodings` both
-//! name gzip; `grpc-accept-encoding` on every response; a compressed flag on a call naming no
-//! encoding refused INTERNAL; a message past the 4 MiB limit, as it arrives or once inflated,
+//! name gzip, and never one built from a `Response` marked `uncompressed`; `grpc-accept-encoding`
+//! on every response; a compressed flag on a call naming no encoding refused INTERNAL, as is a
+//! message that does not decode; a message past the 4 MiB limit, as it arrives or once inflated,
 //! refused RESOURCE_EXHAUSTED, a bomb included, whose inflate stops at the limit. The refusal of
 //! an encoding the server does not decompress is in `grpc_unsupported_encoding.rs`.
 //!
@@ -29,7 +30,7 @@ use ulo::{Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::probe::known_client::KnownClient;
 use ulo_codegen_tests::probe::trailing_client::TrailingClient;
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
-use ulo_grpc::{CallError, Encoding, Message, Streaming};
+use ulo_grpc::{CallError, Encoding, Message, Response, Streaming};
 
 use support::{Running, within};
 
@@ -37,6 +38,8 @@ const UPPER: &str = "/codegen.probe.v1.Known/Upper";
 const SINCE: &str = "/codegen.probe.v1.Known/Since";
 const CHAT: &str = "/codegen.probe.v1.Trailing/Chat";
 const WATCH: &str = "/codegen.probe.v1.Shapes/Watch";
+const WATCH_UNCOMPRESSED: &str = "/codegen.probe.v1.Shapes/WatchOrFail";
+const LOOKUP_UNCOMPRESSED: &str = "/codegen.probe.v1.Shapes/Lookup";
 
 const LIMIT: usize = 4 * 1024 * 1024;
 
@@ -77,6 +80,17 @@ impl Shapes {
     #[ulo_grpc::method(probe::shapes::Watch)]
     fn watch(&self, req: Message<Ticks>) -> impl Stream<Item = Result<Tick, CallError>> + use<> {
         stream::iter((0..req.0.count).map(|n| Ok(Tick { n })))
+    }
+
+    /// `Watch`'s reply, marked uncompressed.
+    #[ulo_grpc::method(probe::shapes::WatchOrFail)]
+    fn watch_uncompressed(&self, req: Message<Ticks>) -> Response<impl Stream<Item = Result<Tick, CallError>> + use<>> {
+        Response::new(stream::iter((0..req.0.count).map(|n| Ok(Tick { n })))).uncompressed()
+    }
+
+    #[ulo_grpc::method(probe::shapes::Lookup)]
+    fn lookup_uncompressed(&self, req: Message<Ticks>) -> Response<Tick> {
+        Response::new(Tick { n: req.0.count }).uncompressed()
     }
 }
 
@@ -245,6 +259,30 @@ async fn a_reply_is_compressed_only_when_the_caller_and_the_server_both_name_gzi
     app.stop().await;
 }
 
+/// A reply built from a `Response` marked `uncompressed` goes uncompressed to a caller accepting
+/// gzip on a server sending it: no `grpc-encoding`, flag 0 on a unary reply and on every item of a
+/// stream, and a stream with no item answers OK. Planted break: `Encodings::finish` ignoring the
+/// marker compresses both replies.
+#[tokio::test]
+async fn a_reply_marked_uncompressed_is_sent_uncompressed() {
+    let app = Running::start(Root, sending()).await;
+    let accepting = [("grpc-accept-encoding", "gzip")];
+    let ticks = |count| frame(0, &Ticks { count, fail: false }.encode_to_vec());
+
+    let reply = raw(&app, LOOKUP_UNCOMPRESSED, &accepting, ticks(7)).await;
+    assert_eq!((reply.status().as_deref(), reply.header("grpc-encoding")), (Some("0"), None));
+    assert_eq!(reply.messages(), [(0, Tick { n: 7 }.encode_to_vec())]);
+
+    let streamed = raw(&app, WATCH_UNCOMPRESSED, &accepting, ticks(3)).await;
+    assert_eq!((streamed.status().as_deref(), streamed.header("grpc-encoding")), (Some("0"), None));
+    let items: Vec<(u8, u32)> = streamed.messages().iter().map(|(flag, bytes)| (*flag, tick(bytes))).collect();
+    assert_eq!(items, [(0, 0), (0, 1), (0, 2)]);
+
+    let empty = raw(&app, WATCH_UNCOMPRESSED, &accepting, ticks(0)).await;
+    assert_eq!((empty.status().as_deref(), empty.header("grpc-encoding"), empty.messages()), (Some("0"), None, vec![]));
+    app.stop().await;
+}
+
 /// Every response names the encodings the server decompresses: a reply carrying a message, a
 /// handler's trailers-only error, a path no handler answers, a `grpc-timeout` off the grammar,
 /// refused before an execution opens, and the health service's reply. Planted break:
@@ -273,13 +311,13 @@ async fn every_response_names_the_encodings_the_server_accepts() {
 }
 
 /// A compressed flag on a call whose `grpc-encoding` names no compression, absent or `identity`,
-/// is INTERNAL, which the compression specification requires, unary and streamed, while a
-/// message framed whole that does not decode, compressed or not, stays INVALID_ARGUMENT. Planted
-/// breaks: `first_message` reading tonic's INTERNAL as a message that does not decode answers the
-/// flagged unary call INVALID_ARGUMENT; the unary extractor decoding with prost's decoder as it
-/// stands answers the undecodable one INTERNAL.
+/// is INTERNAL, which the compression specification requires, unary and streamed, and so is a
+/// message framed whole that does not decode, compressed or not, unary and streamed, the code
+/// gRPC's status code table gives "error parsing request proto". Planted breaks: `to_status`
+/// reading no code off an `Undecodable` source answers every unary call INVALID_ARGUMENT; the
+/// unary extractor moving prost's failure to INVALID_ARGUMENT answers the undecodable one so.
 #[tokio::test]
-async fn a_compressed_flag_on_a_call_naming_no_compression_is_internal() {
+async fn a_body_that_does_not_decode_is_internal() {
     let app = Running::start(Root, server()).await;
     let unary = frame(1, &gzip(&"x".to_owned().encode_to_vec()));
     let streamed = frame(1, &gzip(&Ticks { count: 1, fail: false }.encode_to_vec()));
@@ -288,9 +326,12 @@ async fn a_compressed_flag_on_a_call_naming_no_compression_is_internal() {
         assert_eq!(raw(&app, CHAT, header, streamed.clone()).await.status().as_deref(), Some("13"), "streamed, {header:?}");
     }
     let undecodable = [0xff, 0xff, 0xff];
-    assert_eq!(raw(&app, UPPER, &[], frame(0, &undecodable)).await.status().as_deref(), Some("3"), "undecodable");
     let gzip_header = [("grpc-encoding", "gzip")];
-    assert_eq!(raw(&app, UPPER, &gzip_header, frame(1, &gzip(&undecodable))).await.status().as_deref(), Some("3"), "undecodable, inflated");
+    for path in [UPPER, CHAT] {
+        assert_eq!(raw(&app, path, &[], frame(0, &undecodable)).await.status().as_deref(), Some("13"), "undecodable, {path}");
+        let inflated = raw(&app, path, &gzip_header, frame(1, &gzip(&undecodable))).await;
+        assert_eq!(inflated.status().as_deref(), Some("13"), "undecodable, inflated, {path}");
+    }
     app.stop().await;
 }
 

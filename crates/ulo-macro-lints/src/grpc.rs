@@ -2,10 +2,10 @@
 //! forms.
 
 use futures_util::{Stream, StreamExt, stream};
-use tonic::Status;
 use std::time::Duration;
 
 use ulo::{Dep, Runtime, Timer, controller, handlers};
+use ulo_grpc::tonic::Status;
 use ulo_grpc::{GrpcCx, GrpcMetadata, Message, Request, Response, Streaming};
 
 use crate::derives::Refusal;

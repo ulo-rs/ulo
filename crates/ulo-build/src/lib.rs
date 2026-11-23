@@ -16,10 +16,13 @@
 //! The vendored `protoc` is the default-on `vendored-protoc` feature, and a `PROTOC` environment
 //! variable wins over it.
 //!
-//! The generated code names `tonic` (with its `channel` and `codegen` features), `tonic-prost`
-//! and `prost`, and `prost-types` where a proto uses a well-known type other than `Empty`, so the
-//! crate running the build step depends on those beside `ulo-grpc`. No server trait is generated:
-//! handlers bind to the markers, and the dispatcher calls them by path.
+//! The generated code reaches `prost`, `prost-types`, `tonic` and `tonic-prost` through
+//! `ulo-grpc`'s re-exports, so the crate running the build step names none of them in its
+//! manifest. prost-build writes `::ulo_grpc::prost` and `::ulo_grpc::prost_types` paths, and the
+//! codec is `::ulo_grpc::__private::ProstCodec`. tonic-build writes bare `tonic::` paths with no
+//! setting for them, so each client module it writes gains `use ::ulo_grpc::tonic;` above its
+//! imports. No server trait is generated: handlers bind to the markers, and the dispatcher calls
+//! them by path.
 
 mod markers;
 
@@ -77,6 +80,7 @@ impl Builder {
         let mut includes: Vec<PathBuf> = includes.iter().map(|include| include.as_ref().to_owned()).collect();
         let mut config = prost_build::Config::new();
         config.out_dir(&out_dir);
+        config.prost_path("::ulo_grpc::prost").prost_types_path("::ulo_grpc::prost_types");
 
         #[cfg(feature = "vendored-protoc")]
         if std::env::var_os("PROTOC").is_none() {
@@ -96,7 +100,11 @@ impl Builder {
             config.file_descriptor_set_path(path);
         }
 
-        let tonic = tonic_prost_build::configure().build_client(self.build_client).build_server(false).service_generator();
+        let tonic = tonic_prost_build::configure()
+            .build_client(self.build_client)
+            .build_server(false)
+            .codec_path("::ulo_grpc::__private::ProstCodec")
+            .service_generator();
         config.service_generator(Box::new(Markers { tonic, build_client: self.build_client, descriptor }));
         config.compile_protos(protos, &includes)
     }

@@ -165,11 +165,7 @@ impl Transport {
                     "m.import(GrpcHealth::module());",
                     "m.import(HealthGrpc::new());",
                 ],
-                // What the code `ulo-build` writes names: prost's messages and tonic's types.
                 dependencies: lines(&[
-                    r#"prost = "0.14""#,
-                    r#"tonic = { version = "0.14", default-features = false, features = ["channel", "codegen"] }"#,
-                    r#"tonic-prost = "0.14""#,
                     r#"ulo-grpc = "=@@version@@""#,
                     r#"ulo-health = "=@@version@@""#,
                     r#"ulo-health-grpc = "=@@version@@""#,

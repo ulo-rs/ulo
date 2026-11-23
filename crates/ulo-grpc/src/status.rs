@@ -13,7 +13,7 @@ use tonic_types::{ErrorDetails, FieldViolation, HelpLink, StatusExt};
 use ulo::{BoxError, CancelReason, ExecutionRef};
 use ulo_transport::{CallError, Detail, Details, ErrorKind, ExtractError};
 
-use crate::extract::Framing;
+use crate::extract::Undecodable;
 
 /// The type URL a `Detail::Json` is packed under: a `google.protobuf.Value` holds any JSON value.
 const VALUE_TYPE_URL: &str = "type.googleapis.com/google.protobuf.Value";
@@ -100,8 +100,11 @@ fn own_code(err: &CallError) -> Option<Code> {
 /// Two extraction failures have a code of their own, as HTTP answers `TooLarge` 413: an
 /// `ExtractError::TooLarge`, a message past the 4 MiB limit as it arrives or once decompressed, is
 /// RESOURCE_EXHAUSTED, the code gRPC implementations give a message past their receive limit; a
-/// request body breaking the message framing, a compressed flag on a call naming no compression
-/// among them, is INTERNAL, which the compression specification requires.
+/// request body that does not decode, breaking the message framing or holding a message prost
+/// does not decode, is INTERNAL, which the compression specification requires for a compressed
+/// flag on a call naming no compression and gRPC's status code table gives "error parsing request
+/// proto". The error handlers read either by its kind, `TooLarge`'s and `Malformed`'s
+/// `BadRequest`; the code is the wire's alone.
 ///
 /// tonic-types' `ErrorDetails` holds one `BadRequest`, one `ErrorInfo`, one `RetryInfo` and one
 /// `Help`: every `FieldViolations` detail's violations are written into the one `BadRequest`, every
@@ -115,7 +118,7 @@ pub fn to_status(err: &CallError) -> Status {
 fn extraction_code(err: &CallError) -> Option<Code> {
     match err.source_as::<ExtractError>()? {
         ExtractError::TooLarge { .. } => Some(Code::ResourceExhausted),
-        ExtractError::Malformed { source, .. } if source.downcast_ref::<Framing>().is_some() => Some(Code::Internal),
+        ExtractError::Malformed { source, .. } if source.downcast_ref::<Undecodable>().is_some() => Some(Code::Internal),
         _ => None,
     }
 }

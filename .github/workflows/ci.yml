@@ -428,7 +428,10 @@ jobs:
       # The four compression cases, which grpc-go's client does not implement, through
       # `ulo-grpc-interop-client`, a tonic client with gzip enabled that takes grpc-go's flags and
       # reads each reply message's compressed flag off the body. The same runner and the same two
-      # passes; the list and its allowances are in `compression_cases.txt`.
+      # passes; the list and its allowances are in `compression_cases.txt`. One case is allowed to
+      # fail, `server_compressed_streaming` (F683): it asks for one message of a reply stream
+      # uncompressed, and the server has a per-reply opt-out and no per-message one, which is
+      # built when a user asks for it.
       - run: >-
           python3 crates/ulo-grpc-interop/interop/run.py
           --server target/debug/ulo-grpc-interop

@@ -20,10 +20,6 @@ ulo-ws = { path = "../../crates/ulo-ws" }
 ulo-ws-hyper = { path = "../../crates/ulo-ws-hyper" }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync"] }
-# What the generated gRPC code names.
-prost.workspace = true
-tonic = { workspace = true, features = ["channel", "codegen"] }
-tonic-prost.workspace = true
 
 [build-dependencies]
 ulo-build = { path = "../../crates/ulo-build" }

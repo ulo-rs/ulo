@@ -221,7 +221,9 @@ impl Server {
     /// The encodings a reply's messages may be compressed in: none unset. A call whose
     /// `grpc-accept-encoding` lists one of these has every message of its reply compressed in the
     /// first it lists, the reply's `grpc-encoding` naming it; any other call's reply is sent
-    /// uncompressed. A trailers-only reply carries no message to compress.
+    /// uncompressed, as is a reply built from a [`Response`](crate::Response) marked
+    /// [`uncompressed`](crate::Response::uncompressed). A trailers-only reply carries no message
+    /// to compress.
     ///
     /// Off unset: compressing costs the server CPU on every reply for bandwidth a local network
     /// does not need, and a compressed length can disclose the contents of a reply mixing a
