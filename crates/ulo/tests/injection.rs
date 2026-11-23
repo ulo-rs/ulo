@@ -306,7 +306,7 @@ async fn a_failing_constructor_is_a_startup_error_naming_the_binding() {
     }))
     .await;
 
-    let StartupError::Connect(ConnectError::Construct { key, module, reason }) = error else {
+    let StartupError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = error else {
         panic!("expected a construction failure, got: {error}");
     };
     assert_eq!(key.key(), Key::of::<Fails, ()>());

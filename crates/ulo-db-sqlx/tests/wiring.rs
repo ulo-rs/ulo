@@ -112,7 +112,7 @@ async fn a_failed_hook_names_the_store_module_and_its_key() {
     let db = Db::new();
     let module = db.module().migrate(migrator("this is not sql")).keyed::<Primary>();
     let wired = app(Root::new().import(module)).wire().expect("the module wires");
-    let Err(StartupError::Connect(error @ ConnectError::Hook { .. })) = wired.connect().await else {
+    let Err(StartupError::Connect { error: error @ ConnectError::Hook { .. }, .. }) = wired.connect().await else {
         panic!("a migration that is not SQL did not fail the init hook");
     };
     let ConnectError::Hook { key, .. } = &error else { unreachable!() };
@@ -179,9 +179,9 @@ fn unreachable_module(name: &str) -> SqlxModule<Sqlite> {
 #[tokio::test]
 async fn two_failing_readiness_checks_name_the_module_that_owns_each() {
     let wired = app(Root::new().import(unreachable_module("p").keyed::<Primary>())).wire().expect("the module wires");
-    let Err(StartupError::Connect(primary)) = wired.connect().await else { panic!("an unreachable Primary connected") };
+    let Err(StartupError::Connect { error: primary, .. }) = wired.connect().await else { panic!("an unreachable Primary connected") };
     let wired = app(Root::new().import(unreachable_module("r").keyed::<Replica>())).wire().expect("the module wires");
-    let Err(StartupError::Connect(replica)) = wired.connect().await else { panic!("an unreachable Replica connected") };
+    let Err(StartupError::Connect { error: replica, .. }) = wired.connect().await else { panic!("an unreachable Replica connected") };
 
     let mut seen = Vec::new();
     for (error, owner) in [(&primary, "Primary"), (&replica, "Replica")] {

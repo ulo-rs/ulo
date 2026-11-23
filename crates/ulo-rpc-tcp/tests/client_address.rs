@@ -47,7 +47,7 @@ impl Module for ClientRoot {
 async fn a_client_module_given_a_host_name_fails_connect() {
     let wired = App::builder(ClientRoot(Mutex::new(Some(Tcp::new("billing:7000"))))).runtime(Tokio::current()).wire().expect("the client wires");
     match wired.connect().await {
-        Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(refused), .. })) => {
+        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(refused), .. }, .. }) => {
             says_ip_addresses_only(&refused.to_string(), "billing:7000");
         }
         Err(other) => panic!("expected the client module's init hook to fail `connect`, got: {other}"),

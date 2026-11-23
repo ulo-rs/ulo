@@ -218,7 +218,7 @@ async fn the_app_s_waits_read_the_timer_set_after_the_runtime() {
     let connected = tokio::time::timeout(PATIENCE, wired.connect())
         .await
         .expect("the init hook ran on the runtime's own clock, not the timer's");
-    let Err(StartupError::Connect(ConnectError::Hook { reason, .. })) = connected else {
+    let Err(StartupError::Connect { error: ConnectError::Hook { reason, .. }, .. }) = connected else {
         panic!("a hook that never returns did not fail the connect phase");
     };
     assert!(matches!(reason, FailureReason::TimedOut { .. }), "the hook failed otherwise: {reason}");

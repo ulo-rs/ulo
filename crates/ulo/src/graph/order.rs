@@ -6,7 +6,8 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
 
 use crate::graph::register::{Import, Registry};
-use crate::graph::{BindingId, Effective, Graph};
+use crate::graph::{BindingId, Effective, Graph, ModuleId};
+use crate::hooks::{HookKind, HookRecord};
 
 /// Depth-first post-order over imports from the root, imports in the order written: each
 /// module's position becomes its `ModuleId`. An import that closes a cycle is skipped, so every
@@ -99,18 +100,36 @@ pub(crate) fn connect_order(graph: &Graph) -> Vec<BindingId> {
 /// so what it reads is waited for in its place; an execution-scoped binding is never built by
 /// `connect`, and a singleton reading one has failed the scope pass.
 fn singleton_deps(graph: &Graph, is_singleton: &[bool], id: BindingId) -> Vec<BindingId> {
+    let mut reads = graph.construction_deps(id);
+    reads.extend(graph.readiness_deps(id));
+    singletons_through(graph, |dep| dep != id && is_singleton[dep.0 as usize], reads)
+}
+
+/// The singletons the `OnModuleDestroy` hooks among `hooks`, resolved in `module`, read, each
+/// once, a transient followed through what it builds at the read: what a teardown needs built
+/// before it runs them (§9.2). A trait hook reads nothing but its own instance.
+pub(crate) fn destroy_hook_reads(graph: &Graph, module: ModuleId, hooks: &[HookRecord]) -> Vec<BindingId> {
+    let reads = hooks
+        .iter()
+        .filter(|hook| hook.kind == HookKind::OnModuleDestroy)
+        .flat_map(|hook| graph.closure_deps(module, &hook.dependencies))
+        .collect();
+    singletons_through(graph, |dep| graph.binding(dep).effective == Effective::Singleton, reads)
+}
+
+/// The bindings among `reads` that `is_singleton` accepts, each once, a transient followed
+/// through what it builds in its place.
+fn singletons_through(graph: &Graph, is_singleton: impl Fn(BindingId) -> bool, mut reads: Vec<BindingId>) -> Vec<BindingId> {
     let mut deps = Vec::new();
     let mut seen = HashSet::new();
-    let mut pending = graph.construction_deps(id);
-    pending.extend(graph.readiness_deps(id));
-    while let Some(dep) = pending.pop() {
-        if dep == id || !seen.insert(dep) {
+    while let Some(dep) = reads.pop() {
+        if !seen.insert(dep) {
             continue;
         }
-        if is_singleton[dep.0 as usize] {
+        if is_singleton(dep) {
             deps.push(dep);
         } else if graph.binding(dep).effective == Effective::Transient {
-            pending.extend(graph.construction_deps(dep));
+            reads.extend(graph.construction_deps(dep));
         }
     }
     deps
