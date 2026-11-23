@@ -283,7 +283,7 @@ async fn a_zero_bound_fails_connect() {
         .wire()
         .expect("the app wires");
     match wired.connect().await {
-        Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(error), .. })) => {
+        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) => {
             assert!(error.to_string().contains("`connect_within` is zero"), "the refusal names the setting: {error}");
         }
         Err(other) => panic!("expected `WsModule`'s init hook to fail `connect`, got: {other}"),
@@ -312,7 +312,7 @@ async fn an_adapter_on_a_runtime_without_io_fails_connect_naming_enable_io() {
     let connected = wired.connect().await;
     runtime.shutdown_background();
     match connected {
-        Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(error), .. })) => {
+        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) => {
             assert!(error.to_string().contains("enable_io"), "the refusal names `enable_io`: {error}");
         }
         Err(other) => panic!("expected `WsModule`'s init hook to fail `connect`, got: {other}"),

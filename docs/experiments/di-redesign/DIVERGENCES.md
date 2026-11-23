@@ -127,7 +127,8 @@ Recommendation: accept for the first compile. Partial teardown wants its own des
 §9.5's steps presuppose `Connected`.
 Decided: Q32-4, built as `DESIGN.md` §14 item 31: the `OnModuleDestroy` hooks of every binding
 and module that had initialized (items 60 and 64) run in reverse, bounded as at close, and their failures
-travel beside the walk's as `ConnectError::Teardown`.
+travel beside the walk's in the `teardown` field of `StartupError::Connect` and `LoadError::Connect`
+(item 66).
 
 **D14. A panic in a guard, interceptor, handler or error handler unwinds out of `dispatch`.** [F 4]
 §14.5 catches panics in `connect`, `load`, `close` and a build inside a call; silent on the

@@ -42,7 +42,7 @@ async fn a_process_broadcasting_over_an_adapter_with_no_runtime_fails_connect() 
     let adapter = thread::spawn(|| Redis::url(URL)).join().expect("building the adapter on a plain thread panicked");
     let wired = App::builder(Root(Mutex::new(Some(adapter)))).runtime(ulo_runtime_tokio::Tokio::current()).wire().expect("the app wires");
     match wired.connect().await {
-        Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(error), .. })) => {
+        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) => {
             assert!(error.to_string().contains("`.with_handle(..)`"), "the refusal names `.with_handle(..)`: {error}");
         }
         Err(other) => panic!("expected `WsModule`'s init hook to fail `connect`, got: {other}"),

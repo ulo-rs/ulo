@@ -37,7 +37,7 @@ async fn a_failing_constructor_fails_connect_naming_the_key_and_module() {
     else {
         panic!("connect should fail");
     };
-    let StartupError::Connect(ConnectError::Construct { key, module, reason }) = &error else {
+    let StartupError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = &error else {
         panic!("expected a construct failure, got {error}");
     };
     assert_eq!(key.to_string(), "Greeter");

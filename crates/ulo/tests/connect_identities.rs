@@ -100,7 +100,7 @@ async fn a_keyed_module_s_failing_hook_names_the_module_with_its_qualifier() {
     }))
     .await;
 
-    let StartupError::Connect(ConnectError::Hook { hook, key, reason }) = error else {
+    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
         panic!("expected a hook failure, got: {error}");
     };
     assert_eq!(hook, HookKind::OnModuleInit);
@@ -115,7 +115,7 @@ struct Deep;
 /// `module` and `key` of the construction failure `connect` answers, and the error the deepest
 /// constructor returned.
 fn construction_failure(error: StartupError) -> (Key, String, String) {
-    let StartupError::Connect(ConnectError::Construct { key, module, reason }) = error else {
+    let StartupError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = error else {
         panic!("expected a construction failure, got: {error}");
     };
     let FailureReason::Errored(source) = reason else { panic!("expected an errored construction, got: {reason}") };

@@ -57,7 +57,7 @@ async fn a_construction_fault_is_a_connect_startup_error() {
         m.try_singleton(|| async { Err::<S1, _>(Boom::new("down")) });
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
 }
 
 #[tokio::test]

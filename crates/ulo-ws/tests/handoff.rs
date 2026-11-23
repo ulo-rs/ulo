@@ -443,7 +443,7 @@ impl Module for RefusingRoot {
 async fn a_broadcast_adapter_refusing_in_prepare_fails_connect() {
     let wired = App::builder(RefusingRoot).runtime(ulo_runtime_tokio::Tokio::current()).wire().expect("the app wires");
     match wired.connect().await {
-        Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(error), .. })) => {
+        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) => {
             assert!(error.to_string().contains(REFUSAL), "the hook's error does not carry the adapter's: {error}");
         }
         Err(other) => panic!("expected `WsModule`'s init hook to fail `connect`, got: {other}"),

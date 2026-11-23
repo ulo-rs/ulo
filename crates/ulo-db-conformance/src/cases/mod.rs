@@ -202,7 +202,7 @@ pub(crate) async fn readiness_reads<H: Host>(readiness: &Readiness, up: bool, wi
 
 /// The connect failure under `error` and its reason; `None` for a failure of another phase.
 pub(crate) fn connect_failure(error: &StartupError) -> Option<(&ConnectError, &FailureReason)> {
-    let StartupError::Connect(connect) = error else { return None };
+    let StartupError::Connect { error: connect, .. } = error else { return None };
     let reason = match connect {
         ConnectError::Construct { reason, .. } | ConnectError::Readiness { reason, .. } | ConnectError::Hook { reason, .. } => reason,
         _ => return None,

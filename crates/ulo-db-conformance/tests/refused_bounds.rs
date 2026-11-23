@@ -236,9 +236,10 @@ async fn advance_once_waiting(mode: &'static str, by: Duration) {
 /// The reason of a connect failure and the error it stores, if it stores one.
 fn reason(error: &StartupError) -> &FailureReason {
     match error {
-        StartupError::Connect(
-            ConnectError::Construct { reason, .. } | ConnectError::Readiness { reason, .. } | ConnectError::Hook { reason, .. },
-        ) => reason,
+        StartupError::Connect {
+            error: ConnectError::Construct { reason, .. } | ConnectError::Readiness { reason, .. } | ConnectError::Hook { reason, .. },
+            ..
+        } => reason,
         other => panic!("the start failed outside `connect`: {other:?}"),
     }
 }
@@ -281,7 +282,7 @@ fn refusal(error: &StartupError) -> &(dyn Error + 'static) {
 fn a_refused_connect_bound_fails_the_create_loop_with_the_refusal() {
     scenario("create-refused").0.refuse(CONNECT_WITHIN);
     let error = start("create-refused");
-    assert!(matches!(error, StartupError::Connect(ConnectError::Construct { .. })), "{error:?}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "{error:?}");
     refusal(&error);
 }
 
@@ -298,7 +299,7 @@ fn a_connect_bound_that_passes_still_times_the_create_loop_out() {
         clock.advance(CONNECT_WITHIN);
     });
     assert!(!is_permanent(&error), "a connect bound that passed is permanent: {error}");
-    let StartupError::Connect(ConnectError::Construct { reason: FailureReason::TimedOut { after, limit }, .. }) = &error else {
+    let StartupError::Connect { error: ConnectError::Construct { reason: FailureReason::TimedOut { after, limit }, .. }, .. } = &error else {
         panic!("the loop did not time out at the construction bound: {error:?}");
     };
     assert_eq!((*after, *limit), (CONNECT_WITHIN, Limit::Item));
@@ -321,7 +322,7 @@ fn a_create_loop_out_of_retries_ends_with_the_last_error() {
 #[test]
 fn a_refused_lock_wait_fails_the_start_with_the_refusal() {
     let error = start("lock-refused");
-    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { .. })), "{error:?}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Hook { .. }, .. }), "{error:?}");
     let permanent = refusal(&error);
     let failed = found::<MigrationFailed>(permanent).unwrap_or_else(|| panic!("the hook did not fail with `MigrationFailed`: {error:?}"));
     assert!(!failed.waited_for_lock() && !failed.is_retryable(), "a refused lock wait is classified as a wait for the lock: {failed:?}");
@@ -368,7 +369,7 @@ fn a_clock_refusing_the_migrations_and_the_hook_bound_fails_the_start_with_the_r
     clock.refuse(MIGRATE_WITHIN);
     clock.refuse(HOOK_BOUND);
     let error = start("migrate-all-refused");
-    let StartupError::Connect(ConnectError::Hook { hook, key, .. }) = &error else {
+    let StartupError::Connect { error: ConnectError::Hook { hook, key, .. }, .. } = &error else {
         panic!("the start failed other than in a hook: {error:?}");
     };
     assert_eq!(*hook, ulo::HookKind::OnModuleInit);
@@ -384,7 +385,7 @@ fn a_connect_bound_refused_after_it_passed_times_the_create_loop_out() {
     late_from("create-late").store(true, Ordering::SeqCst);
     let error = start_late("create-late", CONNECT_WITHIN);
     assert!(!is_permanent(&error), "a connect bound that passed is permanent: {error}");
-    let StartupError::Connect(ConnectError::Construct { reason: FailureReason::TimedOut { after, limit }, .. }) = &error else {
+    let StartupError::Connect { error: ConnectError::Construct { reason: FailureReason::TimedOut { after, limit }, .. }, .. } = &error else {
         panic!("the loop did not time out at the construction bound: {error:?}");
     };
     assert_eq!((*after, *limit), (CONNECT_WITHIN, Limit::Item));
