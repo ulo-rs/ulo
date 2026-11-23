@@ -500,7 +500,6 @@ where
 ///
 /// Inside a tokio runtime, as `Runtime::block_on` does: `run` starts the process's runtime, and
 /// an `async fn main` already has one.
-#[expect(clippy::result_large_err, reason = "`StartupError` is the core's, and `RunError` holds it unchanged")]
 pub fn run<M>(root: impl Module, servers: impl Servers<M>) -> Result<Shutdown, RunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(RunError::Runtime)?;
     let tokio = Tokio::from_handle(runtime.handle().clone());
