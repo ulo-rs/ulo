@@ -10,10 +10,18 @@ use ulo::{Runtime, TaskEnd, spawn_blocking_with};
 
 use super::{PANIC_MESSAGE, PATIENCE, assert_panicked_with_the_message, within};
 
-/// How many pieces of blocking work [`beside_tasks`] holds at once: more than any executor runs
-/// threads, so a runtime running blocking work on the threads that poll its tasks has none left
-/// for the task that releases them. Within tokio's 512 and smol's 500.
-pub const HELD_AT_ONCE: usize = 64;
+/// The fewest pieces of blocking work [`beside_tasks`] holds at once, whatever the runtime's
+/// worker count.
+pub const MIN_HELD_AT_ONCE: usize = 4;
+
+/// How many pieces of blocking work [`beside_tasks`] holds at once on a runtime whose tasks
+/// `workers` threads poll: one more than `workers`, so a runtime running blocking work on those
+/// threads has none left for the task that releases them, and at least [`MIN_HELD_AT_ONCE`].
+/// Outnumbering the workers is all the property needs, that blocking work does not stall the
+/// runtime's tasks, so a runtime whose blocking pool runs this many at once passes.
+pub fn held_at_once(workers: usize) -> usize {
+    workers.saturating_add(1).max(MIN_HELD_AT_ONCE)
+}
 
 /// A release every piece of blocking work waits on, bounded by [`PATIENCE`] so a runtime that
 /// never lets the release run fails rather than hangs.
@@ -43,16 +51,17 @@ impl Release {
     }
 }
 
-/// [`HELD_AT_ONCE`] pieces of blocking work each wait for a release a task spawned on the runtime
-/// gives only once every piece has begun, and every piece receives it: the runtime ran them on
-/// threads that do not poll its tasks, all at once, and the task ran meanwhile. Each ends
-/// `Finished`.
-pub async fn beside_tasks<R: Runtime>(rt: R) {
+/// [`held_at_once`]`(workers)` pieces of blocking work each wait for a release a task spawned on
+/// the runtime gives only once every piece has begun, and every piece receives it: the runtime ran
+/// them on threads that do not poll its tasks, all at once, and the task ran meanwhile. Each ends
+/// `Finished`. `workers` is [`Harness::workers`](crate::Harness::workers).
+pub async fn beside_tasks<R: Runtime>(rt: R, workers: usize) {
+    let held = held_at_once(workers);
     let release = Release::new();
     let (began, begun) = mpsc::unbounded::<()>();
     let received = Arc::new(Mutex::new(0_usize));
-    let mut handles = Vec::with_capacity(HELD_AT_ONCE);
-    for _ in 0..HELD_AT_ONCE {
+    let mut handles = Vec::with_capacity(held);
+    for _ in 0..held {
         let (release, began, received) = (Arc::clone(&release), began.clone(), Arc::clone(&received));
         handles.push(rt.spawn_blocking(Box::new(move || {
             let _ = began.unbounded_send(());
@@ -65,7 +74,7 @@ pub async fn beside_tasks<R: Runtime>(rt: R) {
     let releasing = {
         let release = Arc::clone(&release);
         rt.spawn(Box::pin(async move {
-            let _ = begun.take(HELD_AT_ONCE).count().await;
+            let _ = begun.take(held).count().await;
             release.open();
         }))
     };
@@ -76,8 +85,8 @@ pub async fn beside_tasks<R: Runtime>(rt: R) {
     }
     let received = *received.lock().unwrap_or_else(PoisonError::into_inner);
     assert_eq!(
-        received, HELD_AT_ONCE,
-        "of {HELD_AT_ONCE} pieces of blocking work held at once, {received} received the release a task spawned on the runtime gave: the runtime ran blocking work where its tasks run, or not all at once"
+        received, held,
+        "of {held} pieces of blocking work held at once, more than the {workers} threads polling tasks, {received} received the release a task spawned on the runtime gave: the runtime ran blocking work where its tasks run, or not all at once"
     );
 }
 

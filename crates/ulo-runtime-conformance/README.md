@@ -50,6 +50,11 @@ impl Harness for OnSmol {
         Smol::new(Arc::new(Executor::new())).with_workers(3).block_on(fut)
     }
 
+    /// The threads running that executor: the test's and the three.
+    fn workers() -> usize {
+        4
+    }
+
     fn stoppable() -> Option<Stoppable<Smol>> {
         None
     }
@@ -72,17 +77,17 @@ block left out, the two shut-down scenarios fail:
 test a_shut_down_runtime_refuses_spawning_and_timing_without_panicking ... FAILED
 
 ---- a_shut_down_runtime_refuses_spawning_and_timing_without_panicking stdout ----
-thread 'a_shut_down_runtime_refuses_spawning_and_timing_without_panicking' panicked at tests/conformance.rs:27:1:
+thread 'a_shut_down_runtime_refuses_spawning_and_timing_without_panicking' panicked at tests/conformance.rs:32:1:
 the harness answers no runtime that can shut down: declare `a_shut_down_runtime_refuses_spawning_and_timing_without_panicking` not applicable with the reason
 ```
 
 Your runtime takes `Smol`'s place. `runtime` answers a value of it, called inside the future
 `block_on` runs. `block_on` runs a future to its end from a plain test thread, on an executor that
-runs the tasks the runtime spawns meanwhile. `stoppable` answers a second runtime, running, with
-what shuts it down, for the scenarios on a runtime that has shut down: a `Stoppable` carries the
-runtime, the crate's other clocks on it, `run`, the runtime crate's own way to run a future as a
-task, and `stop`. [`ulo-runtime-tokio`'s harness](https://github.com/ulo-rs/ulo/blob/master/crates/ulo-runtime-tokio/tests/conformance.rs)
-fills all four.
+runs the tasks the runtime spawns meanwhile. `workers` answers how many threads poll those tasks.
+`stoppable` answers a second runtime, running, with what shuts it down, for the scenarios on a
+runtime that has shut down: a `Stoppable` carries the runtime, the crate's other clocks on it,
+`run`, the runtime crate's own way to run a future as a task, and `stop`. [`ulo-runtime-tokio`'s harness](https://github.com/ulo-rs/ulo/blob/master/crates/ulo-runtime-tokio/tests/conformance.rs)
+fills all five.
 
 ## What a runtime declares
 
@@ -103,10 +108,12 @@ modules, each taking the runtime by value, so a runtime crate runs one alone to 
 - **Runtimes:** the suite names none and depends on none. Every wait a scenario makes is bounded
   through the runtime's own `Timer`, so a runtime that loses a task fails the scenario after
   `cases::PATIENCE`, five seconds, instead of hanging it.
-- **Blocking threads:** one scenario holds `cases::blocking::HELD_AT_ONCE`, 64, pieces of blocking
-  work at once, each waiting for a release a task of the runtime gives, so a runtime fails it when
-  its blocking pool cannot run 64 at once, as it does when blocking work runs on the threads that
-  poll its tasks.
+- **Blocking threads:** one scenario holds `cases::blocking::held_at_once(workers)` pieces of
+  blocking work at once, one more than the harness's `workers` and at least four, each waiting for
+  a release a task of the runtime gives. The property is that blocking work does not stall the
+  runtime's tasks, and that needs the workers outnumbered, not a large pool: a runtime running
+  blocking work on the threads that poll its tasks has every one of them held and fails, and one
+  whose blocking pool runs that many pieces at once passes.
 - **Output:** a scenario that observes a panic causes one inside a task, and the panic hook prints
   it to standard error while the scenario passes.
 - **Logging:** the two scenarios reading the core's `warn` install a recording `tracing`

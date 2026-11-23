@@ -185,3 +185,28 @@ async fn a_client_on_a_name_resolving_to_nothing_fails_each_call_unavailable() {
         assert!(failed.message().contains("`nosuch.invalid:7000` resolved to no address"), "the failure does not name the host: {failed:?}");
     }
 }
+
+/// A name with an empty label other than the one a trailing dot ends can never resolve, so it is
+/// refused where the link is set up: a client's `RpcClient::new`, as `UnusableLink`, and a server's
+/// `listen()`, as `Configure`, before any lookup or socket.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_name_with_an_empty_label_is_refused_where_the_link_is_set_up() {
+    for written in [".:7000", "..:7000", "a..b:7000", ".a:7000"] {
+        let refused = RpcClient::new(Tcp::new(written), Arc::new(Tokio::current())).map(drop).expect_err("a client on a name with an empty label");
+        assert!(refused.to_string().contains(&format!("`{written}`")) && refused.to_string().contains("empty label"), "{refused}");
+    }
+    let refused = App::builder(ServerRoot)
+        .runtime(Tokio::current())
+        .wire()
+        .expect("the server wires")
+        .connect()
+        .await
+        .expect("the server connects")
+        .bind(Server::new(Tcp::new("a..b:0")))
+        .listen()
+        .await
+        .err()
+        .expect("a server on a name with an empty label listened");
+    assert!(matches!(refused, StartupError::Configure(_)), "{refused:?}");
+    assert!(refused.to_string().contains("`a..b:0`") && refused.to_string().contains("empty label"), "{refused}");
+}

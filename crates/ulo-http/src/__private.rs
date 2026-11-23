@@ -55,6 +55,15 @@ pub fn missing_host(version: http::Version, headers: &HeaderMap) -> Option<crate
     Some(refused)
 }
 
+/// The 400 problem document the `ulo_http` service answers an HTTP/1.x request with when two
+/// readers could read it differently, more than one `Host` line or `Content-Length` beside
+/// `Transfer-Encoding` (RFC 9112 §3.2, §6.3), with `Connection: close`, `Routing::Unrouted` and the
+/// request's version; `None` for any other request. The service's own check, so `ulo-ws-hyper`
+/// answers a handshake on its own port exactly as the HTTP server's port does.
+pub fn ambiguous_head(version: http::Version, headers: &HeaderMap) -> Option<crate::Response> {
+    crate::service::ambiguous(version, headers, &HttpConfig::default())
+}
+
 /// What the server answering a WebSocket handshake adds to its refusals, as it adds them to its
 /// own errors and refusals. Each header is built when a refusal asks for it, so a handshake that
 /// is not refused builds none and logs nothing for a challenge that is not a valid header value.

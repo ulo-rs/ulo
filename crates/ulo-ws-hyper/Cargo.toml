@@ -50,11 +50,11 @@ ulo-listener-smol = { path = "../ulo-listener-smol" }
 ulo-conformance-support = { path = "../ulo-conformance-support", features = ["smol"] }
 ulo-runtime-smol = { path = "../ulo-runtime-smol" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
-# The HTTP server whose port `tests/missing_host.rs` answers the same handshake on.
+# The HTTP server whose port `tests/host_lines.rs` answers the same handshake on.
 ulo-http-hyper = { path = "../ulo-http-hyper" }
 async-net.workspace = true
 futures-io.workspace = true
-# `sink`: the tests write through `SinkExt` on the client's socket. `io`: `tests/missing_host.rs`
+# `sink`: the tests write through `SinkExt` on the client's socket. `io`: `tests/host_lines.rs`
 # reads and writes its raw requests through `AsyncReadExt` and `AsyncWriteExt`.
 futures-util = { workspace = true, features = ["sink", "io"] }
 # The MessagePack gateway's frames, which `messages.rs` encodes and decodes.

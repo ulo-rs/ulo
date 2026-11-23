@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,7 +10,7 @@ use futures_util::FutureExt;
 use futures_util::future::{Either, select};
 use tokio::net::UdpSocket;
 use tokio::runtime::Handle;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
@@ -72,11 +72,24 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// A host name, `billing:7000`, is resolved through the system resolver, `ToSocketAddrs`, so
 /// `/etc/hosts`, nsswitch and the search list apply, on the held runtime's blocking pool
 /// (`Runtime::spawn_blocking`). A server resolves it once, in `prepare`, which fails on a name
-/// resolving to no address, and binds the first of its addresses that binds. A client resolves it at every connect,
+/// resolving to no address, and binds the first of its addresses that binds, logging the address
+/// bound at `info`. A client resolves it at every connect,
 /// each `connect` binding a new socket, and connects its socket to the first address the OS
 /// accepts, in the resolver's order, so a later connect follows the name to new addresses; a name
 /// resolving to no address fails that connect, the call failing `Unavailable` with the name and
 /// the resolver's error.
+///
+/// # A name resolving to several addresses
+///
+/// UDP has no handshake, so the OS accepts the first address whatever listens there, and the
+/// client sends every datagram to it, as `std::net::UdpSocket::connect` does. `localhost` commonly
+/// resolves to `::1` before `127.0.0.1`, so a client on `localhost:7000` never reaches a server
+/// bound on `127.0.0.1:7000` alone: where the host answers port unreachable, each call fails
+/// `Unavailable` naming the address it sent to and how many addresses the name resolved to, and
+/// where nothing answers, `Timeout`. The client does not move to the next address after a
+/// refusal, which is an ICMP message firewalls drop, so which server it reached would depend on
+/// the network between them. Name the address the server is bound on, `127.0.0.1:7000`, or bind
+/// a server on each of the name's addresses, `127.0.0.1:7000` and `[::1]:7000`.
 pub struct Udp {
     pub(crate) endpoint: EndpointSpec,
     /// How a host name becomes addresses: the system resolver, or a test's.
@@ -276,9 +289,12 @@ impl Link for Udp {
             return Err(NoTimer { link: "UDP" }.into());
         };
         let runtime = self.runtime()?;
+        let endpoint = self.target()?;
         // `bind` over a slice binds the first address that binds, as `std::net::UdpSocket::bind` does.
         let socket = Arc::new(runtime.run(async move { UdpSocket::bind(addrs.as_slice()).await }).await.map_err(Permanent::new)??);
-        *lock(&self.state.bound) = vec![BoundAddr::new("rpc", socket.local_addr()?)];
+        let local = socket.local_addr()?;
+        tracing::info!(ulo.transport = "rpc", link = "udp", endpoint = %endpoint, address = %local, "the RPC server listens on `address`");
+        *lock(&self.state.bound) = vec![BoundAddr::new("rpc", local)];
         *lock(&self.state.socket) = Some(Arc::clone(&socket));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
         let (dropped, stop) = oneshot::channel::<()>();
@@ -298,13 +314,17 @@ impl Link for Udp {
     }
 
     async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
-        self.target()?;
+        let name = match self.target()? {
+            Target::Host(host) => Some(host),
+            Target::Endpoint(_) => None,
+        };
         let runtime = self.runtime()?;
         let addrs = self.addresses(&runtime).await?;
-        let socket = runtime
+        let resolved = addrs.len();
+        let (socket, sent_to) = runtime
             .run(async move {
                 let mut last = None;
-                for addr in addrs {
+                for (taken, addr) in addrs.into_iter().enumerate() {
                     let local: SocketAddr = if addr.is_ipv4() { (Ipv4Addr::UNSPECIFIED, 0).into() } else { (Ipv6Addr::UNSPECIFIED, 0).into() };
                     let connected = async {
                         let socket = UdpSocket::bind(local).await?;
@@ -312,7 +332,7 @@ impl Link for Udp {
                         Ok::<_, io::Error>(socket)
                     };
                     match connected.await {
-                        Ok(socket) => return Ok(socket),
+                        Ok(socket) => return Ok((socket, SentTo { addr, name: name.map(|host| Resolved { host, resolved, taken }) })),
                         Err(error) => last = Some(error),
                     }
                 }
@@ -326,13 +346,24 @@ impl Link for Udp {
         let epoch = self.state.client_epoch.subscribe();
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
         runtime.handle().spawn(write_datagrams(Arc::downgrade(&socket), queued, closed(epoch.clone())));
+        let awaiting = Arc::new(Mutex::new(Awaiting::default()));
+        let refused = Arc::new(Notify::new());
+        let (sending, refusing, sending_to) = (Arc::clone(&awaiting), Arc::clone(&refused), sent_to.clone());
         // Queued at the call, so datagrams leave in the order their sends were called.
         let send = Box::new(move |_pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
-            let queued = encode(codec, &frame).map(|bytes| write(&writes, bytes, None));
-            Box::pin(async move { queued?.await })
+            let (awaiting, refused, sent_to) = (Arc::clone(&sending), Arc::clone(&refusing), sending_to.clone());
+            let queued = encode(codec, &frame).and_then(|bytes| lock(&awaiting).sent(&frame).map(|()| write(&writes, bytes, None)));
+            let id = request_id(&frame);
+            Box::pin(async move {
+                let error = match queued?.await {
+                    Ok(()) => return Ok(()),
+                    Err(error) => error,
+                };
+                Err(lock(&awaiting).send_failed(id, error, &sent_to, &refused))
+            })
         });
         let (frames, replies) = mpsc::channel(REPLY_QUEUE);
-        runtime.handle().spawn(read_replies(socket, epoch, codec, frames));
+        runtime.handle().spawn(read_replies(socket, epoch, codec, frames, awaiting, refused, sent_to));
         let replies = futures_util::stream::unfold(replies, |mut replies| async move {
             let frame = replies.recv().await?;
             Some((frame, replies))
@@ -399,32 +430,199 @@ async fn closed(mut epoch: watch::Receiver<u64>) {
     let _ = epoch.changed().await;
 }
 
+/// Where a client socket sends: the address, and the host name it came from.
+#[derive(Clone, Debug)]
+struct SentTo {
+    addr: SocketAddr,
+    name: Option<Resolved>,
+}
+
+/// A host name, how many addresses it resolved to, and the position of the one taken among them.
+#[derive(Clone, Debug)]
+struct Resolved {
+    host: HostPort,
+    resolved: usize,
+    taken: usize,
+}
+
+impl SentTo {
+    /// What a call is told when the socket fails with `error`: the address the datagrams went to,
+    /// and for a name resolving to several addresses which one the link took, so the message
+    /// itself shows a server bound on another of them, `127.0.0.1` where `localhost` answers `::1`
+    /// first.
+    fn failure(&self, error: &io::Error) -> String {
+        let addr = self.addr;
+        let what = if error.kind() == io::ErrorKind::ConnectionRefused {
+            format!("the UDP link's datagrams to {addr} were refused (ICMP port unreachable)")
+        } else {
+            format!("the UDP link's socket sending to {addr} failed: {error}")
+        };
+        match &self.name {
+            Some(Resolved { host, resolved, taken }) if *resolved > 1 => {
+                let order = if *taken == 0 { "first".to_owned() } else { format!("as number {}, the first a socket could connect to", taken + 1) };
+                format!("{what}; `{host}` resolved to {resolved} addresses and the link took {addr} {order}")
+            }
+            _ => what,
+        }
+    }
+}
+
+/// The calls a client socket has sent a request for and not seen end, and, once the socket has
+/// failed, what each call is told.
+#[derive(Default)]
+struct Awaiting {
+    ids: HashSet<u64>,
+    failed: Option<String>,
+}
+
+impl Awaiting {
+    /// Records `frame` as sent: a request awaits its reply, and a `cancel` ends that wait. Refused
+    /// once the socket has failed, with what the calls waiting on it were told.
+    fn sent(&mut self, frame: &Frame) -> Result<(), BoxError> {
+        if let Some(failed) = &self.failed {
+            return Err(failed.clone().into());
+        }
+        match frame {
+            Frame::Req { id, .. } | Frame::Open { id, .. } => {
+                self.ids.insert(*id);
+            }
+            Frame::Cancel { id } => {
+                self.ids.remove(id);
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// What a call whose datagram did not leave is told, its wait ended. The host's refusal is
+    /// reported once, to the socket's receive or to its next send, whichever reads it first, so a
+    /// send the host refused fails the socket as the receive would, `refused` waking the reply
+    /// lane to answer the calls awaiting it; once the socket has failed, a send that fails for
+    /// any reason, a datagram still queued as the lane released the socket among them, is told
+    /// what those calls were.
+    fn send_failed(&mut self, id: Option<u64>, error: BoxError, sent_to: &SentTo, refused: &Notify) -> BoxError {
+        if let Some(id) = id {
+            self.ids.remove(&id);
+        }
+        if self.failed.is_none()
+            && let Some(io) = error.downcast_ref::<io::Error>()
+            && io.kind() == io::ErrorKind::ConnectionRefused
+        {
+            self.failed = Some(sent_to.failure(io));
+            refused.notify_one();
+        }
+        match &self.failed {
+            Some(failed) => failed.clone().into(),
+            None => error,
+        }
+    }
+}
+
+fn request_id(frame: &Frame) -> Option<u64> {
+    match frame {
+        Frame::Req { id, .. } | Frame::Open { id, .. } => Some(*id),
+        _ => None,
+    }
+}
+
 /// Reads the client socket's reply datagrams into `frames` until the link closes, the reply lane
 /// is dropped, or the OS reports the server unreachable; the socket is released as this returns.
-async fn read_replies(socket: Arc<UdpSocket>, epoch: watch::Receiver<u64>, codec: Codec, frames: mpsc::Sender<Frame>) {
+/// A failed socket, its receive failing or a send the host refused waking `refused`, first
+/// delivers each reply its receive buffer already holds, since a host may report a pending
+/// refusal ahead of a datagram that arrived before it, then answers each call it still awaits
+/// `err` of kind `unavailable` naming `sent_to` before the lane ends, and refuses a send after it
+/// the same way, so no call is left to read the lane's end alone.
+async fn read_replies(
+    socket: Arc<UdpSocket>,
+    epoch: watch::Receiver<u64>,
+    codec: Codec,
+    frames: mpsc::Sender<Frame>,
+    awaiting: Arc<Mutex<Awaiting>>,
+    refused: Arc<Notify>,
+    sent_to: SentTo,
+) {
     let mut buffer = vec![0u8; MAX_DATAGRAM as usize + 1];
     loop {
+        // Biased so a wake is taken before a datagram ready beside it, which the drain below reads:
+        // the order is then the same whichever the host reports first.
         let received = tokio::select! {
-            received = socket.recv(&mut buffer) => received,
+            biased;
             () = closed(epoch.clone()) => return,
             () = frames.closed() => return,
+            // `Awaiting::send_failed` recorded the failure before the wake.
+            () = refused.notified() => Err(io::Error::from(io::ErrorKind::ConnectionRefused)),
+            received = socket.recv(&mut buffer) => received,
         };
         // An error here is the OS reporting the server unreachable: the reply lane ends, and the
         // next call binds a new socket.
         let len = match received {
             Ok(len) => len,
             Err(error) => {
-                tracing::debug!(%error, "the UDP link's reply lane ended");
+                tracing::debug!(%error, addr = %sent_to.addr, "the UDP link's reply lane ended");
+                // Recorded first, under the lock `Awaiting::sent` takes, so no request joins the
+                // calls awaiting the socket while its buffer is drained.
+                let failure = lock(&awaiting).failed.get_or_insert_with(|| sent_to.failure(&error)).clone();
+                for datagram in already_queued(&socket) {
+                    if !deliver(&datagram, codec, &awaiting, &frames).await {
+                        return;
+                    }
+                }
+                let ids = std::mem::take(&mut lock(&awaiting).ids);
+                for id in ids {
+                    let frame = Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, failure.clone(), Details::new()) };
+                    if frames.send(frame).await.is_err() {
+                        return;
+                    }
+                }
                 return;
             }
         };
-        match codec.decode_frame(&buffer[..len]) {
-            Ok(frame) => {
-                if frames.send(frame).await.is_err() {
-                    return;
-                }
+        if !deliver(&buffer[..len], codec, &awaiting, &frames).await {
+            return;
+        }
+    }
+}
+
+/// Hands a reply datagram to the reply lane, its call's wait ended by a last frame; `false` once
+/// the lane is gone. A datagram that does not decode is dropped.
+async fn deliver(datagram: &[u8], codec: Codec, awaiting: &Mutex<Awaiting>, frames: &mpsc::Sender<Frame>) -> bool {
+    match codec.decode_frame(datagram) {
+        Ok(frame) => {
+            if matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. })
+                && let Some(id) = frame.id()
+            {
+                lock(awaiting).ids.remove(&id);
             }
-            Err(error) => tracing::debug!(%error, "a reply datagram did not decode and was dropped"),
+            frames.send(frame).await.is_ok()
+        }
+        Err(error) => {
+            tracing::debug!(%error, "a reply datagram did not decode and was dropped");
+            true
+        }
+    }
+}
+
+/// The datagrams the socket's receive buffer holds now, read without waiting until it is empty,
+/// through a duplicate of the socket as [`final_read`] reads: tokio tries a read only once its
+/// reactor has seen the socket readable. A refusal reported again is passed over.
+fn already_queued(socket: &UdpSocket) -> Vec<Vec<u8>> {
+    let duplicate = match socket2::SockRef::from(socket).try_clone().and_then(|duplicate| {
+        duplicate.set_nonblocking(true)?;
+        Ok(std::net::UdpSocket::from(duplicate))
+    }) {
+        Ok(duplicate) => duplicate,
+        Err(error) => {
+            tracing::debug!(%error, "the UDP link could not read its failed socket's buffer; replies still in it go undelivered");
+            return Vec::new();
+        }
+    };
+    let mut buffer = vec![0u8; MAX_DATAGRAM as usize + 1];
+    let mut queued = Vec::new();
+    loop {
+        match duplicate.recv(&mut buffer) {
+            Ok(len) => queued.push(buffer[..len].to_vec()),
+            Err(error) if matches!(error.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused) => continue,
+            Err(_) => return queued,
         }
     }
 }
@@ -1481,5 +1679,193 @@ mod host_names {
         assert_eq!(asked.load(Ordering::SeqCst), 1, "the lookups a server on a host name made through `prepare` and `listen`");
         udp.close().await.expect("the link closes");
         let _ = app.close(ulo::Signal::new("host_names")).await;
+    }
+
+    /// A client on a name resolving to `[::1]:p` and then `127.0.0.1:p` sends to the first, as
+    /// `std::net::UdpSocket::connect` does, though the only socket on `p` is on `127.0.0.1`. The
+    /// host answers port unreachable, and each call, the second on a new socket that resolved the
+    /// name again, fails `Unavailable` naming the address it sent to and the name's two addresses.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_call_refused_at_the_first_of_a_name_s_addresses_names_the_address() {
+        let socket = receiving().await;
+        let port = socket.local_addr().expect("an address").port();
+        let first = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
+        // Bound and released: nothing else holds the port on `::1`, so the host refuses there.
+        drop(std::net::UdpSocket::bind(first).expect("the port is free on `::1`"));
+        let udp = on(&format!("billing:{port}"), Lookup::from_fn(|host| Ok(vec![SocketAddr::from((Ipv6Addr::LOCALHOST, host.port())), SocketAddr::from(([127, 0, 0, 1], host.port()))])));
+        let rpc = ulo_rpc::RpcClient::new(udp, Arc::new(Tokio::current())).expect("the client is built");
+        let expected = format!("the UDP link's datagrams to {first} were refused (ICMP port unreachable); `billing:{port}` resolved to 2 addresses and the link took {first} first");
+        for call in ["the first call", "the call on the next socket"] {
+            let failed = rpc.request::<_, u32>("host_names", &1).timeout(PATIENCE).await.expect_err("a call to an address nothing listens on");
+            assert_eq!(failed.kind(), ulo_transport::ErrorKind::Unavailable, "{call}: {failed:?}");
+            assert!(failed.message().contains(&expected), "{call}: the failure does not name the address it sent to: {:?}", failed.message());
+        }
+        let mut buf = [0u8; 256];
+        assert!(socket.try_recv_from(&mut buf).is_err(), "the socket on `127.0.0.1` received a datagram");
+    }
+
+    #[test]
+    fn a_failure_names_the_address_and_where_a_name_s_answer_put_it() {
+        let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
+        let addr = SocketAddr::from(([127, 0, 0, 1], 7000));
+        let host = HostPort::parse("billing:7000").expect("a host name and port");
+        let at = |name: Option<Resolved>| SentTo { addr, name }.failure(&refused);
+        let refusal = "the UDP link's datagrams to 127.0.0.1:7000 were refused (ICMP port unreachable)";
+        assert_eq!(at(None), refusal, "an address");
+        assert_eq!(at(Some(Resolved { host: host.clone(), resolved: 1, taken: 0 })), refusal, "a name resolving to one address");
+        assert_eq!(
+            at(Some(Resolved { host: host.clone(), resolved: 3, taken: 1 })),
+            format!("{refusal}; `billing:7000` resolved to 3 addresses and the link took 127.0.0.1:7000 as number 2, the first a socket could connect to")
+        );
+        let other = SentTo { addr, name: None }.failure(&io::Error::other("the interface went down"));
+        assert_eq!(other, "the UDP link's socket sending to 127.0.0.1:7000 failed: the interface went down");
+    }
+
+    /// Once the socket has failed, a request is refused with what the calls waiting on it were
+    /// told, so a call sent between the failure and the lane's end is not left to read the end.
+    #[test]
+    fn a_request_after_the_socket_failed_is_refused_with_the_failure() {
+        let mut awaiting = Awaiting::default();
+        let request = |id| Frame::Req { id, pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        awaiting.sent(&request(1)).expect("a request before the failure");
+        awaiting.sent(&request(2)).expect("a request before the failure");
+        awaiting.sent(&Frame::Cancel { id: 2 }).expect("a cancel");
+        assert_eq!(awaiting.ids, HashSet::from([1]), "the requests awaiting a reply");
+        awaiting.failed = Some("the socket failed".to_owned());
+        let refused = awaiting.sent(&request(3)).expect_err("a request after the failure");
+        assert_eq!(refused.to_string(), "the socket failed");
+        assert_eq!(awaiting.ids, HashSet::from([1]), "a refused request awaits nothing");
+    }
+
+    /// The call after a refused socket connects again and follows the name: the lookup answers
+    /// `[::1]:p`, where nothing listens, at the first connect and `127.0.0.1:p`, where a socket
+    /// answers each request, at the second, and that call and the one after it are answered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_call_after_a_refused_socket_connects_again_and_is_answered() {
+        let server = receiving().await;
+        let port = server.local_addr().expect("an address").port();
+        drop(std::net::UdpSocket::bind((Ipv6Addr::LOCALHOST, port)).expect("the port is free on `::1`"));
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&asked);
+        let udp = on(
+            &format!("billing:{port}"),
+            Lookup::from_fn(move |host| {
+                let first = counting.fetch_add(1, Ordering::SeqCst) == 0;
+                Ok(vec![if first { SocketAddr::from((Ipv6Addr::LOCALHOST, host.port())) } else { SocketAddr::from(([127, 0, 0, 1], host.port())) }])
+            }),
+        );
+        let answering = tokio::spawn(async move {
+            let mut buf = vec![0u8; MAX_DATAGRAM as usize + 1];
+            while let Ok((len, peer)) = server.recv_from(&mut buf).await {
+                if let Ok(Frame::Req { id, .. }) = Codec::Json.decode_frame(&buf[..len]) {
+                    let reply = Codec::Json.encode_frame(&Frame::Res { id, data: ulo_rpc::Data::new("2") }).expect("the reply encodes");
+                    let _ = server.send_to(&reply, peer).await;
+                }
+            }
+        });
+        let rpc = ulo_rpc::RpcClient::new(udp, Arc::new(Tokio::current())).expect("the client is built");
+        let refused = rpc.request::<_, u32>("host_names", &1).timeout(PATIENCE).await.expect_err("a call to an address nothing listens on");
+        assert_eq!(refused.kind(), ulo_transport::ErrorKind::Unavailable, "{refused:?}");
+        for call in ["the call after the refusal", "the call after that"] {
+            let answered = rpc.request::<_, u32>("host_names", &1).timeout(PATIENCE).await;
+            assert!(matches!(answered, Ok(2)), "{call}: {answered:?}");
+        }
+        assert_eq!(asked.load(Ordering::SeqCst), 2, "the lookups the two sockets made");
+        answering.abort();
+    }
+
+    /// The host's refusal is reported once, to whichever of the socket's receive and its next send
+    /// reads it first. A send it reaches fails the socket as the receive would, its own call told
+    /// the address and the reply lane woken; a send failing otherwise is told its own error until
+    /// the socket has failed, and what the waiting calls were told after.
+    #[test]
+    fn a_send_the_host_refused_fails_the_socket_as_a_receive_would() {
+        let sent_to = SentTo { addr: SocketAddr::from(([127, 0, 0, 1], 7000)), name: None };
+        let told = sent_to.failure(&io::Error::from(io::ErrorKind::ConnectionRefused));
+        let request = |id| Frame::Req { id, pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        let refused = Notify::new();
+        let mut awaiting = Awaiting::default();
+        for id in [1, 2, 3] {
+            awaiting.sent(&request(id)).expect("a request before the failure");
+        }
+
+        let other = awaiting.send_failed(Some(1), io::Error::other("the interface went down").into(), &sent_to, &refused);
+        assert_eq!(other.to_string(), "the interface went down", "a send failing otherwise before the socket failed");
+        assert_eq!(awaiting.failed, None, "a send failing otherwise fails no socket");
+        assert!(refused.notified().now_or_never().is_none(), "a send failing otherwise woke the reply lane");
+
+        let own = awaiting.send_failed(Some(2), io::Error::from(io::ErrorKind::ConnectionRefused).into(), &sent_to, &refused);
+        assert_eq!(own.to_string(), told, "the call whose send the host refused");
+        assert_eq!(awaiting.failed.as_deref(), Some(told.as_str()), "the socket's failure");
+        assert!(refused.notified().now_or_never().is_some(), "the reply lane is woken");
+        assert_eq!(awaiting.ids, HashSet::from([3]), "the calls left for the reply lane to answer");
+
+        let late = awaiting.send_failed(Some(3), "the UDP link's client socket is closed".into(), &sent_to, &refused);
+        assert_eq!(late.to_string(), told, "a datagram queued as the socket failed");
+    }
+
+    /// Woken by a send the host refused, the reply lane answers each call still awaiting the socket
+    /// `err` with the failure that send recorded, then ends.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_lane_woken_by_a_refused_send_answers_every_waiting_call() {
+        let silent = receiving().await;
+        let socket = receiving().await;
+        socket.connect(silent.local_addr().expect("an address")).await.expect("the socket connects");
+        let (_epoch, epoch) = watch::channel(0);
+        let (frames, mut replies) = tokio::sync::mpsc::channel(8);
+        let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4, 5]), failed: Some("the socket failed".to_owned()) }));
+        let refused = Arc::new(Notify::new());
+        refused.notify_one();
+        let sent_to = SentTo { addr: silent.local_addr().expect("an address"), name: None };
+        tokio::time::timeout(PATIENCE, read_replies(Arc::new(socket), epoch, Codec::Json, frames, awaiting, refused, sent_to))
+            .await
+            .expect("the reply lane ends once woken");
+        let mut answered = Vec::new();
+        while let Some(frame) = replies.recv().await {
+            match frame {
+                Frame::Err { id, error } => {
+                    assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Unavailable, "the socket failed"), "call {id}");
+                    answered.push(id);
+                }
+                other => panic!("the reply lane sent {other:?}"),
+            }
+        }
+        answered.sort_unstable();
+        assert_eq!(answered, vec![4, 5], "the calls answered");
+    }
+
+    /// A host may report a pending refusal ahead of a reply that arrived before it, as Linux
+    /// does. The lane, failing with that reply still in its socket's buffer, delivers it to its
+    /// call first and answers only the call left waiting `err`. The wake stands for the refusal,
+    /// taken before the ready datagram.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_reply_queued_ahead_of_the_refusal_reaches_its_call() {
+        let peer = receiving().await;
+        let socket = receiving().await;
+        socket.connect(peer.local_addr().expect("an address")).await.expect("the socket connects");
+        let reply = Codec::Json.encode_frame(&Frame::Res { id: 4, data: ulo_rpc::Data::new("1") }).expect("the reply encodes");
+        peer.send_to(&reply, socket.local_addr().expect("an address")).await.expect("the reply is sent");
+        tokio::time::timeout(PATIENCE, socket.readable()).await.expect("the reply arrives").expect("the socket is readable");
+        let (_epoch, epoch) = watch::channel(0);
+        let (frames, mut replies) = tokio::sync::mpsc::channel(8);
+        let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4, 5]), failed: Some("the socket failed".to_owned()) }));
+        let refused = Arc::new(Notify::new());
+        refused.notify_one();
+        let sent_to = SentTo { addr: peer.local_addr().expect("an address"), name: None };
+        tokio::time::timeout(PATIENCE, read_replies(Arc::new(socket), epoch, Codec::Json, frames, awaiting, refused, sent_to))
+            .await
+            .expect("the reply lane ends once woken");
+        let mut sent = Vec::new();
+        while let Some(frame) = replies.recv().await {
+            sent.push(match frame {
+                Frame::Res { id, .. } => (id, "res"),
+                Frame::Err { id, error } => {
+                    assert_eq!(error.message, "the socket failed", "call {id}");
+                    (id, "err")
+                }
+                other => panic!("the reply lane sent {other:?}"),
+            });
+        }
+        assert_eq!(sent, vec![(4, "res"), (5, "err")], "the reply delivered, then the call left waiting failed");
     }
 }
