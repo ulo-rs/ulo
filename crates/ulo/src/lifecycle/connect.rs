@@ -2,18 +2,19 @@
 //! its readiness check, then every `OnModuleInit` hook in the same order with a module's own
 //! hooks after its providers', then every `OnApplicationBootstrap` hook. The first failure
 //! stops the walk, the `OnModuleDestroy` hooks of every owner that had initialized run in
-//! reverse, and the failure is returned as a `ConnectError` carrying what those hooks recorded. A
-//! binding with no init hook has initialized once it is built and checked, and a module with none
-//! once every singleton it registers has.
+//! reverse, and the failure is returned beside what those hooks recorded. A binding with no init
+//! hook has initialized once it is built and checked, and a module with none once every singleton
+//! it registers has; either also waits for every singleton its destroy hooks read.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::app::shared::AppShared;
 use crate::binding::{Qualifier, ReadyRecord, Recipe};
 use crate::construct::ConstructError;
-use crate::error::{ConnectError, FailureReason, LookupError, Permanent, construct_permanent};
+use crate::error::{ConnectError, FailureReason, LookupError, Permanent, ShutdownFailure, construct_permanent};
+use crate::graph::order::destroy_hook_reads;
 use crate::graph::{BindingId, FrozenBinding, Graph, ModuleId, Visible};
 use crate::hooks::{HookCx, HookKind, HookRecord};
 use crate::key::{BindingKind, Key, KeyName};
@@ -30,7 +31,7 @@ use crate::timer::{BoxError, BoundKind, Resolved, RuntimeShutDown, resolve_bound
 /// swapping the extended graph in, since every step reads `shared.graph()`. The phase is the
 /// caller's: `App::connect` moves it around this call, and `load` runs while the app is Running.
 #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], modules: &[ModuleId]) -> Result<(), ConnectError> {
+pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], modules: &[ModuleId]) -> Result<(), TornDown> {
     for (position, &id) in singletons.iter().enumerate() {
         if let Err(error) = build_and_check(shared, id).await {
             let graph = shared.graph();
@@ -67,14 +68,32 @@ async fn build_and_check(shared: &Arc<AppShared>, id: BindingId) -> Result<(), C
 /// the singletons built and checked, `failed_init` the position in `plan` of the owner whose
 /// `OnModuleInit` hook failed, `None` when the walk failed before the init stage. An owner with an
 /// init hook has initialized when the stage passed it. A binding with none has once it is checked,
-/// and a module with none once every singleton it registers has, wherever either sits.
+/// and a module with none once every singleton it registers has, wherever either sits; either
+/// also waits for every singleton its destroy hooks read, a value with no readiness check
+/// excepted, its instance existing from `wire()`. The init stage starts once every
+/// singleton is checked, so an owner with an init hook has nothing of that kind to wait for.
 fn initialized(graph: &Graph, plan: &[HookOwner], checked: &[BindingId], failed_init: Option<usize>) -> Vec<HookOwner> {
     let passed = |position: usize| failed_init.is_some_and(|failed| position < failed);
-    let mut done = std::collections::HashSet::new();
+    // A singleton outside `plan` belongs to the graph a `load` extends, and that graph connected.
+    let unchecked: HashSet<BindingId> = plan
+        .iter()
+        .filter_map(|&owner| match owner {
+            HookOwner::Binding(id) if !checked.contains(&id) && !exists_from_wire(graph, id) => Some(id),
+            _ => None,
+        })
+        .collect();
+    let reads_checked = |owner: HookOwner| {
+        let module = match owner {
+            HookOwner::Binding(id) => graph.binding(id).origin,
+            HookOwner::Module(id) => id,
+        };
+        destroy_hook_reads(graph, module, hooks_of(graph, owner)).iter().all(|dep| !unchecked.contains(dep))
+    };
+    let mut done = HashSet::new();
     for (position, &owner) in plan.iter().enumerate() {
         if let HookOwner::Binding(id) = owner
             && checked.contains(&id)
-            && (!has_init_hook(graph, owner) || passed(position))
+            && if has_init_hook(graph, owner) { passed(position) } else { reads_checked(owner) }
         {
             done.insert(id);
         }
@@ -90,24 +109,34 @@ fn initialized(graph: &Graph, plan: &[HookOwner], checked: &[BindingId], failed_
         .filter(|&(position, &owner)| match owner {
             HookOwner::Binding(id) => done.contains(&id),
             HookOwner::Module(_) if has_init_hook(graph, owner) => passed(position),
-            HookOwner::Module(module) => registers(module).all(|id| done.contains(&id)),
+            HookOwner::Module(module) => registers(module).all(|id| done.contains(&id)) && reads_checked(owner),
         })
         .map(|(_, &owner)| owner)
         .collect()
+}
+
+/// A value with no readiness check: a lookup answers its instance before the walk reaches it, so
+/// a destroy hook reading it can run wherever the failure fell.
+fn exists_from_wire(graph: &Graph, id: BindingId) -> bool {
+    let record = &graph.binding(id).record;
+    matches!(record.recipe, Recipe::Value(_)) && record.ready.is_none()
 }
 
 fn has_init_hook(graph: &Graph, owner: HookOwner) -> bool {
     hooks_of(graph, owner).iter().any(|hook| hook.kind == HookKind::OnModuleInit)
 }
 
-/// `error` after the destroy hooks of `initialized` have run (§9.2), the failures they recorded
-/// carried beside it as `ConnectError::Teardown`.
-pub(crate) async fn torn_down(shared: &Arc<AppShared>, initialized: &[HookOwner], error: ConnectError) -> ConnectError {
-    let failures = tear_down(shared, initialized).await;
-    if failures.is_empty() {
-        return error;
-    }
-    ConnectError::Teardown { error: Box::new(error), failures }
+/// A connect walk's failure and what the destroy hooks run after it recorded, the two fields of
+/// `StartupError::Connect` and `LoadError::Connect`.
+pub(crate) struct TornDown {
+    pub(crate) error: ConnectError,
+    pub(crate) teardown: Vec<ShutdownFailure>,
+}
+
+/// `error` after the destroy hooks of `initialized` have run (§9.2).
+pub(crate) async fn torn_down(shared: &Arc<AppShared>, initialized: &[HookOwner], error: ConnectError) -> TornDown {
+    let teardown = tear_down(shared, initialized).await;
+    TornDown { error, teardown }
 }
 
 /// Builds one singleton under its construction bound, panics caught, and stores it.

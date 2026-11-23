@@ -143,7 +143,7 @@ async fn concurrent_loads_are_serialised_so_a_failing_load_cannot_undo_another()
         m.singleton(|| async { Cfg(4) });
     });
     let (failed, loaded) = tokio::join!(handle.load(failing), handle.load(healthy));
-    assert!(matches!(failed, Err(LoadError::Connect(ConnectError::Hook { .. }))), "the first load fails in its init hook");
+    assert!(matches!(failed, Err(LoadError::Connect { error: ConnectError::Hook { .. }, .. })), "the first load fails in its init hook");
     let module = loaded.unwrap_or_else(|error| panic!("the second load failed: {error}"));
     assert!(handle.module::<Mod<L2>>().is_ok(), "the failed load's rollback took the other module out of the graph");
     assert_eq!(module.get::<Cfg>().await.expect("the loaded module reads its binding").0, 4);
@@ -306,7 +306,7 @@ async fn a_load_that_fails_to_connect_leaves_the_app_as_found_and_a_retry_wires_
     };
 
     let error = handle.load(make(&log, &built, &fail)).await.err().expect("the load succeeded");
-    let LoadError::Connect(ConnectError::Construct { key, module, reason }) = error else { panic!("expected a construction failure") };
+    let LoadError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = error else { panic!("expected a construction failure") };
     assert_eq!(key.key(), Key::of::<Cfg, ()>());
     assert_eq!(module.to_string(), mod_name::<L1>(), "the module the failing binding is in, not the root");
     assert!(matches!(reason, FailureReason::Errored(_)));
@@ -334,7 +334,7 @@ async fn a_failing_check_or_init_hook_fails_the_load_as_a_connect_error() {
         .await
         .err()
         .expect("the load succeeded");
-    assert!(matches!(readiness, LoadError::Connect(ConnectError::Readiness { attempts: 1, .. })), "got: {readiness}");
+    assert!(matches!(readiness, LoadError::Connect { error: ConnectError::Readiness { attempts: 1, .. }, .. }), "got: {readiness}");
 
     let hook = handle
         .load(Mod::<L2>::new(|m| {
@@ -343,7 +343,7 @@ async fn a_failing_check_or_init_hook_fails_the_load_as_a_connect_error() {
         .await
         .err()
         .expect("the load succeeded");
-    assert!(matches!(hook, LoadError::Connect(ConnectError::Hook { .. })), "got: {hook}");
+    assert!(matches!(hook, LoadError::Connect { error: ConnectError::Hook { .. }, .. }), "got: {hook}");
     close(app).await;
 }
 

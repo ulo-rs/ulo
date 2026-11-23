@@ -164,8 +164,8 @@ async fn override_try_factory_builds_on_ok_and_fails_connect_on_err() {
 
     let failed = TestApp::of(production()).override_try_factory(|| async { Err::<Svc, _>(Boom::new("no")) }).connect().await;
     match failed {
-        Err(StartupError::Connect(ConnectError::Construct { reason: FailureReason::Errored(_), .. })) => {}
-        other => panic!("expected Connect(Construct(Errored)), found {:?}", other.map(|_| ())),
+        Err(StartupError::Connect { error: ConnectError::Construct { reason: FailureReason::Errored(_), .. }, .. }) => {}
+        other => panic!("expected Connect {{ error: Construct(Errored), .. }}, found {:?}", other.map(|_| ())),
     }
 }
 

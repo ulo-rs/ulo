@@ -62,7 +62,7 @@ impl Module for ClientRoot {
 async fn a_client_module_given_text_naming_no_address_fails_connect() {
     let wired = App::builder(ClientRoot(Mutex::new(Some(Tcp::new("billing"))))).runtime(Tokio::current()).wire().expect("the client wires");
     match wired.connect().await {
-        Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(refused), .. })) => {
+        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(refused), .. }, .. }) => {
             names_neither_form(&refused.to_string(), "billing");
         }
         Err(other) => panic!("expected the client module's init hook to fail `connect`, got: {other}"),

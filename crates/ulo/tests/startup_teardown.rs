@@ -1,10 +1,11 @@
 //! The teardown of a connect walk that fails (section 9.2): the `OnModuleDestroy` hooks of every
 //! binding and module that had initialized run in the exact reverse of their startup order,
 //! each under its bound and all under `shutdown_timeout`, as at close, and what they record travels
-//! beside the failure as `ConnectError::Teardown`. A binding with no init hook has initialized once
-//! it is built and checked, and a module with none once every singleton it registers has
-//! initialized, wherever either sits relative to the failure. A failed `load` tears down what it
-//! started the same way.
+//! in the `teardown` field beside the failure's `error`. A binding with no init hook has
+//! initialized once it is built and checked, and a module with none once every singleton it
+//! registers has initialized, wherever either sits relative to the failure; either also waits for
+//! every singleton its destroy hooks read. A failed `load` tears down what it started the same
+//! way.
 //!
 //! Timeouts run on `Frozen`, whose every sleep ends at once, and where the cap starts on `Stepped`,
 //! whose clock the hooks move.
@@ -30,6 +31,9 @@ struct S1;
 struct S2;
 struct S3;
 struct S4;
+struct Sc;
+struct T1;
+struct V;
 
 /// An `on_init` closure logging `<name> init`, failing when `fail`.
 fn init(log: &Log, name: &'static str, fail: bool) -> impl Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Boom>> + Send>> + Send + Sync + 'static {
@@ -49,6 +53,15 @@ fn destroy(log: &Log, name: &'static str) -> impl Fn() -> std::pin::Pin<Box<dyn 
     move || {
         let log = log.clone();
         Box::pin(async move { log.push(format!("{name} destroy")) })
+    }
+}
+
+/// An `on_destroy` closure reading `Dep<R>`, logging `<name> destroy`.
+fn destroy_reading<R: Send + Sync + 'static>(log: &Log, name: &'static str) -> impl Fn(ulo::Dep<R>) -> std::future::Ready<()> + Send + Sync + 'static {
+    let log = log.clone();
+    move |_read: ulo::Dep<R>| {
+        log.push(format!("{name} destroy"));
+        std::future::ready(())
     }
 }
 
@@ -74,10 +87,11 @@ fn fails_at_s3(log: &Log) -> impl Fn(&mut ModuleDef<'_>) + Send + Sync + 'static
 async fn an_init_failure_runs_the_destroy_hooks_of_what_initialized_in_reverse_and_none_other() {
     let log = Log::new();
     let error = connect_err(Mod::<A>::new(fails_at_s3(&log))).await;
-    let StartupError::Connect(ConnectError::Hook { hook, key, .. }) = error else {
-        panic!("a teardown that records nothing leaves the failure as it was, got: {error}");
+    let StartupError::Connect { error: ConnectError::Hook { hook, key, .. }, teardown, .. } = error else {
+        panic!("expected the init hook's failure, got: {error}");
     };
     assert_eq!((hook, key.key()), (HookKind::OnModuleInit, Key::of::<S3, ()>()));
+    assert!(teardown.is_empty(), "every destroy hook ran, got: {teardown:?}");
     assert_eq!(log.events(), ["s1 init", "s2 init", "s3 init", "s2 destroy", "s1 destroy"]);
 }
 
@@ -93,7 +107,7 @@ async fn a_bootstrap_failure_runs_every_destroy_hook_in_reverse() {
     }))
     .await;
     assert!(
-        matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnApplicationBootstrap, .. })),
+        matches!(error, StartupError::Connect { error: ConnectError::Hook { hook: HookKind::OnApplicationBootstrap, .. }, .. }),
         "got: {error}"
     );
     assert_eq!(destroyed(&log), ["module destroy", "s2 destroy", "s1 destroy"], "every init stage completed");
@@ -109,7 +123,7 @@ async fn a_construction_failure_runs_no_destroy_hook_of_an_owner_whose_init_hook
         m.on_destroy(destroy(&l, "module"));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
     assert_eq!(log.events(), Vec::<String>::new(), "no init hook ran, and the module's destroy hook waits for its singletons");
 }
 
@@ -129,7 +143,7 @@ async fn an_init_failure_tears_down_a_destroy_only_binding_on_either_side_of_it_
         m.on_destroy(destroy(&l, "module"));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Hook { hook: HookKind::OnModuleInit, .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s2 init", "s3 init", "s4 destroy", "s2 destroy", "s1 destroy"]);
 }
 
@@ -147,7 +161,7 @@ async fn a_construction_failure_tears_down_the_destroy_only_bindings_built_befor
         m.singleton(|| async { L1 }).on_destroy(destroy(&l, "l1"));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s3 destroy", "s1 destroy"]);
 }
 
@@ -162,7 +176,7 @@ async fn a_readiness_failure_tears_down_the_destroy_only_bindings_checked_before
         m.singleton(|| async { S2 }).on_destroy(destroy(&l, "s2")).ready(|_s: ulo::Dep<S2>| async { Err::<(), _>(Boom::new("down")) });
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Readiness { .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Readiness { .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s1 destroy"]);
 }
 
@@ -177,7 +191,7 @@ async fn a_readiness_failure_runs_no_hook_of_a_binding_never_built() {
         m.singleton(|| async { S3 }).on_destroy(destroy(&l, "s3"));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Readiness { .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Readiness { .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s1 destroy"]);
 }
 
@@ -207,7 +221,7 @@ fn destroy_only_module_after(log: &Log, b_singleton_inits: bool) -> impl Fn(&mut
 async fn an_init_failure_tears_down_a_destroy_only_module_after_it_whose_singletons_initialized() {
     let log = Log::new();
     let error = connect_err(Mod::<A>::new(destroy_only_module_after(&log, false))).await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Hook { hook: HookKind::OnModuleInit, .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s2 init", "module-b destroy", "s1 destroy"]);
 }
 
@@ -217,7 +231,7 @@ async fn an_init_failure_tears_down_a_destroy_only_module_after_it_whose_singlet
 async fn an_init_failure_leaves_a_destroy_only_module_whose_singleton_never_initialized() {
     let log = Log::new();
     let error = connect_err(Mod::<A>::new(destroy_only_module_after(&log, true))).await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Hook { hook: HookKind::OnModuleInit, .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s2 init"]);
 }
 
@@ -240,7 +254,7 @@ async fn an_init_failure_leaves_a_later_module_whose_own_init_hook_never_ran() {
         }));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Hook { hook: HookKind::OnModuleInit, .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s2 init", "s1 destroy"]);
 }
 
@@ -263,7 +277,7 @@ async fn an_init_failure_in_a_later_module_tears_down_a_destroy_only_module_befo
         m.on_destroy(destroy(&l, "module-a"));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Hook { hook: HookKind::OnModuleInit, .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s2 init", "s4 destroy", "module-b destroy", "s1 destroy"]);
 }
 
@@ -289,7 +303,7 @@ async fn a_construction_failure_in_a_later_module_tears_down_the_earlier_destroy
         m.on_destroy(destroy(&l, "module-a"));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["module-c destroy", "module-b destroy", "s1 destroy"], "`C` registers no singleton");
 }
 
@@ -308,20 +322,52 @@ async fn a_destroy_hook_that_fails_is_reported_beside_the_failure_and_the_rest_s
         m.singleton(|| async { S4 }).on_init(init(&l, "s4", true));
     }))
     .await;
-    let StartupError::Connect(connect) = &error else { panic!("expected a connect failure, got: {error}") };
-    let ConnectError::Hook { hook, key, .. } = connect.failure() else { panic!("the failure is the init hook's, got: {connect}") };
+    let StartupError::Connect { error: ConnectError::Hook { hook, key, .. }, teardown, .. } = &error else {
+        panic!("the failure is the init hook's, got: {error}");
+    };
     assert_eq!((*hook, key.key()), (HookKind::OnModuleInit, Key::of::<S4, ()>()));
-    let [ShutdownFailure::Hook { hook, key, reason }] = connect.teardown() else {
-        panic!("one destroy hook failed, got: {:?}", connect.teardown());
+    let [ShutdownFailure::Hook { hook, key, reason }] = teardown.as_slice() else {
+        panic!("one destroy hook failed, got: {teardown:?}");
     };
     assert_eq!((*hook, key.key()), (HookKind::OnModuleDestroy, Key::of::<S2, ()>()));
     assert!(matches!(reason, FailureReason::Panicked(_)), "got: {reason}");
-    assert!(matches!(connect, ConnectError::Teardown { .. }));
     assert_eq!(destroyed(&log), ["s3 destroy", "s1 destroy"], "the hooks on either side of the panicking one ran");
     let text = error.to_string();
     assert!(text.starts_with("`OnModuleInit` hook of `S4` failed"), "the failure reads first: {text}");
     assert!(text.contains("the destroy hooks run for what had started recorded 1 failure"), "{text}");
     assert!(text.contains("`OnModuleDestroy` hook of `S2`: panicked"), "{text}");
+    let boxed: ulo::BoxError = Box::new(error);
+    assert!(!ulo::is_panic(&boxed), "the panic is the teardown's, and the failure an init hook's `Err`");
+}
+
+#[tokio::test]
+async fn a_failed_load_reports_its_teardown_beside_the_failure() {
+    let app = connects(Empty).await;
+    let handle = app.handle();
+    let error = handle
+        .load(Mod::<L1>::new(|m| {
+            m.singleton(|| async { S1 }).on_destroy(|| async {
+                if true {
+                    panic!("the destroy hook panics");
+                }
+            });
+            m.try_singleton(|| async { Err::<S2, _>(Boom::new("down")) });
+        }))
+        .await
+        .err()
+        .expect("the load succeeded");
+    let LoadError::Connect { error: ConnectError::Construct { key, .. }, teardown, .. } = &error else {
+        panic!("expected a construction failure, got: {error}");
+    };
+    assert_eq!(key.key(), Key::of::<S2, ()>());
+    let [ShutdownFailure::Hook { key, reason: FailureReason::Panicked(_), .. }] = teardown.as_slice() else {
+        panic!("S1's destroy hook panicked, got: {teardown:?}");
+    };
+    assert_eq!(key.key(), Key::of::<S1, ()>());
+    let text = error.to_string();
+    assert!(text.starts_with("failed to construct `S2`"), "the failure reads first: {text}");
+    assert!(text.contains("recorded 1 failure\n  × `OnModuleDestroy` hook of `S1`: panicked"), "{text}");
+    close(app).await;
 }
 
 #[tokio::test]
@@ -341,9 +387,9 @@ async fn a_destroy_hook_past_its_bound_is_cut_at_the_bound() {
     .wire()
     .unwrap();
     let error = within("connect", app.connect()).await.err().expect("connect succeeded with a failing init hook");
-    let StartupError::Connect(connect) = &error else { panic!("expected a connect failure, got: {error}") };
-    let [ShutdownFailure::Hook { key, reason: FailureReason::TimedOut { after, limit }, .. }] = connect.teardown() else {
-        panic!("the destroy hook timed out, got: {:?}", connect.teardown());
+    let StartupError::Connect { teardown, .. } = &error else { panic!("expected a connect failure, got: {error}") };
+    let [ShutdownFailure::Hook { key, reason: FailureReason::TimedOut { after, limit }, .. }] = teardown.as_slice() else {
+        panic!("the destroy hook timed out, got: {teardown:?}");
     };
     assert_eq!(key.key(), Key::of::<S2, ()>());
     assert_eq!((*after, *limit), (Duration::from_secs(3), Limit::Item));
@@ -364,9 +410,9 @@ async fn an_expired_shutdown_timeout_skips_the_destroy_hooks_not_yet_run() {
     .wire()
     .unwrap();
     let error = within("connect", app.connect()).await.err().expect("connect succeeded with a failing init hook");
-    let StartupError::Connect(connect) = &error else { panic!("expected a connect failure, got: {error}") };
-    let [ShutdownFailure::Hook { key, reason: FailureReason::Skipped, .. }] = connect.teardown() else {
-        panic!("the destroy hook was skipped, got: {:?}", connect.teardown());
+    let StartupError::Connect { teardown, .. } = &error else { panic!("expected a connect failure, got: {error}") };
+    let [ShutdownFailure::Hook { key, reason: FailureReason::Skipped, .. }] = teardown.as_slice() else {
+        panic!("the destroy hook was skipped, got: {teardown:?}");
     };
     assert_eq!(key.key(), Key::of::<S1, ()>());
     assert_eq!(destroyed(&log), Vec::<String>::new());
@@ -386,7 +432,7 @@ async fn a_load_whose_construction_fails_tears_down_the_destroy_only_bindings_it
         .await
         .err()
         .expect("the load succeeded");
-    assert!(matches!(error, LoadError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert!(matches!(error, LoadError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
     close(app).await;
     assert_eq!(destroyed(&log), ["s1 destroy"], "the app's own close does not run it again");
 }
@@ -449,9 +495,9 @@ async fn the_teardown_cap_starts_when_the_teardown_begins() {
     .wire()
     .unwrap();
     let error = within("connect", app.connect()).await.err().expect("connect succeeded with a failing init hook");
-    let StartupError::Connect(connect) = &error else { panic!("expected a connect failure, got: {error}") };
-    let [ShutdownFailure::Hook { key, reason: FailureReason::Skipped, .. }] = connect.teardown() else {
-        panic!("S1's destroy hook was skipped and no other failure recorded, got: {:?}", connect.teardown());
+    let StartupError::Connect { teardown, .. } = &error else { panic!("expected a connect failure, got: {error}") };
+    let [ShutdownFailure::Hook { key, reason: FailureReason::Skipped, .. }] = teardown.as_slice() else {
+        panic!("S1's destroy hook was skipped and no other failure recorded, got: {teardown:?}");
     };
     assert_eq!(key.key(), Key::of::<S1, ()>());
     assert_eq!(destroyed(&log), ["s2 destroy"]);
@@ -463,7 +509,7 @@ async fn a_failed_load_runs_the_destroy_hooks_of_what_it_initialized() {
     let app = connects(Empty).await;
     let handle = app.handle();
     let error = handle.load(Mod::<L1>::new(fails_at_s3(&log))).await.err().expect("the load succeeded");
-    assert!(matches!(error, LoadError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert!(matches!(error, LoadError::Connect { error: ConnectError::Hook { hook: HookKind::OnModuleInit, .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s1 init", "s2 init", "s3 init", "s2 destroy", "s1 destroy"]);
     close(app).await;
     assert_eq!(destroyed(&log), ["s2 destroy", "s1 destroy"], "the app's own close does not run them again");
@@ -489,7 +535,7 @@ async fn a_module_whose_own_init_hook_fails_is_not_torn_down_and_its_singletons_
         }));
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Hook { hook: HookKind::OnModuleInit, .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Hook { hook: HookKind::OnModuleInit, .. }, .. }), "got: {error}");
     assert_eq!(log.events(), ["s1 init", "module-b init", "module-d destroy", "s2 destroy", "s1 destroy"]);
 }
 
@@ -515,7 +561,7 @@ async fn a_module_whose_load_failed_loads_again_and_closes_once() {
         })
     };
     let error = handle.load(lazy(&log, &fails)).await.err().expect("the load succeeded");
-    assert!(matches!(error, LoadError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert!(matches!(error, LoadError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
     assert_eq!(destroyed(&log), ["s1 destroy", "module-l2 destroy"]);
     fails.store(false, Ordering::SeqCst);
     handle.load(lazy(&log, &fails)).await.expect("the second load connects");
@@ -565,6 +611,210 @@ async fn a_trace_source_failure_runs_every_destroy_hook_in_reverse() {
         m.execution(|| async { PerCallSource }).also_as::<dyn ulo::TraceSource>(|a| a);
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect(ConnectError::Construct { .. })), "got: {error}");
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
     assert_eq!(destroyed(&log), ["s2 destroy", "s1 destroy"], "the source is read once every init stage completed");
+}
+
+/// `C` holds `Sc`, whose construction fails. `B` registers no singleton and has no init hook, and
+/// its destroy hook reads `Sc`: `B` has not initialized, so the hook does not run and the teardown
+/// records nothing, leaving the construction failure alone.
+#[tokio::test]
+async fn a_destroy_only_module_whose_hook_reads_a_singleton_never_built_is_not_torn_down() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        let lb = l.clone();
+        m.import(Mod::<B>::new(move |m| {
+            m.import(Mod::<C>::new(|m| {
+                m.try_singleton(|| async { Err::<Sc, _>(Boom::new("down")) });
+                m.export::<Sc>();
+            }));
+            m.on_destroy(destroy_reading::<Sc>(&lb, "module-b"));
+        }));
+    }))
+    .await;
+    let StartupError::Connect { error: ConnectError::Construct { key, .. }, teardown, .. } = &error else {
+        panic!("expected `Sc`'s construction failure, got: {error}");
+    };
+    assert_eq!(key.key(), Key::of::<Sc, ()>());
+    assert!(teardown.is_empty(), "no hook ran whose dependency was never built, got: {teardown:?}");
+    assert_eq!(log.events(), Vec::<String>::new());
+}
+
+/// A destroy-only binding built before a later construction fails, whose destroy hook reads the
+/// binding that failed, has not initialized; one beside it reading nothing is torn down.
+#[tokio::test]
+async fn a_destroy_only_binding_whose_hook_reads_a_singleton_never_built_is_not_torn_down() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        m.singleton(|| async { S1 }).on_destroy(destroy(&l, "s1"));
+        m.singleton(|| async { S2 }).on_destroy(destroy_reading::<Sc>(&l, "s2"));
+        m.try_singleton(|| async { Err::<Sc, _>(Boom::new("down")) });
+    }))
+    .await;
+    let StartupError::Connect { error: ConnectError::Construct { key, .. }, teardown, .. } = &error else {
+        panic!("expected `Sc`'s construction failure, got: {error}");
+    };
+    assert_eq!(key.key(), Key::of::<Sc, ()>());
+    assert!(teardown.is_empty(), "no hook ran whose dependency was never built, got: {teardown:?}");
+    assert_eq!(log.events(), ["s1 destroy"]);
+}
+
+/// A destroy hook reading a transient waits for the singletons the transient reads.
+#[tokio::test]
+async fn a_destroy_hook_reading_a_transient_waits_for_the_singletons_it_reads() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        m.transient(|_sc: ulo::Dep<Sc>| async { T1 });
+        m.singleton(|| async { S1 }).on_destroy(destroy_reading::<T1>(&l, "s1"));
+        m.try_singleton(|| async { Err::<Sc, _>(Boom::new("down")) });
+    }))
+    .await;
+    let StartupError::Connect { error: ConnectError::Construct { key, .. }, teardown, .. } = &error else {
+        panic!("expected `Sc`'s construction failure, got: {error}");
+    };
+    assert_eq!(key.key(), Key::of::<Sc, ()>());
+    assert!(teardown.is_empty(), "no hook ran whose dependency was never built, got: {teardown:?}");
+    assert_eq!(log.events(), Vec::<String>::new());
+}
+
+/// A destroy-only module whose hook reads a singleton checked before a later construction fails
+/// has initialized, and its hook runs.
+#[tokio::test]
+async fn a_destroy_only_module_whose_hook_reads_a_singleton_checked_before_the_failure_is_torn_down() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        let lb = l.clone();
+        m.import(Mod::<B>::new(move |m| {
+            m.import(Mod::<C>::new(|m| {
+                m.singleton(|| async { S1 });
+                m.export::<S1>();
+            }));
+            m.on_destroy(destroy_reading::<S1>(&lb, "module-b"));
+        }));
+        m.try_singleton(|| async { Err::<S2, _>(Boom::new("down")) });
+    }))
+    .await;
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
+    assert_eq!(log.events(), ["module-b destroy"]);
+}
+
+/// A value with no readiness check exists from `wire()`: a destroy-only binding built before a
+/// failing construction, whose hook reads a value declared after it, has initialized.
+#[tokio::test]
+async fn a_destroy_only_binding_whose_hook_reads_a_value_the_walk_had_not_reached_is_torn_down() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        m.singleton(|| async { S1 }).on_destroy(destroy_reading::<V>(&l, "s1"));
+        m.try_singleton(|| async { Err::<Sc, _>(Boom::new("down")) });
+        m.value(V);
+    }))
+    .await;
+    let StartupError::Connect { error: ConnectError::Construct { key, .. }, teardown, .. } = &error else {
+        panic!("expected `Sc`'s construction failure, got: {error}");
+    };
+    assert_eq!(key.key(), Key::of::<Sc, ()>());
+    assert!(teardown.is_empty(), "the hook read `V`, got: {teardown:?}");
+    assert_eq!(log.events(), ["s1 destroy"]);
+}
+
+/// A module registering no singleton whose destroy hook reads a value of a module collected after
+/// the failing construction has initialized.
+#[tokio::test]
+async fn a_destroy_only_module_whose_hook_reads_a_value_the_walk_had_not_reached_is_torn_down() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        m.import(Mod::<C>::new(|m| {
+            m.try_singleton(|| async { Err::<Sc, _>(Boom::new("down")) });
+        }));
+        m.import(Mod::<D>::new(|m| {
+            m.value(V);
+            m.export::<V>();
+        }));
+        let lb = l.clone();
+        m.import(Mod::<B>::new(move |m| {
+            m.import(Mod::<D>::bare());
+            m.on_destroy(destroy_reading::<V>(&lb, "module-b"));
+        }));
+    }))
+    .await;
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
+    assert_eq!(log.events(), ["module-b destroy"]);
+}
+
+/// A singleton whose readiness check failed is built and not checked: a destroy-only module whose
+/// hook reads it has not initialized, as the singleton's own destroy hook does not run.
+#[tokio::test]
+async fn a_destroy_hook_reading_a_singleton_whose_check_failed_does_not_run() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        m.import(Mod::<C>::new(|m| {
+            m.singleton(|| async { S1 }).ready(|_s: ulo::Dep<S1>| async { Err::<(), _>(Boom::new("down")) });
+            m.export::<S1>();
+        }));
+        let lb = l.clone();
+        m.import(Mod::<B>::new(move |m| {
+            m.import(Mod::<C>::bare());
+            m.on_destroy(destroy_reading::<S1>(&lb, "module-b"));
+        }));
+    }))
+    .await;
+    assert!(matches!(error, StartupError::Connect { error: ConnectError::Readiness { .. }, .. }), "got: {error}");
+    assert_eq!(log.events(), Vec::<String>::new());
+}
+
+/// A lazily loaded module's destroy hook reading a singleton of the graph it extends, which
+/// connected before the load, runs when the load fails.
+#[tokio::test]
+async fn a_failed_load_tears_down_a_module_whose_hook_reads_the_base_graph() {
+    let log = Log::new();
+    let app = connects(Mod::<A>::new(|m| {
+        m.import(Mod::<C>::new(|m| {
+            m.singleton(|| async { S1 });
+            m.export::<S1>();
+        }));
+    }))
+    .await;
+    let handle = app.handle();
+    let l = log.clone();
+    let error = handle
+        .load(Mod::<L1>::new(move |m| {
+            m.import(Mod::<C>::bare());
+            m.import(Mod::<L2>::new(|m| {
+                m.try_singleton(|| async { Err::<S2, _>(Boom::new("down")) });
+            }));
+            m.on_destroy(destroy_reading::<S1>(&l, "module-l1"));
+        }))
+        .await
+        .err()
+        .expect("the load succeeded");
+    assert!(matches!(error, LoadError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
+    assert_eq!(log.events(), ["module-l1 destroy"]);
+    close(app).await;
+}
+
+/// A destroy hook whose parameter read fails on a `Permanent` is recorded in the teardown, and the
+/// start is still retryable: `is_permanent` reads the walk's own failure.
+#[tokio::test]
+async fn a_permanent_failure_in_the_teardown_leaves_the_start_retryable() {
+    let log = Log::new();
+    let l = log.clone();
+    let error = connect_err(Mod::<A>::new(move |m| {
+        m.try_transient(|| async { Err::<T1, _>(ulo::Permanent::new(Boom::new("bad credentials"))) });
+        m.singleton(|| async { S1 }).on_destroy(destroy_reading::<T1>(&l, "s1"));
+        m.singleton(|| async { S2 }).on_init(init(&l, "s2", true));
+    }))
+    .await;
+    let StartupError::Connect { teardown, .. } = &error else { panic!("expected a connect failure, got: {error}") };
+    let [ShutdownFailure::Hook { key, reason: FailureReason::Errored(_), .. }] = teardown.as_slice() else {
+        panic!("S1's destroy hook failed its read, got: {teardown:?}");
+    };
+    assert_eq!(key.key(), Key::of::<S1, ()>());
+    assert!(!ulo::is_permanent(&error), "the init hook's failure carries no `Permanent`: {error}");
 }
