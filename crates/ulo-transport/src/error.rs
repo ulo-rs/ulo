@@ -214,15 +214,15 @@ impl CallError {
         call
     }
 
-    /// The blanket `From`, keeping the challenge of an `Unauthorized` that an execution-scoped
-    /// constructor returned behind a `Dependency`, which `Classify` has no method to carry.
+    /// The blanket `From`, except behind a `Dependency`: there the lookup error maps as
+    /// `from_boxed` maps it, so an execution-scoped constructor's `CallError` keeps the challenge
+    /// and every transport's code, which `Classify` has no method to carry.
     pub(crate) fn from_extract(err: ExtractError) -> Self {
-        let challenge = match &err {
-            ExtractError::Dependency { source, .. } => from_lookup(source, 0).challenge,
-            _ => None,
+        let mut call = match &err {
+            ExtractError::Dependency { source, .. } => from_lookup(source, 0),
+            _ => return CallError::from(err),
         };
-        let mut call = CallError::from(err);
-        call.challenge = challenge;
+        call.source = Some(Box::new(err));
         call
     }
 
@@ -380,11 +380,10 @@ fn recognise<'e>(error: impl ByType<'e>, depth: usize) -> Option<CallError> {
         return Some(call.summary());
     }
     if let Some(extract) = error.get::<ExtractError>() {
-        let mut call = classified(extract);
-        if let ExtractError::Dependency { source, .. } = extract {
-            call.challenge = from_lookup(source, depth + 1).challenge;
-        }
-        return Some(call);
+        return Some(match extract {
+            ExtractError::Dependency { source, .. } => from_lookup(source, depth + 1),
+            _ => classified(extract),
+        });
     }
     if error.get::<PanicRecovered>().is_some() {
         return Some(internal());

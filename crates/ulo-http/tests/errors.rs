@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use http::StatusCode;
 use o1_support::{Call, start};
-use ulo::{AnyErrorHandler, BoxError, ErrorHandler, ModuleDef, controller, handlers};
+use ulo::{AnyErrorHandler, BoxError, Dep, ErrorHandler, ModuleDef, controller, handlers};
 use ulo_http::{Http, HttpBody, HttpCx, Path, Response, WithHttpStatus, status_for};
 use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind};
 
@@ -95,6 +95,9 @@ fn kind_named(name: &str) -> ErrorKind {
     }
 }
 
+/// Built per call by a constructor that fails with a status of its own.
+struct Tenant;
+
 #[controller]
 struct Faults;
 
@@ -116,6 +119,12 @@ impl Faults {
     #[ulo_http::get("/status-unavailable")]
     fn status_unavailable(&self) -> Result<&'static str, CallError> {
         Err(CallError::from(Throttled).with_http_status(StatusCode::SERVICE_UNAVAILABLE))
+    }
+
+    /// Fails as its `Tenant` parameter's constructor fails, a `Conflict` sent as a 412.
+    #[ulo_http::get("/tenant")]
+    fn tenant(&self, _tenant: Dep<Tenant>) -> &'static str {
+        "built"
     }
 
     #[ulo_http::get("/challenge")]
@@ -259,6 +268,9 @@ impl ErrorHandler<Http> for GlobalClaim {
 
 fn plain(m: &mut ModuleDef<'_>) {
     m.controller::<Faults>();
+    m.try_execution(|| async {
+        Err::<Tenant, CallError>(CallError::new(ErrorKind::Conflict, "the tenant moved").with_http_status(StatusCode::PRECONDITION_FAILED))
+    });
 }
 
 fn chained(m: &mut ModuleDef<'_>) {
@@ -320,6 +332,17 @@ async fn an_error_s_own_status_replaces_its_kind_s_and_the_headers_follow_the_st
         let reply = app.send(Call::get(&format!("/status/{code}"))).await;
         assert_eq!(reply.status, StatusCode::CONFLICT, "with_http_status({code}) is not an error's status");
     }
+    app.stop().await;
+}
+
+/// A constructor's error behind a handler's `Dep` parameter is sent with the status it names, as
+/// the same error returned by the handler is.
+#[tokio::test]
+async fn a_dependency_s_constructor_error_is_sent_with_its_own_status() {
+    let app = start(plain).await;
+    let reply = app.send(Call::get("/tenant")).await;
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(reply.json()["detail"], "the tenant moved");
     app.stop().await;
 }
 
