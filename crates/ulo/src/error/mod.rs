@@ -31,7 +31,10 @@ pub use wiring::WiringErrors;
 pub enum StartupError {
     /// Everything from `wire()`.
     Wiring(WiringErrors),
-    Connect(ConnectError),
+    /// `error` ended the connect walk; `teardown` holds what the destroy hooks run for what had
+    /// initialized recorded (§9.2), empty when they recorded nothing.
+    #[non_exhaustive]
+    Connect { error: ConnectError, teardown: Vec<ShutdownFailure> },
     /// Every failure a server's `prepare` reported, collected across every server before any
     /// binds, so a configuration error is always reported before a port conflict.
     Configure(ConfigureErrors),
@@ -44,7 +47,7 @@ impl fmt::Display for StartupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StartupError::Wiring(e) => fmt::Display::fmt(e, f),
-            StartupError::Connect(e) => fmt::Display::fmt(e, f),
+            StartupError::Connect { error, teardown } => write_connect(f, error, teardown),
             StartupError::Configure(e) => fmt::Display::fmt(e, f),
             StartupError::Bind { transport, source } => {
                 write!(f, "transport `{transport}` failed to bind: {source}")
@@ -65,7 +68,7 @@ impl Error for StartupError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             StartupError::Wiring(e) => e.source(),
-            StartupError::Connect(e) => e.source(),
+            StartupError::Connect { error, .. } => error.source(),
             StartupError::Configure(e) => e.source(),
             StartupError::Bind { .. } => None,
         }
@@ -75,12 +78,6 @@ impl Error for StartupError {
 impl From<WiringErrors> for StartupError {
     fn from(e: WiringErrors) -> Self {
         StartupError::Wiring(e)
-    }
-}
-
-impl From<ConnectError> for StartupError {
-    fn from(e: ConnectError) -> Self {
-        StartupError::Connect(e)
     }
 }
 
@@ -133,8 +130,8 @@ impl fmt::Display for PreparePanicked {
 
 impl Error for PreparePanicked {}
 
-/// A failure in the connect phase, on `StartupError::Connect` from `connect` and on
-/// `LoadError::Connect` from `load`.
+/// A failure in the connect phase, in the `error` field of `StartupError::Connect` from `connect`
+/// and of `LoadError::Connect` from `load`.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ConnectError {
@@ -147,48 +144,29 @@ pub enum ConnectError {
     /// that bind one key (`StoreModule<Sqlite> @ Primary` and `@ Replica`) read apart.
     Readiness { key: KeyName, module: ModuleName, attempts: u32, reason: FailureReason },
     Hook { hook: HookKind, key: KeyName, reason: FailureReason },
-    /// `error` ended the connect walk after some init hooks had completed, and the destroy hooks
-    /// run for those bindings and modules recorded `failures`: each a `ShutdownFailure::Hook` of
-    /// `OnModuleDestroy`, `Errored` for a closure hook whose read failed, `Panicked`, `TimedOut`
-    /// under its own bound or `shutdown_timeout`, or `Skipped` once `shutdown_timeout` had expired
-    /// (§9.2). A walk whose teardown recorded nothing answers `error` alone.
-    /// [`failure`](Self::failure) answers `error` whichever shape arrives.
-    Teardown { error: Box<ConnectError>, failures: Vec<ShutdownFailure> },
 }
 
-impl ConnectError {
-    /// The failure that ended the connect walk: this error, or the one a
-    /// [`Teardown`](Self::Teardown) carries.
-    pub fn failure(&self) -> &ConnectError {
-        match self {
-            ConnectError::Teardown { error, .. } => error.failure(),
-            other => other,
-        }
+/// The connect failure, then each failure its teardown recorded: a `ShutdownFailure::Hook` of
+/// `OnModuleDestroy`, `Errored` for a closure hook whose read failed, `Panicked`, `TimedOut`
+/// under its own bound or `shutdown_timeout`, or `Skipped` once `shutdown_timeout` had expired.
+fn write_connect(f: &mut fmt::Formatter<'_>, error: &ConnectError, teardown: &[ShutdownFailure]) -> fmt::Result {
+    fmt::Display::fmt(error, f)?;
+    if teardown.is_empty() {
+        return Ok(());
     }
-
-    /// What the destroy hooks run after the failure recorded; empty when they recorded nothing.
-    pub fn teardown(&self) -> &[ShutdownFailure] {
-        match self {
-            ConnectError::Teardown { failures, .. } => failures,
-            _ => &[],
-        }
+    let count = teardown.len();
+    let noun = if count == 1 { "failure" } else { "failures" };
+    write!(f, "\n  the destroy hooks run for what had started recorded {count} {noun}")?;
+    let full = TypeName::colliding(teardown.iter().flat_map(ShutdownFailure::type_names));
+    for failure in teardown {
+        write!(f, "\n  × {}", failure.text(&full))?;
     }
+    Ok(())
 }
 
 impl fmt::Display for ConnectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConnectError::Teardown { error, failures } => {
-                fmt::Display::fmt(error, f)?;
-                let count = failures.len();
-                let noun = if count == 1 { "failure" } else { "failures" };
-                write!(f, "\n  the destroy hooks run for what had started recorded {count} {noun}")?;
-                let full = TypeName::colliding(failures.iter().flat_map(ShutdownFailure::type_names));
-                for failure in failures {
-                    write!(f, "\n  × {}", failure.text(&full))?;
-                }
-                Ok(())
-            }
             ConnectError::Construct { key, module, reason } => {
                 write!(f, "failed to construct `{key}` in {module}: {reason}")
             }
@@ -414,8 +392,10 @@ pub enum LoadError {
     Closed(Closed),
     /// The module wired against the frozen graph, every error collected.
     Wiring(WiringErrors),
-    /// A construction, readiness check or init hook of the module failed.
-    Connect(ConnectError),
+    /// A construction, readiness check or init hook of the module failed, `teardown` holding what
+    /// the destroy hooks run for what it had initialized recorded, as on `StartupError::Connect`.
+    #[non_exhaustive]
+    Connect { error: ConnectError, teardown: Vec<ShutdownFailure> },
     Refused(LoadRefusal),
 }
 
@@ -424,7 +404,7 @@ impl fmt::Display for LoadError {
         match self {
             LoadError::Closed(closed) => write!(f, "cannot load a module: {closed}"),
             LoadError::Wiring(e) => fmt::Display::fmt(e, f),
-            LoadError::Connect(e) => fmt::Display::fmt(e, f),
+            LoadError::Connect { error, teardown } => write_connect(f, error, teardown),
             LoadError::Refused(refusal) => fmt::Display::fmt(refusal, f),
         }
     }
@@ -442,7 +422,7 @@ impl Error for LoadError {
         match self {
             LoadError::Closed(_) | LoadError::Refused(_) => None,
             LoadError::Wiring(e) => e.source(),
-            LoadError::Connect(e) => e.source(),
+            LoadError::Connect { error, .. } => error.source(),
         }
     }
 }
@@ -860,6 +840,8 @@ impl Error for UndeclaredRead {}
 ///   construction's or a hook's error, in the last attempt of a readiness check, in a server's
 ///   `prepare` failure or a transport's bind error, and down any error's `source()` chain, inside a
 ///   [`Redacted`] too. `Bind` carrying the core's [`RuntimeMissing`] is permanent as well.
+///   `Connect` is read through its `error` alone: a destroy hook's failure in its `teardown`
+///   says nothing about whether the start can succeed.
 ///
 /// Anything else is retryable: a readiness check or a construction that timed out, a dependency
 /// that answered with an error carrying no `Permanent`, a port already taken.
@@ -870,7 +852,7 @@ pub fn is_permanent(error: &StartupError) -> bool {
 fn startup_permanent(error: &StartupError, depth: usize) -> bool {
     match error {
         StartupError::Wiring(_) => true,
-        StartupError::Connect(connect) => connect_permanent(connect, depth),
+        StartupError::Connect { error, .. } => connect_permanent(error, depth),
         StartupError::Configure(errors) => errors.iter().any(|e| redacted_permanent(&e.source, depth + 1)),
         StartupError::Bind { source, .. } => {
             source.downcast_ref::<RuntimeMissing>().is_some() || redacted_permanent(source, depth + 1)
@@ -924,7 +906,7 @@ fn recognized_permanent(error: &(dyn Error + 'static), depth: usize) -> Option<b
         return Some(connect_permanent(connect, depth));
     }
     if let Some(load) = error.downcast_ref::<LoadError>() {
-        return Some(matches!(load, LoadError::Connect(connect) if connect_permanent(connect, depth)));
+        return Some(matches!(load, LoadError::Connect { error, .. } if connect_permanent(error, depth)));
     }
     if let Some(startup) = error.downcast_ref::<StartupError>() {
         return Some(startup_permanent(startup, depth));
@@ -947,7 +929,6 @@ fn connect_permanent(error: &ConnectError, depth: usize) -> bool {
         ConnectError::Construct { reason, .. }
         | ConnectError::Readiness { reason, .. }
         | ConnectError::Hook { reason, .. } => reason_permanent(reason, depth),
-        ConnectError::Teardown { error, .. } => depth < MAX_DEPTH && connect_permanent(error, depth + 1),
     }
 }
 
@@ -964,8 +945,8 @@ fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
 /// ran for the call, an enhancer, the controller or one of their dependencies. An error handler
 /// that answers every panic alike tests this instead of matching both.
 ///
-/// Also true for a `ConnectError` whose reason is `Panicked`, bare or inside `LoadError` or
-/// `StartupError`, which is how a handler calling `load` meets a lazily loaded module's panic,
+/// Also true for a `ConnectError` whose reason is `Panicked`, bare or as the `error` of
+/// `LoadError::Connect` or `StartupError::Connect`, their `teardown` not read, which is how a handler calling `load` meets a lazily loaded module's panic,
 /// and for a [`PreparePanicked`] in an entry of `StartupError::Configure` or of the
 /// [`ConfigureErrors`] it holds, which is how `listen()` reports a server's panicking `prepare`,
 /// and for a [`ShutdownError`] with a failure that holds one: a [`ServeEnd::Panicked`], which is
@@ -1019,11 +1000,11 @@ fn recognized<'e>(error: impl ByType<'e>, depth: usize) -> Option<bool> {
         return Some(connect_panicked(connect, depth));
     }
     if let Some(load) = error.get::<LoadError>() {
-        return Some(matches!(load, LoadError::Connect(connect) if connect_panicked(connect, depth)));
+        return Some(matches!(load, LoadError::Connect { error, .. } if connect_panicked(error, depth)));
     }
     if let Some(startup) = error.get::<StartupError>() {
         return Some(match startup {
-            StartupError::Connect(connect) => connect_panicked(connect, depth),
+            StartupError::Connect { error, .. } => connect_panicked(error, depth),
             StartupError::Configure(errors) => configure_panicked(errors, depth),
             StartupError::Wiring(_) | StartupError::Bind { .. } => false,
         });
@@ -1071,7 +1052,6 @@ fn connect_panicked(error: &ConnectError, depth: usize) -> bool {
         ConnectError::Construct { reason, .. }
         | ConnectError::Readiness { reason, .. }
         | ConnectError::Hook { reason, .. } => reason_panicked(reason, depth),
-        ConnectError::Teardown { error, .. } => depth < MAX_DEPTH && connect_panicked(error, depth + 1),
     }
 }
 

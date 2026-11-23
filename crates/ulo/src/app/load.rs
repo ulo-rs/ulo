@@ -68,12 +68,12 @@ pub(crate) async fn load(
     // globally and contributes to no collection it does not introduce.
     shared.publish(Arc::new(graph));
 
-    if let Err(failure) = connect::connect(shared, &singletons, &modules).await {
+    if let Err(connect::TornDown { error, teardown }) = connect::connect(shared, &singletons, &modules).await {
         shared.publish(base);
         for id in &singletons {
             shared.singletons.remove(*id);
         }
-        return Err(LoadError::Connect(failure));
+        return Err(LoadError::Connect { error, teardown });
     }
     Ok(shared.module_ref(loaded))
 }

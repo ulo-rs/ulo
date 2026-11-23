@@ -133,7 +133,7 @@ async fn a_client_module_on_a_runtime_without_io_fails_connect() {
     let connected = wired.connect().await;
     runtime.shutdown_background();
     match connected {
-        Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(refused), .. })) => {
+        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(refused), .. }, .. }) => {
             assert!(refused.to_string().contains("enable_io"), "the refusal names `enable_io`: {refused}");
         }
         Err(other) => panic!("expected the client module's init hook to fail `connect`, got: {other}"),

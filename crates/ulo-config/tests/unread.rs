@@ -62,7 +62,7 @@ async fn connect(config: Config, deny: bool) -> Result<ulo::App<ulo::Connected>,
 async fn deny_unread_refuses_at_connect_naming_every_unread_key_and_its_origin() {
     let dir = Dir::new();
     let (config, file) = config(&dir);
-    let Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(error), .. })) = connect(config, true).await else {
+    let Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) = connect(config, true).await else {
         panic!("an app holding keys nothing reads connected under `.deny_unread()`");
     };
     let config_error = error.downcast_ref::<ConfigError>().expect("the hook's own error stays reachable");

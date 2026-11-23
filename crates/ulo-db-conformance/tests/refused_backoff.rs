@@ -99,7 +99,7 @@ fn a_backoff_the_runtime_refuses_ends_the_create_loop_with_the_refusal() {
         "the creates and backoffs on a runtime refusing the backoff: the loop retried rather than ending ({failed})"
     );
     assert!(is_permanent(&failed), "a loop ended on a refused backoff is retryable: {failed}");
-    let StartupError::Connect(ConnectError::Construct { reason: FailureReason::Errored(stored), .. }) = &failed else {
+    let StartupError::Connect { error: ConnectError::Construct { reason: FailureReason::Errored(stored), .. }, .. } = &failed else {
         panic!("the loop did not fail the construction with an error: {failed:?}");
     };
     let ended = stored
@@ -175,7 +175,7 @@ fn a_backoff_refused_after_connect_within_passed_reports_the_expiry() {
     });
     assert_eq!(clock.refused(BACKOFF), 1, "the backoffs asked of a runtime refusing them ({failed})");
     assert!(!is_permanent(&failed), "a loop whose bound passed is permanent: {failed}");
-    let StartupError::Connect(ConnectError::Construct { reason, .. }) = &failed else {
+    let StartupError::Connect { error: ConnectError::Construct { reason, .. }, .. } = &failed else {
         panic!("the loop did not fail the construction: {failed:?}");
     };
     assert!(

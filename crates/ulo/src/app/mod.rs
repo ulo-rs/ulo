@@ -352,9 +352,11 @@ impl App<Wired> {
     ///
     /// A failure runs the `OnModuleDestroy` hooks of every binding and module that had initialized,
     /// in reverse startup order, each under its bound and all under `shutdown_timeout`; a hook that
-    /// fails or overruns arrives beside the failure as `ConnectError::Teardown`. An owner with an
-    /// init hook has initialized once that hook completed, a binding with none once it is built
-    /// and checked, and a module with none once every singleton it registers has.
+    /// fails or overruns arrives in `StartupError::Connect`'s `teardown`, beside the failure in its
+    /// `error`. An owner with an init hook has initialized once that hook completed, a binding with
+    /// none once it is built and checked, and a module with none once every singleton it registers
+    /// has; one with no init hook also waits for every singleton its destroy hooks read, so no hook
+    /// runs whose dependency was never built.
     #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
     pub async fn connect(self) -> Result<App<Connected>, StartupError> {
         let shared = self.shared;
@@ -362,7 +364,9 @@ impl App<Wired> {
         let graph = shared.graph();
         // `ModuleId`s are positions in collection order, the order the hooks take.
         let modules: Vec<ModuleId> = graph.modules.iter().map(|module| module.id).collect();
-        connect::connect(&shared, &graph.connect_order, &modules).await?;
+        if let Err(connect::TornDown { error, teardown }) = connect::connect(&shared, &graph.connect_order, &modules).await {
+            return Err(StartupError::Connect { error, teardown });
+        }
         if shared.config.trace == TraceMode::On {
             let resolver = Resolver::new(&shared, graph.root, None, Purpose::Lookup);
             match <Option<Dep<dyn TraceSource>> as FromContainer>::from_container(&resolver).await {
@@ -372,8 +376,9 @@ impl App<Wired> {
                 Ok(None) => {}
                 Err(error) => {
                     let initialized = connect::hook_plan(&graph, &graph.connect_order, &modules);
-                    let failure = connect::torn_down(&shared, &initialized, trace_source_failure(&graph, error)).await;
-                    return Err(StartupError::Connect(failure));
+                    let connect::TornDown { error, teardown } =
+                        connect::torn_down(&shared, &initialized, trace_source_failure(&graph, error)).await;
+                    return Err(StartupError::Connect { error, teardown });
                 }
             }
         }

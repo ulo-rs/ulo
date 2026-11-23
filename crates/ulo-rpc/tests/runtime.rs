@@ -347,7 +347,7 @@ impl Module for WithUnusable {
 async fn a_client_module_on_a_link_it_cannot_use_fails_connect() {
     let connects = Arc::new(AtomicU64::new(0));
     let wired = App::builder(WithUnusable(Arc::clone(&connects))).runtime(Tokio::current()).wire().expect("the app wires");
-    let Err(StartupError::Connect(ConnectError::Hook { reason: FailureReason::Errored(error), .. })) = wired.connect().await else {
+    let Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) = wired.connect().await else {
         panic!("an `RpcClientModule` over a link whose `usable` refuses connected, or failed other than in a hook");
     };
     let refused = error.downcast_ref::<UnusableLink>().unwrap_or_else(|| panic!("the hook's error is not an `UnusableLink`: {error}"));
