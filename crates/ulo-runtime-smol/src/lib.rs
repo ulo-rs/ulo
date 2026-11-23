@@ -1,18 +1,35 @@
-//! The smol runtime for `ulo` (transports DESIGN §8): the core's [`Runtime`](ulo::Runtime) as
-//! [`Smol`], spawning on an `async-executor` [`Executor`] the caller owns and runs, and timing
-//! with `async-io`'s timers. No tokio in its tree.
+//! The smol runtime for `ulo` (transports DESIGN §8): [`run`], which serves an application on an
+//! executor it builds until the OS asks the process to stop; the core's
+//! [`Runtime`](ulo::Runtime) as [`Smol`], spawning on an `async-executor` [`Executor`] the caller
+//! owns and runs, and timing with `async-io`'s timers; and the OS signal future
+//! [`shutdown_signal`] for `serve`. No tokio in its tree.
+//!
+//! ```no_run
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # fn main_with(server: impl ulo::Server) -> Result<(), Box<dyn std::error::Error>> {
+//! // `server` is a transport's, `ulo_http_hyper::ServerOn::<SmolListener>::new("127.0.0.1:3000")`
+//! // for one.
+//! ulo_runtime_smol::run(AppModule, server)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! An application that sets a builder knob, reads the app between two phases or ends on a future
+//! of its own writes the phases `run` performs, on an executor it runs itself:
 //!
 //! ```
 //! # use std::sync::Arc;
-//! # use ulo::{App, Server, Signal};
+//! # use ulo::{App, Server};
 //! # #[ulo::module]
 //! # struct AppModule;
-//! # fn f(server: impl Server, signal: impl std::future::Future<Output = Signal> + Send) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//! # fn f(server: impl Server) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let smol = ulo_runtime_smol::Smol::new(Arc::new(ulo_runtime_smol::Executor::new()));
 //! let app = App::builder(AppModule).runtime(smol.clone()).wire()?;
 //! // `serve` runs inside the executor, which runs every task the app spawns while it waits.
 //! smol.block_on(async {
-//!     app.connect().await?.bind(server).listen().await?.serve(signal).await?;
+//!     let app = app.connect().await?.bind(server).listen().await?;
+//!     app.serve(ulo_runtime_smol::shutdown_signal()).await?;
 //!     Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
 //! })?;
 //! # Ok(())
@@ -25,6 +42,7 @@
 //! runtime on each of them.
 
 use std::cell::RefCell;
+use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -36,7 +54,7 @@ use std::time::{Duration, Instant};
 pub use async_executor::Executor;
 use async_executor::FallibleTask;
 use event_listener::Event;
-use ulo::{BoxFuture, Refused, RuntimeTask, TaskHandle};
+use ulo::{App, BoxFuture, Connected, Module, Refused, RuntimeTask, Server, Shutdown, ShutdownError, Signal, StartupError, TaskHandle};
 
 /// The app's runtime on one `async-executor` [`Executor`]: tasks are spawned on it from whichever
 /// thread asks, and run on the threads that run it (`executor.run(..)`, smol's own pattern), so a
@@ -276,3 +294,212 @@ impl RuntimeTask for Task {
         }
     }
 }
+
+/// Serves `root` on an executor of its own until the OS asks the process to stop, for a `main`
+/// that starts no executor. It is the startup chain with no knob set, inside
+/// [`Smol::block_on`] on a new [`Executor`] run by the calling thread and by one worker for each
+/// further thread [`std::thread::available_parallelism`] reports:
+///
+/// ```ignore
+/// # // reason: the chain `run` performs, written out; `bind_to` queues each server `servers` holds
+/// smol.block_on(async {
+///     // Polled once here, which installs the handlers.
+///     let signal = shutdown_signal();
+///     let app = App::builder(root).runtime(smol.clone()).wire()?.connect().await?;
+///     let app = servers.bind_to(app).listen().await?;
+///     app.serve(signal).await
+/// })
+/// ```
+///
+/// `servers` is one server or a tuple of them, bound in the order written. Each address the app
+/// listens on is logged at `info` through `tracing`, as `ulo.transport` and `address`, once
+/// `listen` has bound them all. [`shutdown_signal`] ends it: SIGINT or SIGTERM on Unix, Ctrl-C on
+/// Windows. Its handlers are installed before `wire`, so a signal that arrives while `connect` runs
+/// hooks and readiness checks is held: the app finishes starting and `serve` shuts it down, where
+/// the signal's default action would end the process with no hook run. The app then runs its
+/// shutdown sequence, its hooks, the drain and each server's `close`, and `run` answers that
+/// shutdown's [`Shutdown`], or [`RunError::Shutdown`] listing its failures. A startup that fails
+/// answers [`RunError::Startup`] with nothing served, whatever had initialized torn down as
+/// `connect` tears it down. The workers are joined before `run` returns.
+///
+/// An application that sets a builder knob (`drain_timeout`, `shutdown_timeout`, `unserved`, a
+/// test clock), reads the app between two phases, ends on a future of its own or runs on an
+/// executor it sizes writes the chain itself, inside a [`Smol::block_on`] of its own.
+#[expect(clippy::result_large_err, reason = "`StartupError` is the core's, and `RunError` holds it unchanged")]
+pub fn run<M>(root: impl Module, servers: impl Servers<M>) -> Result<Shutdown, RunError> {
+    let workers = std::thread::available_parallelism().map_or(0, |threads| threads.get() - 1);
+    let smol = Smol::new(Arc::new(Executor::new())).with_workers(workers);
+    smol.block_on(async {
+        let signal = installed(shutdown_signal());
+        let app = App::builder(root).runtime(smol.clone()).wire()?.connect().await?;
+        let app = servers.bind_to(app).listen().await?;
+        for bound in app.addresses() {
+            tracing::info!(ulo.transport = bound.transport, address = %bound.addr, "listening");
+        }
+        Ok(app.serve(signal).await?)
+    })
+}
+
+/// `signal` polled once, which installs its handlers, and answered as a future `serve` can await.
+/// `run` calls it before `connect`, whose hooks and readiness checks can take seconds: a signal
+/// arriving then is held for `serve`, which shuts the started app down, rather than ending the
+/// process by the signal's default action with no hook run.
+fn installed(signal: impl Future<Output = Signal> + Send + 'static) -> impl Future<Output = Signal> + Send + 'static {
+    let mut signal = Box::pin(signal);
+    let early = match signal.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(signal) => Some(signal),
+        Poll::Pending => None,
+    };
+    async move {
+        match early {
+            Some(signal) => signal,
+            None => signal.await,
+        }
+    }
+}
+
+/// Resolves on the first shutdown signal the OS delivers: SIGINT or SIGTERM on Unix, Ctrl-C on
+/// Windows, as a `Signal` named after it (`"SIGTERM"`, `"SIGINT"`, `"CTRL_C"`). A handler that
+/// cannot be installed is skipped and the others still resolve it; with none installed, or on
+/// another platform, the future never resolves.
+///
+/// The handlers are installed when the future is first polled, through `async-signal`, whose
+/// notifications `async-io`'s reactor delivers, so it resolves on any executor and the function
+/// may be called anywhere. A handler stays installed for the rest of the process with no action
+/// once the future has resolved or dropped, so a second SIGINT during the shutdown sequence does
+/// not end it.
+pub fn shutdown_signal() -> impl Future<Output = Signal> + Send + 'static {
+    os::shutdown_signal()
+}
+
+#[cfg(any(unix, windows))]
+mod os {
+    use std::future::poll_fn;
+    use std::pin::Pin;
+
+    use async_signal::{Signal as Os, Signals};
+    use futures_core::Stream;
+    use ulo::Signal;
+
+    /// Ctrl-C reaches a Windows process as `SIGINT`, the one signal `async-signal` installs there.
+    const INTERRUPT: &str = if cfg!(windows) { "CTRL_C" } else { "SIGINT" };
+
+    pub(super) async fn shutdown_signal() -> Signal {
+        let Ok(mut signals) = Signals::new(std::iter::empty::<Os>()) else {
+            return std::future::pending().await;
+        };
+        // One at a time, so a signal the platform refuses, `SIGTERM` on Windows, leaves the other.
+        let _ = signals.add_signals([Os::Term]);
+        let _ = signals.add_signals([Os::Int]);
+        match poll_fn(|cx| Pin::new(&mut signals).poll_next(cx)).await {
+            Some(Ok(Os::Term)) => Signal::new("SIGTERM"),
+            Some(Ok(_)) => Signal::new(INTERRUPT),
+            // The notifier failed and no signal can arrive through it any more.
+            Some(Err(_)) | None => std::future::pending().await,
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod os {
+    use ulo::Signal;
+
+    pub(super) async fn shutdown_signal() -> Signal {
+        std::future::pending().await
+    }
+}
+
+/// How [`run`] ended, when it did not end in a clean shutdown. `Display` is the wrapped error's
+/// text and `Debug` is `Display`, so a `main` returning it prints the report.
+#[non_exhaustive]
+pub enum RunError {
+    /// `wire`, `connect` or `listen` refused the app, and nothing served.
+    Startup(StartupError),
+    /// The app served, and its shutdown recorded failures.
+    Shutdown(ShutdownError),
+}
+
+impl From<StartupError> for RunError {
+    fn from(error: StartupError) -> RunError {
+        RunError::Startup(error)
+    }
+}
+
+impl From<ShutdownError> for RunError {
+    fn from(error: ShutdownError) -> RunError {
+        RunError::Shutdown(error)
+    }
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RunError::Startup(error) => fmt::Display::fmt(error, f),
+            RunError::Shutdown(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl fmt::Debug for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+/// Transparent: the error it holds unchanged is its text, so that error's source is its source,
+/// and a chain reporter prints neither twice.
+impl Error for RunError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            RunError::Startup(error) => error.source(),
+            RunError::Shutdown(error) => error.source(),
+        }
+    }
+}
+
+/// What [`run`] binds: one [`Server`], or a tuple of two to eight, queued on the app in the order
+/// written, as a chain of `bind` calls queues them.
+///
+/// `M` is [`One`] or [`Several`], picked by inference and never written. One blanket over every
+/// `Server` and one over tuples of them cannot both implement a single `Servers`, since `ulo` may
+/// implement `Server` for a tuple; the marker keeps the two apart.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a server or a tuple of two to eight servers",
+    label = "`run` takes one `ulo::Server`, or a tuple of two to eight",
+    note = "each element of a tuple implements `ulo::Server`; more than eight are bound with the chain, one `bind` each"
+)]
+pub trait Servers<M> {
+    fn bind_to(self, app: App<Connected>) -> App<Connected>;
+}
+
+/// The [`Servers`] marker of one server.
+pub enum One {}
+
+/// The [`Servers`] marker of a tuple of servers.
+pub enum Several {}
+
+impl<S: Server> Servers<One> for S {
+    fn bind_to(self, app: App<Connected>) -> App<Connected> {
+        app.bind(self)
+    }
+}
+
+macro_rules! servers_tuple {
+    ($($server:ident),+) => {
+        impl<$($server: Server),+> Servers<Several> for ($($server,)+) {
+            #[allow(non_snake_case, reason = "each binding is named for its type parameter")]
+            fn bind_to(self, app: App<Connected>) -> App<Connected> {
+                let ($($server,)+) = self;
+                app$(.bind($server))+
+            }
+        }
+    };
+}
+
+servers_tuple!(A, B);
+servers_tuple!(A, B, C);
+servers_tuple!(A, B, C, D);
+servers_tuple!(A, B, C, D, E);
+servers_tuple!(A, B, C, D, E, F);
+servers_tuple!(A, B, C, D, E, F, G);
+servers_tuple!(A, B, C, D, E, F, G, H);

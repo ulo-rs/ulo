@@ -1,7 +1,21 @@
-//! The tokio runtime for `ulo` (transports DESIGN §8): the core's [`Runtime`](ulo::Runtime) as
-//! [`Tokio`], its clock alone as [`Timer`], the OS signal future [`shutdown_signal`] for `serve`,
-//! and [`spawn`] and [`spawn_in`]. A tokio-based RPC link holds a `Tokio` of its own and runs its
-//! I/O there through [`Tokio::run`].
+//! The tokio runtime for `ulo` (transports DESIGN §8): [`run`], which serves an application on a
+//! tokio runtime it builds until the OS asks the process to stop; the core's
+//! [`Runtime`](ulo::Runtime) as [`Tokio`], its clock alone as [`Timer`], the OS signal future
+//! [`shutdown_signal`] for `serve`, and [`spawn`] and [`spawn_in`]. A tokio-based RPC link holds a
+//! `Tokio` of its own and runs its I/O there through [`Tokio::run`].
+//!
+//! ```no_run
+//! # #[ulo::module]
+//! # struct AppModule;
+//! # fn main_with(server: impl ulo::Server) -> Result<(), Box<dyn std::error::Error>> {
+//! // `server` is a transport's, `ulo_http_hyper::Server::new("127.0.0.1:3000")` for one.
+//! ulo_runtime_tokio::run(AppModule, server)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! An application that sets a builder knob, reads the app between two phases or ends on a future
+//! of its own writes the phases `run` performs, on a runtime it starts itself:
 //!
 //! ```
 //! # use ulo::App;
@@ -19,6 +33,7 @@
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
+use std::io;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll, Waker};
@@ -26,7 +41,10 @@ use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
-use ulo::{BoxFuture, ExecutionRef, Refused, RuntimeShutDown, RuntimeTask, Signal, TaskHandle};
+use ulo::{
+    App, BoxFuture, Connected, ExecutionRef, Module, Refused, RuntimeShutDown, RuntimeTask, Server, Shutdown, ShutdownError, Signal,
+    StartupError, TaskHandle,
+};
 
 /// The app's runtime on one tokio runtime, held by its `Handle`: tasks are spawned on that
 /// runtime, and sleeps registered with its timer, from whichever thread asks, a worker of another
@@ -443,3 +461,175 @@ where
         }
     })
 }
+
+/// Serves `root` on a tokio runtime of its own until the OS asks the process to stop, for a
+/// `main` with no `#[tokio::main]`. It is the startup chain with no knob set, the runtime built as
+/// `#[tokio::main]` builds one, multi-threaded with its I/O and time drivers:
+///
+/// ```ignore
+/// # // reason: the chain `run` performs, written out; `bind_to` queues each server `servers` holds
+/// runtime.block_on(async {
+///     // Polled once here, which installs the handlers.
+///     let signal = shutdown_signal();
+///     let app = App::builder(root).runtime(Tokio::current()).wire()?.connect().await?;
+///     let app = servers.bind_to(app).listen().await?;
+///     app.serve(signal).await
+/// })
+/// ```
+///
+/// `servers` is one server or a tuple of them, bound in the order written. Each address the app
+/// listens on is logged at `info` through `tracing`, as `ulo.transport` and `address`, once
+/// `listen` has bound them all. [`shutdown_signal`] ends it: SIGINT or SIGTERM on Unix, Ctrl-C or
+/// Ctrl-Close on Windows. Its handlers are installed before `wire`, so a signal that arrives while
+/// `connect` runs hooks and readiness checks is held: the app finishes starting and `serve` shuts
+/// it down, where the signal's default action would end the process with no hook run. The app
+/// then runs its shutdown sequence, its hooks, the drain and each server's `close`, and `run`
+/// answers that shutdown's [`Shutdown`], or [`RunError::Shutdown`] listing its failures. A
+/// startup that fails answers [`RunError::Startup`] with nothing served, whatever had initialized
+/// torn down as `connect` tears it down. The runtime is shut down before `run` returns without
+/// waiting for a blocking task still running, which a drop, and so the end of a `#[tokio::main]`,
+/// waits for with no bound.
+///
+/// An application that sets a builder knob (`drain_timeout`, `shutdown_timeout`, `unserved`, a
+/// test clock), reads the app between two phases, ends on a future of its own or runs on a
+/// runtime it configures writes the chain itself, on a runtime it starts.
+///
+/// # Panics
+///
+/// Inside a tokio runtime, as `Runtime::block_on` does: `run` starts the process's runtime, and
+/// an `async fn main` already has one.
+#[expect(clippy::result_large_err, reason = "`StartupError` is the core's, and `RunError` holds it unchanged")]
+pub fn run<M>(root: impl Module, servers: impl Servers<M>) -> Result<Shutdown, RunError> {
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(RunError::Runtime)?;
+    let tokio = Tokio::from_handle(runtime.handle().clone());
+    let answer = runtime.block_on(async move {
+        let signal = installed(shutdown_signal());
+        let app = App::builder(root).runtime(tokio).wire()?.connect().await?;
+        let app = servers.bind_to(app).listen().await?;
+        for bound in app.addresses() {
+            tracing::info!(ulo.transport = bound.transport, address = %bound.addr, "listening");
+        }
+        Ok(app.serve(signal).await?)
+    });
+    // The app has drained, closed and abandoned what outlived the drain; a drop would also wait for
+    // each blocking task still running, which no deadline bounds.
+    runtime.shutdown_background();
+    answer
+}
+
+/// `signal` polled once, which installs its handlers, and answered as a future `serve` can await.
+/// `run` calls it before `connect`, whose hooks and readiness checks can take seconds: a signal
+/// arriving then is held for `serve`, which shuts the started app down, rather than ending the
+/// process by the signal's default action with no hook run.
+fn installed(signal: impl Future<Output = Signal> + Send + 'static) -> impl Future<Output = Signal> + Send + 'static {
+    let mut signal = Box::pin(signal);
+    let early = match signal.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(signal) => Some(signal),
+        Poll::Pending => None,
+    };
+    async move {
+        match early {
+            Some(signal) => signal,
+            None => signal.await,
+        }
+    }
+}
+
+/// How [`run`] ended, when it did not end in a clean shutdown. `Display` is the wrapped error's
+/// text and `Debug` is `Display`, so a `main` returning it prints the report.
+#[non_exhaustive]
+pub enum RunError {
+    /// The tokio runtime could not be built: the OS refused a thread or the I/O driver.
+    Runtime(io::Error),
+    /// `wire`, `connect` or `listen` refused the app, and nothing served.
+    Startup(StartupError),
+    /// The app served, and its shutdown recorded failures.
+    Shutdown(ShutdownError),
+}
+
+impl From<StartupError> for RunError {
+    fn from(error: StartupError) -> RunError {
+        RunError::Startup(error)
+    }
+}
+
+impl From<ShutdownError> for RunError {
+    fn from(error: ShutdownError) -> RunError {
+        RunError::Shutdown(error)
+    }
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RunError::Runtime(error) => write!(f, "the tokio runtime could not be built: {error}"),
+            RunError::Startup(error) => fmt::Display::fmt(error, f),
+            RunError::Shutdown(error) => fmt::Display::fmt(error, f),
+        }
+    }
+}
+
+impl fmt::Debug for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+/// Transparent for the two errors it holds unchanged: their text is its text, so their source is
+/// its source, and a chain reporter prints neither twice.
+impl Error for RunError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            RunError::Runtime(error) => Some(error),
+            RunError::Startup(error) => error.source(),
+            RunError::Shutdown(error) => error.source(),
+        }
+    }
+}
+
+/// What [`run`] binds: one [`Server`], or a tuple of two to eight, queued on the app in the order
+/// written, as a chain of `bind` calls queues them.
+///
+/// `M` is [`One`] or [`Several`], picked by inference and never written. One blanket over every
+/// `Server` and one over tuples of them cannot both implement a single `Servers`, since `ulo` may
+/// implement `Server` for a tuple; the marker keeps the two apart.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a server or a tuple of two to eight servers",
+    label = "`run` takes one `ulo::Server`, or a tuple of two to eight",
+    note = "each element of a tuple implements `ulo::Server`; more than eight are bound with the chain, one `bind` each"
+)]
+pub trait Servers<M> {
+    fn bind_to(self, app: App<Connected>) -> App<Connected>;
+}
+
+/// The [`Servers`] marker of one server.
+pub enum One {}
+
+/// The [`Servers`] marker of a tuple of servers.
+pub enum Several {}
+
+impl<S: Server> Servers<One> for S {
+    fn bind_to(self, app: App<Connected>) -> App<Connected> {
+        app.bind(self)
+    }
+}
+
+macro_rules! servers_tuple {
+    ($($server:ident),+) => {
+        impl<$($server: Server),+> Servers<Several> for ($($server,)+) {
+            #[allow(non_snake_case, reason = "each binding is named for its type parameter")]
+            fn bind_to(self, app: App<Connected>) -> App<Connected> {
+                let ($($server,)+) = self;
+                app$(.bind($server))+
+            }
+        }
+    };
+}
+
+servers_tuple!(A, B);
+servers_tuple!(A, B, C);
+servers_tuple!(A, B, C, D);
+servers_tuple!(A, B, C, D, E);
+servers_tuple!(A, B, C, D, E, F);
+servers_tuple!(A, B, C, D, E, F, G);
+servers_tuple!(A, B, C, D, E, F, G, H);
