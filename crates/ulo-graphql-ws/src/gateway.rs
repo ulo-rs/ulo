@@ -142,6 +142,8 @@ pub struct InitTimeoutError {
     _private: (),
 }
 
+const _: () = assert!(size_of::<InitTimeoutError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for InitTimeoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(

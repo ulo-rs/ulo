@@ -41,6 +41,8 @@ pub struct WiringErrors {
     errors: Vec<WiringError>,
 }
 
+const _: () = assert!(size_of::<WiringErrors>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl WiringErrors {
     pub(crate) fn new(errors: Vec<WiringError>) -> Self {
         WiringErrors { errors }

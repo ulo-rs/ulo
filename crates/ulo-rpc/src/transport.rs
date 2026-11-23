@@ -306,6 +306,8 @@ pub struct NoHandler {
     pub(crate) pattern: String,
 }
 
+const _: () = assert!(size_of::<NoHandler>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl NoHandler {
     pub(crate) fn new(pattern: &str) -> Self {
         NoHandler { pattern: pattern.to_owned() }

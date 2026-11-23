@@ -7,11 +7,12 @@ use crate::dependency::Dependencies;
 /// Typed per-module metadata that a transport reads, written through
 /// [`ModuleDef::meta`](crate::ModuleDef::meta). `ulo-http` stores its route middleware this way.
 ///
-/// The value starts at `Default` and is configured in place. The dependencies it declares, such
-/// as the middleware types it resolves, are checked by the wiring pass against the module's
-/// visibility. A lazily loaded module that writes any metadata is refused with
+/// The module's first write builds the value, `m.meta::<T>()` from `Default` and
+/// `m.meta_with(init)` from `init`, and every write configures it in place. The dependencies it
+/// declares, such as the middleware types it resolves, are checked by the wiring pass against the
+/// module's visibility. A lazily loaded module that writes any metadata is refused with
 /// `LoadRefusal::Middleware`: transports read it when they bind.
-pub trait Meta: Default + Send + Sync + 'static {
+pub trait Meta: Send + Sync + 'static {
     fn dependencies(&self, _d: &mut Dependencies) {}
 }
 
@@ -30,9 +31,9 @@ pub(crate) struct MetaEntry {
 }
 
 impl MetaMap {
-    pub(crate) fn get_or_default<T: Meta>(&mut self) -> &mut T {
+    pub(crate) fn get_or_insert_with<T: Meta>(&mut self, init: impl FnOnce() -> T) -> &mut T {
         let entry = self.values.entry(TypeId::of::<T>()).or_insert_with(|| MetaEntry {
-            value: Box::new(T::default()),
+            value: Box::new(init()),
             dependencies: meta_dependencies::<T>,
             name: type_name::<T>(),
         });

@@ -70,7 +70,7 @@ where
         Box::pin(async move {
             match request::<C>(&module, req, exec).await {
                 Ok((request, fault)) => response_of(schema.execute(request).await, fault),
-                Err(response) => response,
+                Err(response) => *response,
             }
         })
     }
@@ -85,7 +85,7 @@ where
                 Ok((request, fault)) => {
                     schema.execute_stream_with_session_data(request, Default::default()).map(move |response| response_of(response, fault)).boxed()
                 }
-                Err(response) => stream::once(future::ready(response)).boxed(),
+                Err(response) => stream::once(future::ready(*response)).boxed(),
             })
             .boxed()
     }
@@ -123,17 +123,16 @@ pub async fn dep<T: ?Sized + Send + Sync + 'static>(ctx: &async_graphql::Context
 /// The async-graphql request for `req`, carrying the call's context and its execution, and the
 /// fault a request error the schema answers for it would be. A context that cannot be built is
 /// answered `Failed`: nothing executed, and the fault is the server's.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn request<C: Send + Sync + 'static>(
     module: &ModuleRef,
     req: GqlRequest,
     exec: ExecutionRef,
-) -> Result<(async_graphql::Request, RequestFault), GqlResponse> {
+) -> Result<(async_graphql::Request, RequestFault), Box<GqlResponse>> {
     let context = match module.with_execution(&exec).get::<C>().await {
         Ok(context) => context,
         Err(error) => {
             tracing::error!(%error, "the GraphQL context could not be built");
-            return Err(GqlResponse::failed(vec![GqlError::new("the request's context could not be built")]));
+            return Err(Box::new(GqlResponse::failed(vec![GqlError::new("the request's context could not be built")])));
         }
     };
     let supplied = req.variables.unwrap_or_default();
@@ -143,7 +142,7 @@ async fn request<C: Send + Sync + 'static>(
     }
     let fault = fault_before_execution(&mut request);
     if let Some(errors) = missing_variables(&mut request, &supplied) {
-        return Err(GqlResponse::request_fault(RequestFault::Coercion, errors));
+        return Err(Box::new(GqlResponse::request_fault(RequestFault::Coercion, errors)));
     }
     request = request.variables(Variables::from_json(Value::Object(supplied)));
     for (name, value) in req.extensions.unwrap_or_default() {
@@ -152,10 +151,10 @@ async fn request<C: Send + Sync + 'static>(
                 request.extensions.0.insert(name, value);
             }
             Err(_) => {
-                return Err(GqlResponse::request_fault(
+                return Err(Box::new(GqlResponse::request_fault(
                     RequestFault::NotWellFormed,
                     vec![GqlError::new(format!("the extension `{name}` is not a GraphQL value"))],
-                ));
+                )));
             }
         }
     }

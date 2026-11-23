@@ -103,7 +103,10 @@ async fn a_client_module_on_a_link_built_outside_a_runtime_and_given_none_fails_
     let link = thread::spawn(|| Tcp::new("127.0.0.1:7000")).join().expect("building the link on a plain thread panicked");
     let wired = App::builder(ClientRoot(Mutex::new(Some(link)))).runtime(Tokio::current()).wire().expect("the client wires");
     match wired.connect().await {
-        Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(refused), .. }, .. }) => {
+        Err(StartupError::Connect { error, .. }) => {
+            let ConnectError::Hook { reason: FailureReason::Errored(refused), .. } = *error else {
+                panic!("expected the client module's init hook to fail `connect`, got: {error}");
+            };
             assert!(refused.to_string().contains("`.with_handle(..)`"), "the refusal names `.with_handle(..)`: {refused}");
         }
         Err(other) => panic!("expected the client module's init hook to fail `connect`, got: {other}"),

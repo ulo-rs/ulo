@@ -95,7 +95,6 @@ async fn app(clock: &ScriptedTimer) -> App<ulo::Connected> {
 
 /// `listen()` over `link` on an app timed by `clock`; a server that listens is closed and fails
 /// the test.
-#[allow(clippy::result_large_err, reason = "`StartupError` is the error `listen` returns, handed through whole")]
 async fn listen_on(link: Nats, clock: ScriptedTimer) -> Result<(), StartupError> {
     let bound = app(&clock).await.bind(Server::new(link.group("connect_within"))).listen().await?;
     let _ = bound.handle().close(Signal::new("listened")).await;
@@ -130,9 +129,9 @@ fn chain<'e>(error: &'e (dyn Error + 'static)) -> impl Iterator<Item = &'e (dyn 
     })
 }
 
-fn bind_cause(error: StartupError) -> ulo::BoxError {
+fn bind_cause(error: &StartupError) -> &(dyn Error + 'static) {
     match error {
-        StartupError::Bind { source, .. } => source.into_inner(),
+        StartupError::Bind { source, .. } => source.original(),
         other => panic!("expected `Bind`, got: {other}"),
     }
 }
@@ -153,7 +152,7 @@ async fn listen_against_a_silent_server_fails_as_bind_at_the_bound_and_closes_it
         .expect_err("listen succeeded against a NATS server that never answers");
     assert!(!is_permanent(&error), "a silent server is marked permanent, though a later start may reach it: {error}");
     let text = error.to_string();
-    let cause = bind_cause(error);
+    let cause = bind_cause(&error);
     let timed_out = cause.downcast_ref::<ConnectTimedOut>().unwrap_or_else(|| panic!("the `Bind` does not carry `ConnectTimedOut`: {cause:?}"));
     assert_eq!((timed_out.within(), timed_out.address(), timed_out.link()), (WITHIN, silent.addr.to_string().as_str(), "NATS"));
     let shown = cause.to_string();
@@ -215,9 +214,9 @@ async fn a_refused_clock_fails_listen_as_a_permanent_runtime_shut_down() {
     let error = failed_listen(Nats::url(silent.url()).connect_within(WITHIN), clock.clone(), "listen on a refusing clock").await;
     assert_eq!(clock.refused(WITHIN), 1, "the bound was asked of the clock other than once");
     assert!(is_permanent(&error), "a clock whose runtime has shut down cannot time a retry: {error}");
-    let cause = bind_cause(error);
-    assert!(chain(&*cause).any(|error| error.is::<RuntimeShutDown>()), "the `Bind` does not carry `RuntimeShutDown`: {cause:?}");
-    assert!(!chain(&*cause).any(|error| error.is::<ConnectTimedOut>()), "a refused bound is reported as its expiry: {cause:?}");
+    let cause = bind_cause(&error);
+    assert!(chain(cause).any(|error| error.is::<RuntimeShutDown>()), "the `Bind` does not carry `RuntimeShutDown`: {cause:?}");
+    assert!(!chain(cause).any(|error| error.is::<ConnectTimedOut>()), "a refused bound is reported as its expiry: {cause:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -248,7 +247,7 @@ async fn an_unset_bound_is_thirty_seconds() {
         .unwrap_or_else(|_| panic!("listen did not return within {PATIENCE:?} of the unset bound passing"))
         .expect("listen did not panic")
         .expect_err("listen succeeded against a NATS server that never answers");
-    let cause = bind_cause(error);
+    let cause = bind_cause(&error);
     let timed_out = cause.downcast_ref::<ConnectTimedOut>().unwrap_or_else(|| panic!("the `Bind` does not carry `ConnectTimedOut`: {cause:?}"));
     assert_eq!(timed_out.within(), UNSET);
 }

@@ -134,6 +134,8 @@ pub struct CallError {
     source: Option<BoxError>,
 }
 
+const _: () = assert!(size_of::<CallError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl CallError {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         CallError {
@@ -408,9 +410,10 @@ fn recognise<'e>(error: impl ByType<'e>, depth: usize) -> Option<CallError> {
 /// `Internal` with the message withheld.
 pub(crate) fn from_lookup(lookup: &LookupError, depth: usize) -> CallError {
     match lookup {
-        LookupError::Construct { reason: FailureReason::Errored(cause), .. } => {
-            recognise(cause, depth + 1).unwrap_or_else(internal)
-        }
+        LookupError::Construct { reason, .. } => match &**reason {
+            FailureReason::Errored(cause) => recognise(cause, depth + 1).unwrap_or_else(internal),
+            _ => internal(),
+        },
         LookupError::Closed { .. } => CallError::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE),
         _ => internal(),
     }

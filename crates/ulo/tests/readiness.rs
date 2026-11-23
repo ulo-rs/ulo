@@ -30,8 +30,11 @@ struct S2;
 struct S3;
 
 fn readiness(error: StartupError) -> (Key, u32, FailureReason) {
-    let StartupError::Connect { error: ConnectError::Readiness { key, attempts, reason, .. }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a readiness failure, got: {error}");
+    };
+    let ConnectError::Readiness { key, attempts, reason, .. } = *connect_error else {
+        panic!("expected a readiness failure, got: {connect_error}");
     };
     (key.key(), attempts, reason)
 }
@@ -123,7 +126,10 @@ async fn a_failed_check_names_the_module_that_owns_its_binding() {
         m.singleton(|| async { S1 }).ready(|_s: Dep<S1>| async { Err::<(), _>(Boom::new("down")) });
     }))
     .await;
-    let StartupError::Connect { error: ref connect @ ConnectError::Readiness { ref module, .. }, .. } = error else {
+    let StartupError::Connect { error: ref connect, .. } = error else {
+        panic!("expected a readiness failure, got: {error}");
+    };
+    let ConnectError::Readiness { ref module, .. } = **connect else {
         panic!("expected a readiness failure, got: {error}");
     };
     assert_eq!(module.to_string(), "Mod<A>");
@@ -296,7 +302,7 @@ async fn a_failed_check_stops_the_walk_so_nothing_after_it_is_built() {
     }))
     .await;
 
-    assert!(matches!(error, StartupError::Connect { error: ConnectError::Readiness { .. }, .. }), "got: {error}");
+    assert!(matches!(&error, StartupError::Connect { error, .. } if matches!(**error, ConnectError::Readiness { .. })), "got: {error}");
     assert_eq!(log.events(), ["s1 built"], "neither the reader of `S1` nor the unrelated binding after it was built");
 }
 

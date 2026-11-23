@@ -252,6 +252,8 @@ pub struct CorsError {
     reason: &'static str,
 }
 
+const _: () = assert!(size_of::<CorsError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for CorsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "invalid CORS configuration: {}", self.reason)

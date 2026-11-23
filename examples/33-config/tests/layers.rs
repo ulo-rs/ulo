@@ -118,8 +118,11 @@ async fn deny_unread_refuses_a_misspelled_key_naming_its_source() {
     let dotenv = dir.write(".env", "# a typo for APP_HTTP__PORT\nAPP_HTTP__PROT=5000\n");
     let config = config(&dir.0, Env::from_map([("APP_POOL", "4")]), Values::new());
     let wired = builder(config).runtime(Tokio::current()).wire().expect("the configuration reads");
-    let Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) = wired.connect().await else {
+    let Err(StartupError::Connect { error, .. }) = wired.connect().await else {
         panic!("a configuration with keys nothing reads connected");
+    };
+    let ConnectError::Hook { reason: FailureReason::Errored(error), .. } = *error else {
+        panic!("the connect failed other than by the hook's error: {error}");
     };
     let mut found: Vec<_> = error
         .downcast_ref::<ConfigError>()

@@ -25,6 +25,8 @@ pub struct ConfigureErrors {
     errors: Vec<ConfigureError>,
 }
 
+const _: () = assert!(size_of::<ConfigureErrors>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 /// One server's configuration failure: route-table construction, a duplicate route, TLS loading,
 /// CORS validation, endpoint parsing, an inherited socket that does not exist, or a backend limit.
 /// `Display` writes the entry as its report does.
@@ -37,6 +39,8 @@ pub struct ConfigureError {
     /// Whether the report writes `transport` with its full path, which `Display` follows.
     transport_full: bool,
 }
+
+const _: () = assert!(size_of::<ConfigureError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl ConfigureErrors {
     /// The report of every `prepare` that failed, as `(transport, error)`. The transports and
@@ -142,6 +146,8 @@ pub struct PrepareError {
     text: TextFn,
     permanent: bool,
 }
+
+const _: () = assert!(size_of::<PrepareError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 /// One failure a [`PrepareError`] lists, as data a test or a tool reads without parsing the
 /// report's text: the types it names, the source line that declared what failed, what failed, and

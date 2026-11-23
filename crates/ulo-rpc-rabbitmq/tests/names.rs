@@ -123,8 +123,8 @@ async fn served<const BYTES: usize, const EVERY: bool>() {
     let error = started::<BYTES, EVERY>(refusing_addr().port()).await;
     assert!(!ulo::is_permanent(&error), "a {BYTES}-byte pattern was refused rather than connected for: {error}");
     let StartupError::Bind { source, .. } = error else { panic!("expected a `Bind` failure, got: {error}") };
-    let cause = source.into_inner();
-    let mut link: Option<&(dyn Error + 'static)> = Some(&*cause);
+    let cause = source.original();
+    let mut link: Option<&(dyn Error + 'static)> = Some(cause);
     let connected = std::iter::from_fn(|| {
         let current = link?;
         link = current.source();

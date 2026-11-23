@@ -93,8 +93,14 @@ impl<'a> ModuleDef<'a> {
 
     /// Typed per-module metadata a transport reads, such as `ulo-http`'s middleware
     /// configuration: `m.meta::<Middleware>().apply::<RequestLogger>().for_routes([..])`.
-    pub fn meta<T: Meta>(&mut self) -> &mut T {
-        self.node.meta.get_or_default::<T>()
+    pub fn meta<T: Meta + Default>(&mut self) -> &mut T {
+        self.meta_with(T::default)
+    }
+
+    /// [`meta`](Self::meta) for a type with no `Default`: `init` builds the value when this
+    /// module has written none of type `T`, and is not called otherwise.
+    pub fn meta_with<T: Meta>(&mut self, init: impl FnOnce() -> T) -> &mut T {
+        self.node.meta.get_or_insert_with(init)
     }
 
     /// The module's own init hook, run after the init hooks of its providers.

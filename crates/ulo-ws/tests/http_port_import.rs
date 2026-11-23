@@ -42,7 +42,6 @@ impl Module for Root {
     }
 }
 
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 fn wire(register: fn(&mut ModuleDef<'_>)) -> Result<App<ulo::Wired>, StartupError> {
     App::builder(Root(register)).runtime(Tokio::current()).wire()
 }

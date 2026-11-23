@@ -92,6 +92,8 @@ pub struct EndpointError {
     expected: Expected,
 }
 
+const _: () = assert!(size_of::<EndpointError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Expected {
     Address,

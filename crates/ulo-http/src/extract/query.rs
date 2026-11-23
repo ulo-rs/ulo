@@ -38,7 +38,6 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Query<T> {
 }
 
 /// `query`, absent read as empty, as `T` by [`Query`]'s rules, a failure redacted through `app`.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) fn decode<T: DeserializeOwned>(query: Option<&str>, app: &AppHandle) -> Result<T, ExtractError> {
     let decoded = parse_form(query.unwrap_or("").as_bytes());
     let pairs: Vec<(&str, &str)> = decoded.iter().map(|(name, value)| (name.as_str(), value.as_str())).collect();

@@ -718,7 +718,7 @@ async fn a_spent_cap_still_writes_each_held_calls_shutdown_answer() {
     let mut failures = error.failures.iter();
     for kind in [HookKind::BeforeApplicationShutdown, HookKind::OnModuleDestroy] {
         match failures.next() {
-            Some(ShutdownFailure::Hook { hook, key, reason: FailureReason::Skipped }) => {
+            Some(ShutdownFailure::Hook { hook, key, reason }) if matches!(**reason, FailureReason::Skipped) => {
                 assert_eq!(*hook, kind);
                 assert_eq!(key.key(), Key::of::<Root, ()>(), "the hook's owner");
             }
@@ -741,7 +741,7 @@ async fn a_spent_cap_still_writes_each_held_calls_shutdown_answer() {
         }
     }
     match failures.next() {
-        Some(ShutdownFailure::Hook { hook: HookKind::OnApplicationShutdown, key, reason: FailureReason::Skipped }) => {
+        Some(ShutdownFailure::Hook { hook: HookKind::OnApplicationShutdown, key, reason }) if matches!(**reason, FailureReason::Skipped) => {
             assert_eq!(key.key(), Key::of::<Root, ()>(), "the hook's owner");
         }
         other => panic!("expected the cap to skip the on-shutdown hook, got: {other:?}"),

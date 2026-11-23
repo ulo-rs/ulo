@@ -87,7 +87,7 @@ use crate::transport::{Http, HttpCarried, RequestHead};
 /// `T` is the transport whose server runs the entries: `Http` unwritten, and `ulo_grpc::Grpc` for
 /// gRPC's stage, `ulo_grpc::PreDispatch`, scoped by method path (`/users.v1.UserService/*`). An
 /// entry declared for one never runs on the other.
-pub struct PreDispatch<T: HttpCarried = Http> {
+pub struct PreDispatch<T = Http> {
     pub(crate) entries: Vec<Entry>,
     /// Where `exclude` was called with no entry before it, for `prepare` to report.
     pub(crate) stray_excludes: Vec<&'static Location<'static>>,
@@ -340,7 +340,7 @@ fn adopt<T: Clone + Send + Sync + 'static>(head: &http::request::Parts, exec: &E
 /// entries before the route is known, and the matched route's [`ScopedStage`], from
 /// [`scoped`](Self::scoped) in `prepare`, runs the entries whose scope matches the request path
 /// after `Execution::route_to`. `ulo-http` runs HTTP's this way, and `ulo-grpc` gRPC's.
-pub struct Stage<T: HttpCarried = Http> {
+pub struct Stage<T = Http> {
     pub(crate) scoped: Vec<(ModuleRef, Arc<PreDispatch<T>>, usize)>,
     /// The scoped stages handed out so far, by the entries they hold, so equal sets share one.
     pub(crate) shared: Mutex<Vec<Arc<ScopedStage<T>>>>,
@@ -362,7 +362,7 @@ pub struct Stage<T: HttpCarried = Http> {
 /// in declaration order, each with its declaring module, and the per-request check of each one
 /// whose scope or exclusions do not decide every path of the route alike. Built once per
 /// distinct set in `prepare`.
-pub struct ScopedStage<T: HttpCarried = Http> {
+pub struct ScopedStage<T = Http> {
     pub(crate) steps: Vec<(ModuleRef, Arc<PreDispatch<T>>, usize)>,
     /// `steps` index for index: `None` for an entry that runs on every request of the route, the
     /// paths it runs for otherwise.

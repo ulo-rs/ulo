@@ -201,6 +201,8 @@ pub struct EventFieldError {
     reason: &'static str,
 }
 
+const _: () = assert!(size_of::<EventFieldError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for EventFieldError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "an SSE `{}` field cannot hold {}", self.field, self.reason)

@@ -89,11 +89,11 @@ where
             let Some(root) = root else { return unbuilt() };
             let context = match context::<Q::Context>(&module, &exec).await {
                 Ok(context) => context,
-                Err(response) => return response,
+                Err(response) => return *response,
             };
             let request = match request_of(req) {
                 Ok(request) => request,
-                Err(response) => return response,
+                Err(response) => return *response,
             };
             execute(&request, &root, &context).await
         })
@@ -169,14 +169,14 @@ async fn drive<Q, M, Sub>(
     let context = match context::<Q::Context>(&module, &exec).await {
         Ok(context) => context,
         Err(response) => {
-            let _ = sender.send(response).await;
+            let _ = sender.send(*response).await;
             return;
         }
     };
     let request = match request_of(req) {
         Ok(request) => request,
         Err(response) => {
-            let _ = sender.send(response).await;
+            let _ = sender.send(*response).await;
             return;
         }
     };
@@ -220,23 +220,21 @@ async fn drive<Q, M, Sub>(
 
 /// The context, resolved in `exec` with the engine module's visibility. A context that cannot be
 /// built is answered `Failed`: nothing executed, and the fault is the server's.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-async fn context<C: Send + Sync + 'static>(module: &ModuleRef, exec: &ExecutionRef) -> Result<Dep<C>, GqlResponse> {
+async fn context<C: Send + Sync + 'static>(module: &ModuleRef, exec: &ExecutionRef) -> Result<Dep<C>, Box<GqlResponse>> {
     module.with_execution(exec).get::<C>().await.map_err(|error| {
         tracing::error!(%error, "the GraphQL context could not be built");
-        GqlResponse::failed(vec![GqlError::new("the request's context could not be built")])
+        Box::new(GqlResponse::failed(vec![GqlError::new("the request's context could not be built")]))
     })
 }
 
 /// juniper's request for `req`. juniper reads no request extensions, and they are dropped.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-fn request_of(req: GqlRequest) -> Result<GraphQLRequest<DefaultScalarValue>, GqlResponse> {
+fn request_of(req: GqlRequest) -> Result<GraphQLRequest<DefaultScalarValue>, Box<GqlResponse>> {
     let variables = match req.variables {
         Some(variables) => match serde_json::from_value::<InputValue<DefaultScalarValue>>(Value::Object(variables)) {
             Ok(variables) => Some(variables),
             Err(error) => {
                 let errors = vec![GqlError::new(format!("`variables` is not a GraphQL value: {error}"))];
-                return Err(GqlResponse::request_fault(RequestFault::Coercion, errors));
+                return Err(Box::new(GqlResponse::request_fault(RequestFault::Coercion, errors)));
             }
         },
         None => None,

@@ -31,7 +31,7 @@ const FLUSH: Duration = Duration::from_millis(500);
 /// runtime, and hands each connection here after its TLS handshake, where hyper's connection
 /// builders serve it with the server's settings applied, their executor and timer the app's
 /// runtime and clock.
-pub struct HyperOn<L: Listener> {
+pub struct HyperOn<L> {
     read_count: ReadCount,
     /// Set by `bind`.
     pub(crate) bound: Option<Bound<L>>,
@@ -64,7 +64,7 @@ impl<L: Listener> HyperOn<L> {
 }
 
 /// What `bind` prepared for `serve`.
-pub(crate) struct Bound<L: Listener> {
+pub(crate) struct Bound<L> {
     pub(crate) serve: Serve<L>,
     pub(crate) service: AppService,
     pub(crate) protocols: Arc<Protocols>,

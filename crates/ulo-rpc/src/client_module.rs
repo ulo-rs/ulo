@@ -37,7 +37,7 @@ use crate::link::Link;
 ///
 /// Each `for_root` is its own module: two clients of one link type are two imports, never one
 /// deduplicated, and diagnostics name either `RpcClientModule`.
-pub struct RpcClientModule<L: Link> {
+pub struct RpcClientModule<L> {
     pub(crate) link: Arc<L>,
     pub(crate) timeout: Bound,
     pub(crate) idle: Bound,

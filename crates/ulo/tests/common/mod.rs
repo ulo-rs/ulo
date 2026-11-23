@@ -27,8 +27,7 @@
 //! Tests that need a runtime (hooks, constructor waits) use `#[tokio::test]` with
 //! `ulo_runtime_tokio::Tokio::current()`; B1 needs none, since wiring is synchronous.
 
-// `StartupError` is large by design; the helpers return it as `wire()` does.
-#![allow(dead_code, unused_macros, clippy::result_large_err)]
+#![allow(dead_code, unused_macros)]
 
 use std::error::Error;
 use std::fmt;

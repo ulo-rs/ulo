@@ -68,6 +68,8 @@ pub struct Tokio {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoIoDriver;
 
+const _: () = assert!(size_of::<NoIoDriver>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for NoIoDriver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the tokio runtime was built without its IO driver: call `enable_io()` (or `enable_all()`) on its `Builder`")
@@ -498,7 +500,6 @@ where
 ///
 /// Inside a tokio runtime, as `Runtime::block_on` does: `run` starts the process's runtime, and
 /// an `async fn main` already has one.
-#[expect(clippy::result_large_err, reason = "`StartupError` is the core's, and `RunError` holds it unchanged")]
 pub fn run<M>(root: impl Module, servers: impl Servers<M>) -> Result<Shutdown, RunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(RunError::Runtime)?;
     let tokio = Tokio::from_handle(runtime.handle().clone());

@@ -112,10 +112,10 @@ async fn a_failed_hook_names_the_store_module_and_its_key() {
     let db = Db::new();
     let module = db.module().migrate(migrator("this is not sql")).keyed::<Primary>();
     let wired = app(Root::new().import(module)).wire().expect("the module wires");
-    let Err(StartupError::Connect { error: error @ ConnectError::Hook { .. }, .. }) = wired.connect().await else {
+    let Err(StartupError::Connect { error, .. }) = wired.connect().await else {
         panic!("a migration that is not SQL did not fail the init hook");
     };
-    let ConnectError::Hook { key, .. } = &error else { unreachable!() };
+    let ConnectError::Hook { key, .. } = &*error else { panic!("a migration that is not SQL did not fail the init hook: {error}") };
     assert_eq!(key.key().type_name().to_string(), "StoreModule<Sqlite>");
     assert!(error.to_string().starts_with("`OnModuleInit` hook of `StoreModule<Sqlite> @ Primary` failed: "), "{error}");
 }
@@ -185,7 +185,7 @@ async fn two_failing_readiness_checks_name_the_module_that_owns_each() {
 
     let mut seen = Vec::new();
     for (error, owner) in [(&primary, "Primary"), (&replica, "Replica")] {
-        let ConnectError::Readiness { key, module, attempts, reason } = error else { panic!("expected a readiness failure: {error}") };
+        let ConnectError::Readiness { key, module, attempts, reason, .. } = &**error else { panic!("expected a readiness failure: {error}") };
         assert_eq!(key.key().type_name().to_string(), "Pool<Sqlite>");
         assert_eq!(module.to_string(), format!("StoreModule<Sqlite> @ {owner}"));
         assert_eq!(*attempts, 1);

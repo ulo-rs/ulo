@@ -188,6 +188,31 @@ async fn meta_is_what_the_module_wrote_and_nothing_for_another_module() {
     assert!(app.module::<Mod<C>>().unwrap().meta::<Routes>().is_none());
 }
 
+/// Metadata with no sensible default: the first write builds it, and a later write configures
+/// the value already there.
+struct Owner {
+    team: &'static str,
+    reviewers: Vec<&'static str>,
+}
+
+impl Meta for Owner {}
+
+#[tokio::test]
+async fn meta_without_a_default_is_built_by_the_first_write() {
+    let app = connects(Mod::<A>::new(|m| {
+        m.import(Mod::<B>::new(|m| {
+            m.meta_with(|| Owner { team: "billing", reviewers: Vec::new() }).reviewers.push("ada");
+            m.meta_with(|| -> Owner { panic!("a second write rebuilt the value") }).reviewers.push("grace");
+        }));
+        m.import(Mod::<C>::bare());
+    }))
+    .await;
+
+    let written = app.module::<Mod<B>>().unwrap().meta::<Owner>().expect("`B` wrote `Owner`");
+    assert_eq!((written.team, written.reviewers.as_slice()), ("billing", ["ada", "grace"].as_slice()));
+    assert!(app.module::<Mod<C>>().unwrap().meta::<Owner>().is_none());
+}
+
 struct Holder(ModuleRef);
 
 #[tokio::test]

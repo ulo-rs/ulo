@@ -3,9 +3,6 @@
 //! it. `wire()` cannot do either, since a module loaded later may still read a key, so these run
 //! through `connect`.
 
-// `StartupError` is large by design; `connect` returns it as the app does.
-#![allow(clippy::result_large_err)]
-
 mod common;
 
 use std::time::Duration;
@@ -62,8 +59,11 @@ async fn connect(config: Config, deny: bool) -> Result<ulo::App<ulo::Connected>,
 async fn deny_unread_refuses_at_connect_naming_every_unread_key_and_its_origin() {
     let dir = Dir::new();
     let (config, file) = config(&dir);
-    let Err(StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::Errored(error), .. }, .. }) = connect(config, true).await else {
+    let Err(StartupError::Connect { error: failure, .. }) = connect(config, true).await else {
         panic!("an app holding keys nothing reads connected under `.deny_unread()`");
+    };
+    let ConnectError::Hook { reason: FailureReason::Errored(error), .. } = *failure else {
+        panic!("the connect failed other than by the hook's error: {failure}");
     };
     let config_error = error.downcast_ref::<ConfigError>().expect("the hook's own error stays reachable");
     let path = file.to_string_lossy().into_owned();

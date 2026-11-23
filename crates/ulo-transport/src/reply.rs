@@ -28,6 +28,8 @@ pub struct IntoReplyError {
     source: BoxError,
 }
 
+const _: () = assert!(size_of::<IntoReplyError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl IntoReplyError {
     pub fn new(source: impl Into<BoxError>) -> Self {
         IntoReplyError { source: source.into() }

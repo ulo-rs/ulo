@@ -26,8 +26,11 @@ struct S2;
 struct S3;
 
 fn construction(error: StartupError) -> (Key, String, FailureReason) {
-    let StartupError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a construction failure, got: {error}");
+    };
+    let ConnectError::Construct { key, module, reason, .. } = *connect_error else {
+        panic!("expected a construction failure, got: {connect_error}");
     };
     (key.key(), module.to_string(), reason)
 }

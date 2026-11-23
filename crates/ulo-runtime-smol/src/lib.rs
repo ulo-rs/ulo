@@ -325,7 +325,6 @@ impl RuntimeTask for Task {
 /// An application that sets a builder knob (`drain_timeout`, `shutdown_timeout`, `unserved`, a
 /// test clock), reads the app between two phases, ends on a future of its own or runs on an
 /// executor it sizes writes the chain itself, inside a [`Smol::block_on`] of its own.
-#[expect(clippy::result_large_err, reason = "`StartupError` is the core's, and `RunError` holds it unchanged")]
 pub fn run<M>(root: impl Module, servers: impl Servers<M>) -> Result<Shutdown, RunError> {
     let workers = std::thread::available_parallelism().map_or(0, |threads| threads.get() - 1);
     let smol = Smol::new(Arc::new(Executor::new())).with_workers(workers);

@@ -32,16 +32,20 @@ pub enum StartupError {
     /// Everything from `wire()`.
     Wiring(WiringErrors),
     /// `error` ended the connect walk; `teardown` holds what the destroy hooks run for what had
-    /// initialized recorded (§9.2), empty when they recorded nothing.
+    /// initialized recorded (§9.2), empty when they recorded nothing. A pattern binds `error` and
+    /// matches `*error`: stable Rust has no pattern through a `Box`.
     #[non_exhaustive]
-    Connect { error: ConnectError, teardown: Vec<ShutdownFailure> },
+    Connect { error: Box<ConnectError>, teardown: Vec<ShutdownFailure> },
     /// Every failure a server's `prepare` reported, collected across every server before any
     /// binds, so a configuration error is always reported before a port conflict.
     Configure(ConfigureErrors),
     /// A transport's own error, or the core's `RuntimeMissing`. The one type name it prints,
     /// `transport`, has nothing to collide with and prints short.
+    #[non_exhaustive]
     Bind { transport: TypeName, source: Redacted },
 }
+
+const _: () = assert!(size_of::<StartupError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for StartupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -49,7 +53,7 @@ impl fmt::Display for StartupError {
             StartupError::Wiring(e) => fmt::Display::fmt(e, f),
             StartupError::Connect { error, teardown } => write_connect(f, error, teardown),
             StartupError::Configure(e) => fmt::Display::fmt(e, f),
-            StartupError::Bind { transport, source } => {
+            StartupError::Bind { transport, source, .. } => {
                 write!(f, "transport `{transport}` failed to bind: {source}")
             }
         }
@@ -100,6 +104,8 @@ pub struct RuntimeMissing {
     pub transport: TypeName,
 }
 
+const _: () = assert!(size_of::<RuntimeMissing>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for RuntimeMissing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -122,6 +128,8 @@ pub struct PreparePanicked {
     pub message: Redacted,
 }
 
+const _: () = assert!(size_of::<PreparePanicked>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for PreparePanicked {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "`prepare` panicked: {}", self.message)
@@ -135,6 +143,7 @@ impl Error for PreparePanicked {}
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ConnectError {
+    #[non_exhaustive]
     Construct { key: KeyName, module: ModuleName, reason: FailureReason },
     /// How the last attempt ended, `TimedOut { limit: Item }` for the whole check, or `Errored`
     /// holding a `Permanent` [`RuntimeShutDown`](crate::RuntimeShutDown) for a backoff or a bound
@@ -142,7 +151,9 @@ pub enum ConnectError {
     ///
     /// `module` is the module the checked binding belongs to, so two keyed modules of one type
     /// that bind one key (`StoreModule<Sqlite> @ Primary` and `@ Replica`) read apart.
+    #[non_exhaustive]
     Readiness { key: KeyName, module: ModuleName, attempts: u32, reason: FailureReason },
+    #[non_exhaustive]
     Hook { hook: HookKind, key: KeyName, reason: FailureReason },
 }
 
@@ -198,6 +209,8 @@ pub enum FailureReason {
     /// shut down, holding a `Permanent` [`RuntimeShutDown`](crate::RuntimeShutDown).
     Errored(Redacted),
 }
+
+const _: () = assert!(size_of::<FailureReason>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for FailureReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -260,6 +273,8 @@ pub struct ShutdownError {
     pub failures: Arc<[ShutdownFailure]>,
 }
 
+const _: () = assert!(size_of::<ShutdownError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for ShutdownError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let count = self.failures.len();
@@ -296,7 +311,7 @@ impl Error for ShutdownError {}
 pub enum ShutdownFailure {
     /// `Errored` only for a closure hook whose dependency read failed: the shutdown hook traits and
     /// closures return `()`.
-    Hook { hook: HookKind, key: KeyName, reason: FailureReason },
+    Hook { hook: HookKind, key: KeyName, reason: Box<FailureReason> },
     /// `Errored` for the transport's own error, `Panicked` for a panic in its `close`, and
     /// `TimedOut` for a `close` exceeding its bound (§9.5): `limit: ShutdownCap` with the cap's
     /// duration when the cap bounded it, `limit: Default` with `hook_timeout` otherwise. A bound
@@ -312,6 +327,8 @@ pub enum ShutdownFailure {
     /// shutdown (§9.5). It is the first failure listed; the steps that follow add theirs.
     Serve { transport: TypeName, end: ServeEnd },
 }
+
+const _: () = assert!(size_of::<ShutdownFailure>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 /// How a transport's `serve` ended while the app was still running, on [`ShutdownFailure::Serve`].
 #[non_exhaustive]
@@ -372,6 +389,8 @@ impl fmt::Display for ShutdownFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Closed;
 
+const _: () = assert!(size_of::<Closed>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl Closed {
     pub(crate) const fn new() -> Self {
         Closed
@@ -395,9 +414,11 @@ pub enum LoadError {
     /// A construction, readiness check or init hook of the module failed, `teardown` holding what
     /// the destroy hooks run for what it had initialized recorded, as on `StartupError::Connect`.
     #[non_exhaustive]
-    Connect { error: ConnectError, teardown: Vec<ShutdownFailure> },
+    Connect { error: Box<ConnectError>, teardown: Vec<ShutdownFailure> },
     Refused(LoadRefusal),
 }
+
+const _: () = assert!(size_of::<LoadError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -439,6 +460,8 @@ pub enum LoadRefusal {
     /// Inputs belong to transports; the per-handler check ran at wiring time (§6.4).
     Input { module: ModuleName, key: KeyName },
 }
+
+const _: () = assert!(size_of::<LoadRefusal>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for LoadRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -486,8 +509,9 @@ pub enum LookupError {
     Ambiguous { key: KeyName, sources: Vec<ModuleName> },
     /// `app.module::<M>()` over several instances of `M` (§8.5); `module` is `M`'s type name.
     AmbiguousModule { module: &'static str, candidates: Vec<ModuleName> },
-    /// A build inside a call failed, panicked or timed out (§3.4).
-    Construct { key: KeyName, reason: FailureReason },
+    /// A build inside a call failed, panicked or timed out (§3.4). A pattern binds `reason` and
+    /// matches `*reason`: stable Rust has no pattern through a `Box`.
+    Construct { key: KeyName, reason: Box<FailureReason> },
     /// A singleton lookup from Destroying on (§9.5).
     Closed { key: KeyName },
     /// A read of the execution-scoped or transient binding `key` while `key` is itself being built
@@ -498,6 +522,8 @@ pub enum LookupError {
     /// the stack ran out.
     Reentrant { key: KeyName, reader: Box<KeyName> },
 }
+
+const _: () = assert!(size_of::<LookupError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl fmt::Display for LookupError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -544,7 +570,7 @@ impl LookupError {
     /// [`share`](Self::share) can hand a copy to each reader of one cached failure (§3.8).
     pub(crate) fn into_shared(self) -> LookupError {
         match self {
-            LookupError::Construct { key, reason } => LookupError::Construct { key, reason: reason.into_shared() },
+            LookupError::Construct { key, reason } => LookupError::Construct { key, reason: Box::new(reason.into_shared()) },
             other => other,
         }
     }
@@ -563,7 +589,7 @@ impl LookupError {
             LookupError::AmbiguousModule { module, candidates } => {
                 LookupError::AmbiguousModule { module, candidates: candidates.clone() }
             }
-            LookupError::Construct { key, reason } => LookupError::Construct { key: *key, reason: reason.share() },
+            LookupError::Construct { key, reason } => LookupError::Construct { key: *key, reason: Box::new(reason.share()) },
             LookupError::Closed { key } => LookupError::Closed { key: *key },
             LookupError::Reentrant { key, reader } => LookupError::Reentrant { key: *key, reader: reader.clone() },
         }
@@ -637,6 +663,8 @@ pub struct GuardRejected {
     pub guard: &'static str,
 }
 
+const _: () = assert!(size_of::<GuardRejected>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl GuardRejected {
     pub(crate) fn new(guard: &'static str) -> Self {
         GuardRejected { guard }
@@ -660,6 +688,8 @@ pub struct PanicRecovered {
     /// The payload, converted to a message.
     pub message: Redacted,
 }
+
+const _: () = assert!(size_of::<PanicRecovered>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl PanicRecovered {
     pub(crate) fn new(stage: DispatchStage, message: Redacted) -> Self {
@@ -709,6 +739,8 @@ impl fmt::Display for DispatchStage {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EndStream;
 
+const _: () = assert!(size_of::<EndStream>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for EndStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the stream ends here")
@@ -730,6 +762,8 @@ impl Error for EndStream {}
 /// itself; the marker adds no text.
 #[non_exhaustive]
 pub struct Permanent(BoxError);
+
+const _: () = assert!(size_of::<Permanent>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl Permanent {
     pub fn new(error: impl Into<BoxError>) -> Permanent {
@@ -769,6 +803,8 @@ pub struct UndeclaredRead {
     reader: TypeName,
     read: UndeclaredWhat,
 }
+
+const _: () = assert!(size_of::<UndeclaredRead>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum UndeclaredWhat {
@@ -861,7 +897,7 @@ fn startup_permanent(error: &StartupError, depth: usize) -> bool {
 }
 
 /// Whether a readiness attempt's error carries a [`Permanent`], read before the attempt's error is
-/// redacted, which keeps the original reachable but by type alone.
+/// redacted.
 pub(crate) fn construct_permanent(error: &ConstructError) -> bool {
     match error {
         ConstructError::Failed(inner) => permanent_in(&**inner, 1),
@@ -957,9 +993,9 @@ fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
 /// connect task panicked.
 ///
 /// The panic is found under a constructor or a `try_` factory that returned a dependency's
-/// `LookupError` as its own `Err`, and down any error's `source()` chain. Inside a [`Redacted`],
-/// which hands its original out by type alone, only the core's error types are recognized: a
-/// panic wrapped in another error type before it was redacted is not found.
+/// `LookupError` as its own `Err`, and down any error's `source()` chain. Inside a [`Redacted`]
+/// only the core's error types are recognized, each by type: a panic wrapped in another error
+/// type before it was redacted is not found.
 pub fn is_panic(error: &BoxError) -> bool {
     panic_in(&**error, 0)
 }
@@ -1023,7 +1059,8 @@ fn recognized<'e>(error: impl ByType<'e>, depth: usize) -> Option<bool> {
 
 fn shutdown_failure_panicked(failure: &ShutdownFailure, depth: usize) -> bool {
     match failure {
-        ShutdownFailure::Hook { reason, .. } | ShutdownFailure::Close { reason, .. } => reason_panicked(reason, depth),
+        ShutdownFailure::Hook { reason, .. } => reason_panicked(reason, depth),
+        ShutdownFailure::Close { reason, .. } => reason_panicked(reason, depth),
         ShutdownFailure::Serve { end, .. } => match end {
             ServeEnd::Panicked(_) => true,
             ServeEnd::Errored(redacted) => redacted_panicked(redacted, depth + 1),

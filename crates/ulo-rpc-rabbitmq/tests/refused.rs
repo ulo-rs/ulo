@@ -52,8 +52,8 @@ async fn a_broker_refusing_the_first_connect_fails_the_start_as_bind_at_once() {
     assert!(elapsed < PROMPT, "the refusal took {elapsed:?}, past {PROMPT:?}");
     assert!(!ulo::is_permanent(&error), "a refused broker is marked permanent, though a later start may reach it: {error}");
     let StartupError::Bind { source, .. } = error else { panic!("expected a `Bind` failure, got: {error}") };
-    let cause = source.into_inner();
-    let mut link: Option<&(dyn Error + 'static)> = Some(&*cause);
+    let cause = source.original();
+    let mut link: Option<&(dyn Error + 'static)> = Some(cause);
     let refused = std::iter::from_fn(|| {
         let current = link?;
         link = current.source();

@@ -80,7 +80,7 @@ impl Signals {
 /// The accept loop over a server's listeners. Built in a server's `bind`, run by its `serve`,
 /// drained and closed by its `drain` and `close`; `run` takes `&self`, so the server holds one
 /// `Serve` across the four.
-pub struct Serve<L: Listener> {
+pub struct Serve<L> {
     /// Set by `new`, taken by `run`, or by a `drain` or `close` arriving before it.
     listeners: Mutex<Option<Vec<L>>>,
     runtime: Arc<dyn Runtime>,

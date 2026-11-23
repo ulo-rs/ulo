@@ -229,8 +229,11 @@ impl Construct for ExtDeclared {
 /// under the redacted error.
 fn refusal(error: StartupError) -> (Key, UndeclaredRead, String) {
     assert!(ulo::is_permanent(&error), "an undeclared read is a Permanent failure: {error}");
-    let StartupError::Connect { error: ConnectError::Construct { key, reason: FailureReason::Errored(redacted), .. }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected an errored construction failure, got: {error}");
+    };
+    let ConnectError::Construct { key, reason: FailureReason::Errored(redacted), .. } = *connect_error else {
+        panic!("expected an errored construction failure, got: {connect_error}");
     };
     (key.key(), found_in(&redacted), redacted.to_string())
 }
@@ -345,8 +348,11 @@ async fn a_module_ref_kept_past_construction_reads_without_a_declaration() {
 }
 
 fn construct_refusal(error: LookupError) -> (Key, UndeclaredRead) {
-    let LookupError::Construct { key, reason: FailureReason::Errored(redacted) } = error else {
+    let LookupError::Construct { key, reason } = error else {
         panic!("expected a construction failure, got: {error}");
+    };
+    let FailureReason::Errored(redacted) = *reason else {
+        panic!("expected a construction failure, got: {reason}");
     };
     (key.key(), found_in(&redacted))
 }
