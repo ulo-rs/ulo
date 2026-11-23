@@ -679,20 +679,33 @@ const UNANSWERED: &str = "10000";
 ///
 /// Each client's app is timed by an `ArmedClock` of its own over the runtime's clock, which
 /// records the instant each sleep ends, read where a clock that arms a sleep at its first poll
-/// arms it, and the instant a sleep that ran to its end ended. A call passes when a sleep its
-/// client asked for after the call began ends no earlier than the call's start plus its timeout
-/// and no later than the connect's start plus the timeout, and ran to its end before the call
-/// answered: the timer that ended the call was armed for the bound counted from the call. A timer
-/// armed after the block for a full timeout ends half a timeout beyond that window; a call
-/// answered `Timeout` before any such sleep ended was not ended by its timer. A call whose
-/// connect returned past the bound is answered by the refusal at the write, whatever the timer
-/// does, and passes on `Timeout` alone. The window follows from the order of the clock's reads on
-/// one thread, so load moves no threshold; the wall-clock time a call takes to answer is not
-/// asserted. A clock per client keeps a sleep an earlier client's lingering connection asks for,
-/// `CUT_GRACE` on TCP, out of the calls that follow it.
+/// arms it, and the instant a sleep that ran to its end ended; the client's link records whether
+/// it was handed the call's frame. A call passes when a sleep its client asked for after the call
+/// began ends no earlier than the call's start plus its timeout and no later than the connect's
+/// start plus the timeout, the timer armed for the bound counted from the call, and the call was
+/// answered at that bound: by that sleep, which ran to its end before the call answered, or, its
+/// frame never handed to the link, by the refusal at the write, which answers once the call's
+/// deadline has passed and so no earlier than the call's start plus its timeout. A timer armed
+/// after the block for a full timeout ends half a timeout beyond the window whichever of the two
+/// answers the call; a call whose frame was written and that answered `Timeout` before any such
+/// sleep ended was not ended by its timer.
 ///
-/// The report on a failure gives, for each call, its sleeps, its connects and its answer against
-/// the call's start, on the runtime's clock and the std clock.
+/// Each comparison is between clock reads whose order the call's own steps fix: the call's
+/// deadline is read after its start, its timer's sleep is armed in the call's first poll before
+/// the connect's start is read, and the answer is read after whichever of the sleep or the
+/// refusal produced it. None of them carries a margin. Beside the guard that fails a call not
+/// answered within its timeout plus its block plus the broker's boot budget, a correct client
+/// fails under load only when its thread stalls for a whole timeout between the read that sets
+/// the call's deadline and the one that asks for its timer, which leaves the timer no wait to ask
+/// for. Load does decide which of the two answers a call: a connect that returns before the
+/// deadline still meets the refusal when the deadline passes before the frame is written, so the
+/// case tells the two apart by whether the link was handed the frame, not by when the connect
+/// returned. The wall-clock time a call takes to answer is not asserted. A clock per client keeps
+/// a sleep an earlier client's lingering connection asks for, `CUT_GRACE` on TCP, out of the
+/// calls that follow it.
+///
+/// The report on a failure gives, for each call, its sleeps, its connects, its frame's handoff
+/// and its answer against the call's start, on the runtime's clock and the std clock.
 pub async fn blocked_connect_s_timer_ends_with_its_bound<B: Broker>() {
     let fixture = Fixture::<B>::start().await;
     let budget = fixture.broker.budget();
@@ -703,22 +716,24 @@ pub async fn blocked_connect_s_timer_ends_with_its_bound<B: Broker>() {
         let clock = ArmedClock::new(crate::rt::runtime::<B>());
         let stamped = Stamped { link: fixture.broker.client_link(&addresses(&[&fixture.server])), value: UNANSWERED };
         let link = SlowConnect::new(stamped, Hold::Blocks(blocked));
-        let connects = link.connects.clone();
+        let (connects, handoffs) = (link.connects.clone(), link.handoffs.clone());
         let client = client_timed::<B, _>(link, clock.clone()).await;
         clock.take();
         let started = Instants::now(&*clock.clock);
-        let call = client.rpc.request::<_, ()>(STALL, &()).timeout(timeout).into_future();
+        let call = client.rpc.request::<_, ()>(STALL, &()).header(MARK, "blocked").timeout(timeout).into_future();
         let outcome = within::<B, _>(timeout + blocked + budget.boot, "the call", call).await;
         let answered = Instants::now(&*clock.clock);
-        calls.push(Blocked { started, answered, connects: connects.all(), sleeps: clock.take(), outcome });
+        let handed = handoffs.all().into_iter().map(|(_, at)| at).collect();
+        calls.push(Blocked { started, answered, connects: connects.all(), handed, sleeps: clock.take(), outcome });
         client.close().await;
     }
     if !calls.iter().all(|call| call.armed_within(timeout)) {
         let report: Vec<String> = calls.iter().map(Blocked::report).collect();
         panic!(
-            "a call given {timeout:?} over a connect blocking {blocked:?} failed other than `Timeout`, or, its connect returning \
-             inside its bound, no sleep it asked for ended inside [the call's start + {timeout:?}, the connect's start + \
-             {timeout:?}] on the runtime's clock before it answered; every call:\n{}",
+            "a call given {timeout:?} over a connect blocking {blocked:?} failed other than `Timeout`, or no sleep it asked for \
+             ends inside [the call's start + {timeout:?}, the connect's start + {timeout:?}] on the runtime's clock, or, its \
+             frame written, no such sleep ended before it answered, or, its frame refused, it answered before the call's start \
+             + {timeout:?}; every call:\n{}",
             report.join("\n")
         );
     }
@@ -784,12 +799,13 @@ impl Timer for ArmedClock {
 }
 
 /// One call of [`blocked_connect_s_timer_ends_with_its_bound`]: when it was made and answered,
-/// when its client's connects began and returned, the sleeps its client's clock armed, and its
-/// outcome.
+/// when its client's connects began and returned, when its link was handed its frame, the sleeps
+/// its client's clock armed, and its outcome.
 struct Blocked {
     started: Instants,
     answered: Instants,
     connects: Vec<(Instants, Instants)>,
+    handed: Vec<Instant>,
     sleeps: Vec<Armed>,
     outcome: Result<(), RpcError>,
 }
@@ -800,20 +816,22 @@ impl Blocked {
         matches!(&self.outcome, Err(error) if error.kind() == ErrorKind::Timeout) && self.timer_armed_in_time(timeout)
     }
 
-    /// Whether the first connect returned past `started + timeout` or a sleep its client asked
-    /// for after `started` ends within `[started + timeout, connect + timeout]` and ended before
-    /// the call answered, on the runtime's clock. A call that began no connect, one taking a
-    /// connection another call opened, has no upper end to hold the sleep to.
+    /// Whether a sleep its client asked for after `started` ends within `[started + timeout,
+    /// connect + timeout]` on the runtime's clock, and the call was answered at that bound: the
+    /// sleep ended before the call answered, or the call's frame never reached the link and the
+    /// call answered no earlier than `started + timeout`. A call with no connect recorded has no
+    /// upper end to hold the sleep to: one taking a connection another call opened, or one whose
+    /// timer ended it while its connect was under way, dropping the connect before it returned.
     fn timer_armed_in_time(&self, timeout: Duration) -> bool {
         let earliest = self.started.timer + timeout;
         let latest = self.connects.first().map(|(connect, _)| connect.timer + timeout);
-        let ended_it = |sleep: &Armed| {
+        let refused_at_the_write = self.handed.is_empty() && self.answered.timer >= earliest;
+        let answered_at_the_bound = |sleep: &Armed| {
             sleep.asked >= self.started.timer
                 && sleep.ends.is_some_and(|ends| ends >= earliest && latest.is_none_or(|latest| ends <= latest))
-                && sleep.ended.get().is_some_and(|ended| *ended <= self.answered.timer)
+                && (refused_at_the_write || sleep.ended.get().is_some_and(|ended| *ended <= self.answered.timer))
         };
-        let connected_past_the_bound = self.connects.first().is_some_and(|(_, returned)| returned.timer >= earliest);
-        connected_past_the_bound || self.sleeps.iter().any(ended_it)
+        self.sleeps.iter().any(answered_at_the_bound)
     }
 
     fn report(&self) -> String {
@@ -835,10 +853,12 @@ impl Blocked {
                 }
             })
             .collect();
+        let handed: Vec<String> = self.handed.iter().map(|at| format!("its frame handed to the link {}", on_runtime(*at))).collect();
         format!(
-            "answered {}; {}; {}; the runtime's clock read {:+.3} ms from std as the call was made; {:?}",
+            "answered {}; {}; {}; {}; the runtime's clock read {:+.3} ms from std as the call was made; {:?}",
             since(self.answered),
             if connects.is_empty() { "no connect".to_owned() } else { connects.join(", ") },
+            if handed.is_empty() { "its frame never handed to the link".to_owned() } else { handed.join(", ") },
             if sleeps.is_empty() { "no sleep".to_owned() } else { sleeps.join(", ") },
             signed_millis(self.started.timer, self.started.std),
             self.outcome
@@ -1303,40 +1323,84 @@ mod tests {
         });
     }
 
-    fn at(base: Instant, millis: u64) -> Instants {
-        let moment = base + Duration::from_millis(millis);
-        Instants { std: moment, timer: moment }
+    const MS: Duration = Duration::from_millis(1);
+    const US: Duration = Duration::from_micros(1);
+    const TIMEOUT: Duration = Duration::from_millis(200);
+
+    fn at(base: Instant, after: Duration) -> Instants {
+        Instants { std: base + after, timer: base + after }
     }
 
-    fn sleep(base: Instant, asked: u64, ends: u64, ended: u64) -> Armed {
-        Armed {
-            asked: base + Duration::from_millis(asked),
-            ends: Some(base + Duration::from_millis(ends)),
-            ended: Arc::new(OnceLock::from(base + Duration::from_millis(ended))),
-        }
+    fn sleep(base: Instant, asked: Duration, ends: Duration, ended: Option<Duration>) -> Armed {
+        let ended = ended.map_or_else(OnceLock::new, |ended| OnceLock::from(base + ended));
+        Armed { asked: base + asked, ends: Some(base + ends), ended: Arc::new(ended) }
     }
 
+    /// A call whose frame its link was handed one millisecond after the call began.
     fn call(base: Instant, connects: Vec<(Instants, Instants)>, sleeps: Vec<Armed>) -> Blocked {
-        Blocked { started: at(base, 0), answered: at(base, 201), connects, sleeps, outcome: Ok(()) }
+        let (started, answered) = (at(base, Duration::ZERO), at(base, MS * 201));
+        Blocked { started, answered, connects, handed: vec![base + MS], sleeps, outcome: Ok(()) }
     }
 
     #[test]
     fn a_call_taking_a_connection_another_call_opened_is_held_to_its_own_timer() {
         let base = Instant::now();
-        let timeout = Duration::from_millis(200);
-        assert!(call(base, vec![], vec![sleep(base, 0, 200, 200)]).timer_armed_in_time(timeout));
-        assert!(call(base, vec![], vec![sleep(base, 1, 201, 201)]).timer_armed_in_time(timeout), "no connect, no upper end");
-        assert!(!call(base, vec![], vec![sleep(base, 0, 100, 100)]).timer_armed_in_time(timeout), "armed for too little");
-        assert!(!call(base, vec![], vec![sleep(base, 0, 200, 250)]).timer_armed_in_time(timeout), "ended after the answer");
-        assert!(!call(base, vec![], vec![]).timer_armed_in_time(timeout), "no sleep at all");
+        assert!(call(base, vec![], vec![sleep(base, Duration::ZERO, MS * 200, Some(MS * 200))]).timer_armed_in_time(TIMEOUT));
+        assert!(call(base, vec![], vec![sleep(base, MS, MS * 201, Some(MS * 201))]).timer_armed_in_time(TIMEOUT), "no connect, no upper end");
+        assert!(!call(base, vec![], vec![sleep(base, Duration::ZERO, MS * 100, Some(MS * 100))]).timer_armed_in_time(TIMEOUT), "armed for too little");
+        assert!(!call(base, vec![], vec![sleep(base, Duration::ZERO, MS * 200, Some(MS * 250))]).timer_armed_in_time(TIMEOUT), "ended after the answer");
+        assert!(!call(base, vec![], vec![]).timer_armed_in_time(TIMEOUT), "no sleep at all");
+        let asked_early = Blocked { started: at(base, MS), ..call(base, vec![], vec![sleep(base, Duration::ZERO, MS * 201, Some(MS * 201))]) };
+        assert!(!asked_early.timer_armed_in_time(TIMEOUT), "asked before the call began");
     }
 
     #[test]
     fn a_call_with_a_connect_holds_the_sleep_to_the_connects_start() {
         let base = Instant::now();
-        let timeout = Duration::from_millis(200);
-        let connect = vec![(at(base, 0), at(base, 100))];
-        assert!(call(base, connect.clone(), vec![sleep(base, 0, 200, 200)]).timer_armed_in_time(timeout));
-        assert!(!call(base, connect, vec![sleep(base, 100, 300, 200)]).timer_armed_in_time(timeout), "armed after the block");
+        let connect = vec![(at(base, Duration::ZERO), at(base, MS * 100))];
+        assert!(call(base, connect.clone(), vec![sleep(base, Duration::ZERO, MS * 200, Some(MS * 200))]).timer_armed_in_time(TIMEOUT));
+        assert!(!call(base, connect, vec![sleep(base, MS * 100, MS * 300, Some(MS * 200))]).timer_armed_in_time(TIMEOUT), "armed after the block");
+    }
+
+    /// The call F682 logged, its outcome `Timeout` left to `armed_within`: its connect returned 20
+    /// microseconds before the call's start plus its timeout, the refusal at the write answered it
+    /// with no frame handed to the link, and its timer, armed for 19 microseconds past that sum,
+    /// had not ended. Its deadline lies between the two sums, after the connect's return.
+    fn refused_at_the_write(base: Instant) -> Blocked {
+        Blocked {
+            started: at(base, Duration::ZERO),
+            answered: at(base, US * 200_100),
+            connects: vec![(at(base, US * 100), at(base, US * 199_980))],
+            handed: vec![],
+            sleeps: vec![sleep(base, US * 27, US * 200_019, None)],
+            outcome: Ok(()),
+        }
+    }
+
+    #[test]
+    fn a_call_refused_at_the_write_passes_on_a_timer_armed_for_its_bound() {
+        let call = refused_at_the_write(Instant::now());
+        assert!(call.timer_armed_in_time(TIMEOUT), "{}", call.report());
+    }
+
+    #[test]
+    fn a_call_whose_frame_was_written_is_held_to_its_timer_ending() {
+        let base = Instant::now();
+        let call = Blocked { handed: vec![base + US * 199_990], ..refused_at_the_write(base) };
+        assert!(!call.timer_armed_in_time(TIMEOUT), "{}", call.report());
+    }
+
+    #[test]
+    fn a_refusal_answered_before_the_call_s_start_plus_its_timeout_fails() {
+        let base = Instant::now();
+        let call = Blocked { answered: at(base, US * 199_990), ..refused_at_the_write(base) };
+        assert!(!call.timer_armed_in_time(TIMEOUT), "{}", call.report());
+    }
+
+    #[test]
+    fn a_timer_armed_after_the_block_fails_a_call_the_write_refused() {
+        let base = Instant::now();
+        let call = Blocked { sleeps: vec![sleep(base, US * 27, US * 300_100, None)], ..refused_at_the_write(base) };
+        assert!(!call.timer_armed_in_time(TIMEOUT), "{}", call.report());
     }
 }
