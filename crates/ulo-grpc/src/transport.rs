@@ -8,6 +8,7 @@ use ulo::{AppHandle, ExecutionRef, Ext, Extensions, Inputs, LookupError, Mounted
 use ulo_http::{HttpBody, TlsInfo};
 use ulo_transport::{CallError, ExtractError, FromCall, IntoReplyError};
 
+use crate::compression::Uncompressed;
 use crate::dispatch;
 use crate::metadata::{MetadataEntry, MetadataError};
 
@@ -254,6 +255,9 @@ pub struct PeerAddr(pub SocketAddr);
 /// # let _ = reply;
 /// # Ok::<(), MetadataError>(())
 /// ```
+///
+/// [`uncompressed`](Self::uncompressed) sends the reply's messages uncompressed on a server that
+/// would compress them.
 #[derive(Debug)]
 pub struct Response<T> {
     pub(crate) message: T,
@@ -261,11 +265,22 @@ pub struct Response<T> {
     pub(crate) trailers: MetadataMap,
     /// The first entry `metadata` or `trailer` refused, which fails the reply.
     pub(crate) refused: Option<MetadataError>,
+    pub(crate) uncompressed: bool,
 }
 
 impl<T> Response<T> {
     pub fn new(message: T) -> Self {
-        Response { message, metadata: MetadataMap::new(), trailers: MetadataMap::new(), refused: None }
+        Response { message, metadata: MetadataMap::new(), trailers: MetadataMap::new(), refused: None, uncompressed: false }
+    }
+
+    /// Every message of this reply sent uncompressed, flag 0 and no `grpc-encoding`, though the
+    /// caller's `grpc-accept-encoding` and [`Server::send_encodings`](crate::Server::send_encodings)
+    /// agree on an encoding: for a reply mixing a secret with text the caller chose, whose
+    /// compressed length would disclose the secret, as TLS compression did (CRIME). On a stream it
+    /// covers every item; no setting sends one item uncompressed apart from the rest.
+    pub fn uncompressed(mut self) -> Self {
+        self.uncompressed = true;
+        self
     }
 
     /// One ASCII entry on the reply's headers, built as [`MetadataEntry::ascii`] builds it; a key
@@ -317,6 +332,14 @@ impl<T> Response<T> {
     }
 }
 
+/// `reply`, marked [`Uncompressed`] for the server to send it so when `uncompressed`.
+fn marked(mut reply: Reply, uncompressed: bool) -> Reply {
+    if uncompressed {
+        reply.extensions_mut().insert(Uncompressed);
+    }
+    reply
+}
+
 /// A reply of one message, what a unary or client-streaming handler returns and
 /// [`GrpcCx::reply`] takes: the message, or [`Response`] around it with reply metadata. `()` is
 /// one too, being prost's `google.protobuf.Empty`. The conversion fails for a `Response` holding
@@ -338,8 +361,9 @@ impl<T: prost::Message + Default + Send + 'static> IntoGrpcReply for Response<T>
     type Message = T;
 
     fn into_grpc_reply(self) -> Result<Reply, IntoReplyError> {
+        let uncompressed = self.uncompressed;
         let (message, metadata, trailers) = self.parts()?;
-        Ok(dispatch::encode_one(message, metadata, trailers))
+        Ok(marked(dispatch::encode_one(message, metadata, trailers), uncompressed))
     }
 }
 
@@ -371,8 +395,9 @@ where
     type Message = <S::Item as IntoGrpcItem>::Message;
 
     fn into_grpc_stream(self, cx: &GrpcCx) -> Result<Reply, IntoReplyError> {
+        let uncompressed = self.uncompressed;
         let (stream, metadata, trailers) = self.parts()?;
-        Ok(dispatch::encode_stream(stream, metadata, trailers, cx))
+        Ok(marked(dispatch::encode_stream(stream, metadata, trailers, cx), uncompressed))
     }
 }
 

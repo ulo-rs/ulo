@@ -134,19 +134,30 @@ impl Encodings {
 
     /// `response` as it is written: `grpc-accept-encoding` on its headers unless it carries one,
     /// and, when `encoding` is agreed and the response carries messages, `grpc-encoding` and a
-    /// body compressing each one. A response with a `grpc-encoding` of its own, or a
-    /// `content-length`, which a compressed body would contradict, is left uncompressed.
+    /// body compressing each one. A response marked [`Uncompressed`], one with a `grpc-encoding`
+    /// of its own, and one with a `content-length`, which a compressed body would contradict, are
+    /// left uncompressed.
     pub(crate) fn finish(&self, mut response: Response, encoding: Option<Encoding>) -> Response {
         let headers = response.headers_mut();
         headers.entry(GRPC_ACCEPT_ENCODING).or_insert_with(|| self.advertised.clone());
         let Some(encoding) = encoding else { return response };
-        if response.body().is_end_stream() || response.headers().contains_key(GRPC_ENCODING) || response.headers().contains_key(CONTENT_LENGTH) {
+        if response.body().is_end_stream()
+            || response.extensions().get::<Uncompressed>().is_some()
+            || response.headers().contains_key(GRPC_ENCODING)
+            || response.headers().contains_key(CONTENT_LENGTH)
+        {
             return response;
         }
         response.headers_mut().insert(GRPC_ENCODING, HeaderValue::from_static(encoding.as_str()));
         response.map(|body| HttpBody::new(Compressed::new(body, encoding)))
     }
 }
+
+/// In a reply's extensions: the reply a [`Response`](crate::Response) marked
+/// [`uncompressed`](crate::Response::uncompressed) built, which [`Encodings::finish`] sends
+/// uncompressed whatever encoding the call agreed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Uncompressed;
 
 fn distinct(encodings: &[Encoding]) -> Vec<Encoding> {
     let mut kept: Vec<Encoding> = Vec::with_capacity(encodings.len());
@@ -403,5 +414,49 @@ mod tests {
         assert_eq!(carrying.headers().get(GRPC_ENCODING).map(HeaderValue::as_bytes), Some(&b"gzip"[..]));
         let uncompressed = encodings.finish(Response::new(HttpBody::from_bytes(framed(0, b"m"))), None);
         assert!(!uncompressed.headers().contains_key(GRPC_ENCODING));
+    }
+
+    /// `response`'s body read whole, data frames only.
+    async fn body_of(response: Response) -> Vec<u8> {
+        let mut body = response.into_body();
+        let mut data = Vec::new();
+        while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+            if let Ok(bytes) = frame.expect("no error").into_data() {
+                data.extend_from_slice(&bytes);
+            }
+        }
+        data
+    }
+
+    fn marked(mut response: Response) -> Response {
+        response.extensions_mut().insert(Uncompressed);
+        response
+    }
+
+    /// With gzip agreed, a reply marked `Uncompressed` and one carrying a `content-length` are
+    /// written as they came, flag 0 and no `grpc-encoding`, while an unmarked one is compressed;
+    /// the marker on a trailers-only reply changes nothing there. Planted breaks: `finish` ignoring
+    /// the marker, or the `content-length`, compresses that reply.
+    #[tokio::test]
+    async fn a_marked_reply_and_one_with_a_length_are_sent_uncompressed() {
+        let encodings = Encodings::new(&[Encoding::Gzip], &[Encoding::Gzip]);
+        let message = framed(0, &[b'm'; 64]);
+        let mut lengthed = Response::new(HttpBody::from_bytes(message.clone()));
+        lengthed.headers_mut().insert(CONTENT_LENGTH, HeaderValue::from(message.len()));
+        for (what, response) in [("marked", marked(Response::new(HttpBody::from_bytes(message.clone())))), ("a content-length", lengthed)] {
+            let written = encodings.finish(response, Some(Encoding::Gzip));
+            assert!(!written.headers().contains_key(GRPC_ENCODING), "{what}");
+            assert_eq!(written.headers().get(GRPC_ACCEPT_ENCODING).map(HeaderValue::as_bytes), Some(&b"gzip,identity"[..]), "{what}");
+            assert_eq!(messages(&body_of(written).await), vec![(0, vec![b'm'; 64])], "{what}");
+        }
+
+        let unmarked = encodings.finish(Response::new(HttpBody::from_bytes(message)), Some(Encoding::Gzip));
+        assert_eq!(unmarked.headers().get(GRPC_ENCODING).map(HeaderValue::as_bytes), Some(&b"gzip"[..]));
+        assert_eq!(messages(&body_of(unmarked).await), vec![(1, vec![b'm'; 64])]);
+
+        let trailers_only = encodings.finish(marked(Response::new(HttpBody::empty())), Some(Encoding::Gzip));
+        assert!(!trailers_only.headers().contains_key(GRPC_ENCODING));
+        assert_eq!(trailers_only.headers().get(GRPC_ACCEPT_ENCODING).map(HeaderValue::as_bytes), Some(&b"gzip,identity"[..]));
+        assert!(body_of(trailers_only).await.is_empty());
     }
 }

@@ -11,9 +11,13 @@
 //! project's C++ server checks it: a message the client says it compressed must carry the flag,
 //! and one it says it did not must not, else INVALID_ARGUMENT. The flags are read off the request
 //! body as it passes a pre-dispatch entry ([`Flags`]), ulo-grpc handing a handler the decoded
-//! message alone. `response_compressed` and `ResponseParameters::compressed` are not read: the
-//! server compresses every message of a reply when the client's `grpc-accept-encoding` and the
-//! server's `send_encodings` agree on gzip, and has no setting for one reply or one message.
+//! message alone.
+//!
+//! The server compresses every message of a reply when the client's `grpc-accept-encoding` and
+//! the server's `send_encodings` agree on gzip. A unary request's `response_compressed: false`
+//! sends its reply uncompressed, through `Response::uncompressed`; one reading `true`, or absent,
+//! leaves the reply to that agreement. `ResponseParameters::compressed` is not read: no setting
+//! sends one message of a reply stream uncompressed apart from the rest.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -250,7 +254,11 @@ impl TestService {
             return Err(status);
         }
         let reply = SimpleResponse { payload: Some(payload(request.message().response_size)?), ..Default::default() };
-        echoed(Response::new(reply), request.metadata())
+        let reply = match request.message().response_compressed {
+            Some(BoolValue { value: false }) => Response::new(reply).uncompressed(),
+            _ => Response::new(reply),
+        };
+        echoed(reply, request.metadata())
     }
 
     #[ulo_grpc::method(pb::test_service::StreamingOutputCall)]
