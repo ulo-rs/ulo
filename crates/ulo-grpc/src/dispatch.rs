@@ -28,6 +28,14 @@
 //!    DEADLINE_EXCEEDED when the deadline cancelled the call, any other error by its kind.
 //! 8. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
 //!    the gRPC specification's HTTP-to-status table.
+//! 9. Every response, each refusal above included, given `grpc-accept-encoding` naming the
+//!    encodings the server decompresses, and a reply carrying messages compressed in the encoding
+//!    the caller's `grpc-accept-encoding` and `Server::send_encodings` agree on ([`Encodings`]).
+//!
+//! A request compressed in an encoding the server does not decompress is refused in step 6, before
+//! the handler's context is built: UNIMPLEMENTED, its `grpc-accept-encoding` listing what is
+//! accepted, as the compression specification prescribes. The health and reflection services
+//! refuse it themselves, configured with the same encodings.
 //!
 //! A call still running when the drain's end cancels its execution with `CancelReason::Drain` is
 //! dropped at its await and answers UNAVAILABLE, "the server is shutting down", unless the handler
@@ -79,7 +87,7 @@ use http::header::{CONTENT_TYPE, HeaderName, HeaderValue};
 use http::{HeaderMap, StatusCode};
 use http_body::{Body as _, Frame, SizeHint};
 use hyper::body::Incoming;
-use tonic::codec::{BufferSettings, EncodeBody, SingleMessageCompressionOverride};
+use tonic::codec::{BufferSettings, CompressionEncoding, EncodeBody, SingleMessageCompressionOverride};
 use tonic::metadata::MetadataMap;
 use tonic::server::NamedService;
 use tonic::{Code, Status};
@@ -94,6 +102,7 @@ use ulo_http::stage::{Rest, ScopedStage, Stage};
 use ulo_http::{ConnInfo, HttpBody, Request, Response};
 use ulo_transport::{Admission, CallError, ConnectionAdmission, Permit, span};
 
+use crate::compression::Encodings;
 use crate::handler::HandlerFn;
 use crate::metadata;
 use crate::pre_dispatch::StageCx;
@@ -102,8 +111,6 @@ use crate::trace;
 use crate::transport::{Caller, CxInner, Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, PeerAddr, Reply};
 
 const GRPC_STATUS: HeaderName = HeaderName::from_static("grpc-status");
-const GRPC_ENCODING: HeaderName = HeaderName::from_static("grpc-encoding");
-const GRPC_ACCEPT_ENCODING: HeaderName = HeaderName::from_static("grpc-accept-encoding");
 const GRPC_TIMEOUT: HeaderName = HeaderName::from_static("grpc-timeout");
 const GRPC_RETRY_PUSHBACK_MS: HeaderName = HeaderName::from_static("grpc-retry-pushback-ms");
 
@@ -134,6 +141,7 @@ pub(crate) struct Dispatcher {
     pub(crate) per_connection: Option<usize>,
     /// `Server::timeout_grace` as a duration; `None` waits for the error handlers.
     pub(crate) grace: Option<Duration>,
+    pub(crate) encodings: Encodings,
 }
 
 /// One method path's handler, as `prepare` built it.
@@ -152,6 +160,12 @@ impl Dispatcher {
 
     /// Answers one call; never fails, an error being answered as a status.
     pub(crate) async fn call(self: Arc<Self>, req: http::Request<Incoming>, conn: ConnInfo, admission: ConnectionAdmission) -> Response {
+        let encoding = self.encodings.reply(req.headers());
+        let response = Arc::clone(&self).answer(req, conn, admission).await;
+        self.encodings.finish(response, encoding)
+    }
+
+    async fn answer(self: Arc<Self>, req: http::Request<Incoming>, conn: ConnInfo, admission: ConnectionAdmission) -> Response {
         let timeout = match grpc_timeout(req.headers()) {
             Ok(timeout) => timeout,
             Err(refused) => return status_response(refused),
@@ -231,7 +245,7 @@ impl Dispatcher {
         caller: Caller,
         handler: Option<MountedHandler<Grpc>>,
     ) -> Response {
-        let cx = self.context(exec, Arc::clone(&path), metadata, caller, handler.clone(), None);
+        let cx = self.context(exec, Arc::clone(&path), metadata, caller, handler.clone(), None, None);
         let recovering = ulo::recover(handler.as_ref(), exec, &cx, BoxError::from(status::timed_out()));
         let mut grace = self.grace.map(|grace| self.timer.sleep(grace));
         let Some(outcome) = within(recovering, grace.as_mut()).await else {
@@ -340,9 +354,10 @@ impl Dispatcher {
     fn dispatch(self: &Arc<Self>, exec: ExecutionRef, req: Request, route: Arc<Route>) -> BoxFuture<'static, Response> {
         let this = Arc::clone(self);
         Box::pin(async move {
-            if let Some(refused) = unsupported_encoding(req.headers()) {
-                return refused;
-            }
+            let encoding = match this.encodings.request(req.headers()) {
+                Ok(encoding) => encoding,
+                Err(message) => return unsupported_encoding(message),
+            };
             let Request { head, body, conn, .. } = req;
             let cx = this.context(
                 &exec,
@@ -351,6 +366,7 @@ impl Dispatcher {
                 Caller::of(&conn),
                 Some(route.handler.clone()),
                 Some(body),
+                encoding,
             );
             let call = Arc::clone(&route.call);
             let reply = match ulo::dispatch(&route.handler, &exec, &cx, move |cx| (*call)(cx)).await {
@@ -361,7 +377,9 @@ impl Dispatcher {
         })
     }
 
-    /// A call's context, as `dispatch` and the error handlers read it.
+    /// A call's context, as `dispatch` and the error handlers read it. `encoding` is the request's,
+    /// which the extractors decompress its messages in.
+    #[allow(clippy::too_many_arguments, reason = "each argument is one field of the context, named at every call site")]
     pub(crate) fn context(
         &self,
         exec: &ExecutionRef,
@@ -370,6 +388,7 @@ impl Dispatcher {
         caller: Caller,
         handler: Option<MountedHandler<Grpc>>,
         body: Option<HttpBody>,
+        encoding: Option<CompressionEncoding>,
     ) -> GrpcCx {
         GrpcCx::new(CxInner {
             exec: exec.clone(),
@@ -381,6 +400,7 @@ impl Dispatcher {
             tls: caller.tls,
             handler,
             body: Mutex::new(body),
+            encoding,
         })
     }
 }
@@ -712,18 +732,11 @@ fn pushback_ms(after: Duration) -> i32 {
     i32::try_from(millis).unwrap_or(i32::MAX)
 }
 
-/// UNIMPLEMENTED with `grpc-accept-encoding: identity` for a request compressed with an encoding
-/// this server does not decompress, which the gRPC compression specification prescribes; `None`
-/// for an uncompressed request. The header is recorded with the status, so [`screened`] keeps it.
-fn unsupported_encoding(headers: &HeaderMap) -> Option<Response> {
-    let encoding = headers.get(GRPC_ENCODING)?;
-    if encoding.as_bytes() == b"identity" {
-        return None;
-    }
-    let message = format!("this server does not decompress `{}`", String::from_utf8_lossy(encoding.as_bytes()));
-    let mut response: Response = Status::unimplemented(message).into_http();
-    response.headers_mut().insert(GRPC_ACCEPT_ENCODING, HeaderValue::from_static("identity"));
-    Some(written(response))
+/// UNIMPLEMENTED for a request compressed in an encoding this server does not decompress. The
+/// `grpc-accept-encoding` the compression specification requires on it is the one every response
+/// gains in [`Encodings::finish`], after the screens.
+fn unsupported_encoding(message: String) -> Response {
+    status_response(Status::unimplemented(message))
 }
 
 /// How much of a `grpc-timeout` off the grammar the refusal quotes back, as RPC's `bad_deadline`

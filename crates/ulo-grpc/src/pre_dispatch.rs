@@ -81,6 +81,7 @@ impl StageHost for StageCx {
                 self.caller.clone(),
                 self.handler.clone(),
                 None,
+                None,
             );
             let reply = match ulo::recover(self.handler.as_ref(), &self.exec, &cx, err).await {
                 Ok(reply) => reply,

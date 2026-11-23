@@ -11,7 +11,9 @@ use prost_types::value::Kind;
 use tonic::{Code, Status};
 use tonic_types::{ErrorDetails, FieldViolation, HelpLink, StatusExt};
 use ulo::{BoxError, CancelReason, ExecutionRef};
-use ulo_transport::{CallError, Detail, Details, ErrorKind};
+use ulo_transport::{CallError, Detail, Details, ErrorKind, ExtractError};
+
+use crate::extract::Framing;
 
 /// The type URL a `Detail::Json` is packed under: a `google.protobuf.Value` holds any JSON value.
 const VALUE_TYPE_URL: &str = "type.googleapis.com/google.protobuf.Value";
@@ -95,12 +97,27 @@ fn own_code(err: &CallError) -> Option<Code> {
 /// tonic-types, a `Detail::Json` as a `google.protobuf.Value` packed in an `Any`. An error with no
 /// details sends no `grpc-status-details-bin`.
 ///
+/// Two extraction failures have a code of their own, as HTTP answers `TooLarge` 413: an
+/// `ExtractError::TooLarge`, a message past the 4 MiB limit as it arrives or once decompressed, is
+/// RESOURCE_EXHAUSTED, the code gRPC implementations give a message past their receive limit; a
+/// request body breaking the message framing, a compressed flag on a call naming no compression
+/// among them, is INTERNAL, which the compression specification requires.
+///
 /// tonic-types' `ErrorDetails` holds one `BadRequest`, one `ErrorInfo`, one `RetryInfo` and one
 /// `Help`: every `FieldViolations` detail's violations are written into the one `BadRequest`, every
 /// `Help` detail's links into the one `Help`, and the first `ErrorInfo` and `RetryAfter` are kept.
 pub fn to_status(err: &CallError) -> Status {
-    let code = own_code(err).unwrap_or_else(|| code_for(err.kind()));
+    let code = own_code(err).or_else(|| extraction_code(err)).unwrap_or_else(|| code_for(err.kind()));
     with_details(code, err.message(), err.details())
+}
+
+/// The code of an extraction failure the gRPC wire names apart from its kind.
+fn extraction_code(err: &CallError) -> Option<Code> {
+    match err.source_as::<ExtractError>()? {
+        ExtractError::TooLarge { .. } => Some(Code::ResourceExhausted),
+        ExtractError::Malformed { source, .. } if source.downcast_ref::<Framing>().is_some() => Some(Code::Internal),
+        _ => None,
+    }
 }
 
 /// `status` as a `CallError` that is sent as `status`, its code, message, details and metadata

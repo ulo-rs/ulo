@@ -33,6 +33,20 @@ planted results.
 line and the reason. The client's other cases, and why each is not in the list, are named at the
 top of `cases.txt`.
 
+The four compression cases, which grpc-go's client does not implement, run through the same
+runner with the crate's second binary, `ulo-grpc-interop-client`, a tonic client with gzip enabled
+that takes grpc-go's flags. It makes every assertion the interop descriptions make, reading each
+reply message's compressed flag off the reply body, and writes by hand the one call tonic cannot,
+an uncompressed message inside a compressed client stream:
+
+```
+python3 crates/ulo-grpc-interop/interop/run.py \
+  --server target/debug/ulo-grpc-interop \
+  --client "target/debug/ulo-grpc-interop-client --server_host={host} --server_port={port} --test_case={case}" \
+  --cases crates/ulo-grpc-interop/interop/compression_cases.txt \
+  --expect 4 --tls
+```
+
 ## The server
 
 `proto/grpc/testing/` holds the messages and the two services the standard cases use, with the
@@ -42,6 +56,11 @@ a call with the code and message it names, and, on the unary and the full-duplex
 `x-grpc-test-echo-initial` echoed on the reply's headers and `x-grpc-test-echo-trailing-bin` on
 its trailers. `CacheableUnaryCall`, `HalfDuplexCall` and `UnimplementedCall` have no handler, and
 `UnimplementedService` is not registered, so a call to any of them answers `UNIMPLEMENTED`.
+`expect_compressed` is checked against each request message's compressed flag, which a
+pre-dispatch entry records as the request body passes it, and a mismatch answers
+`INVALID_ARGUMENT`. The server compresses replies in gzip when the client accepts it
+(`send_encodings`), every message of the reply: it has no setting for one reply or one message, so
+`response_compressed: false` is not honoured, which `compression_cases.txt` allows.
 
 The binary listens on `HOST` and `PORT` (default `127.0.0.1:10000`) and prints
 `listening on http://ADDR`. With `TLS_CERT` and `TLS_KEY` naming a PEM certificate chain and its

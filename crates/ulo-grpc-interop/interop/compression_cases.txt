@@ -1,0 +1,14 @@
+# The four compression cases of the gRPC project's interop test descriptions, which grpc-go's
+# interop client does not implement, run by `run.py` with `ulo-grpc-interop-client`, a tonic client
+# with gzip enabled. The format is `cases.txt`'s.
+#
+# The two server cases ask for one reply, or one message of a reply stream, uncompressed while the
+# client accepts gzip. The server compresses every message of a reply whose encoding the client's
+# `grpc-accept-encoding` and `send_encodings` agree on, and has no setting for one reply or one
+# message, so the client's check of the second request's flag fails; its check of the first, the
+# compressed one, passes before it.
+
+client_compressed_unary ClientCompressedUnary
+server_compressed_unary ServerCompressedUnary allow F683 "response_compressed false: the reply's compressed flag is 1" no per-reply or per-message opt-out from reply compression
+client_compressed_streaming ClientCompressedStreaming
+server_compressed_streaming ServerCompressedStreaming allow F683 "response 2 asks for no compression: its compressed flag is 1" no per-reply or per-message opt-out from reply compression

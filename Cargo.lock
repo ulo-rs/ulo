@@ -3113,6 +3113,7 @@ checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -8509,6 +8510,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "flate2",
  "h2 0.4.19",
  "http 1.5.0",
  "http-body 1.1.0",
@@ -8880,6 +8882,7 @@ name = "ulo-codegen-tests"
 version = "0.1.0-alpha.3"
 dependencies = [
  "command-fds",
+ "flate2",
  "futures-util",
  "http 1.5.0",
  "http-body 1.1.0",
@@ -9149,6 +9152,7 @@ name = "ulo-grpc"
 version = "0.1.0-alpha.3"
 dependencies = [
  "bytes",
+ "flate2",
  "futures-core",
  "futures-util",
  "http 1.5.0",
@@ -9179,14 +9183,21 @@ dependencies = [
 name = "ulo-grpc-interop"
 version = "0.0.0"
 dependencies = [
+ "bytes",
+ "flate2",
  "futures-util",
+ "http 1.5.0",
+ "http-body 1.1.0",
+ "http-body-util",
  "prost",
  "tokio",
  "tonic",
  "tonic-prost",
+ "tower",
  "ulo",
  "ulo-build",
  "ulo-grpc",
+ "ulo-http",
  "ulo-runtime-tokio",
  "ulo-test-certs",
 ]
@@ -11115,6 +11126,12 @@ dependencies = [
  "quote",
  "syn 3.0.6",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

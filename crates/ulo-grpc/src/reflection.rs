@@ -5,11 +5,13 @@
 
 use tonic_reflection::server::Builder;
 
+use crate::compression::Encodings;
 use crate::dispatch::{Builtin, builtin};
 
 /// Both reflection services over `sets`, each an encoded `FileDescriptorSet` as `ulo-build` writes
-/// it; `Err` with the reason when a set does not decode, for the server's `prepare` failure.
-pub(crate) fn services(sets: &[&'static [u8]]) -> Result<Vec<(&'static str, Builtin)>, String> {
+/// it, each decompressing a request in the encodings `encodings` accepts; `Err` with the reason
+/// when a set does not decode, for the server's `prepare` failure.
+pub(crate) fn services(sets: &[&'static [u8]], encodings: &Encodings) -> Result<Vec<(&'static str, Builtin)>, String> {
     let mut v1 = Builder::configure();
     let mut v1alpha = Builder::configure();
     for &set in sets {
@@ -18,5 +20,7 @@ pub(crate) fn services(sets: &[&'static [u8]]) -> Result<Vec<(&'static str, Buil
     }
     let v1 = v1.build_v1().map_err(|error| format!("reflection: a file descriptor set does not decode: {error}"))?;
     let v1alpha = v1alpha.build_v1alpha().map_err(|error| format!("reflection: a file descriptor set does not decode: {error}"))?;
+    let v1 = encodings.accepted_codecs().fold(v1, |service, codec| service.accept_compressed(codec));
+    let v1alpha = encodings.accepted_codecs().fold(v1alpha, |service, codec| service.accept_compressed(codec));
     Ok(vec![builtin(v1), builtin(v1alpha)])
 }
