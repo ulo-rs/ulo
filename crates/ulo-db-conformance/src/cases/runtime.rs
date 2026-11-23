@@ -32,6 +32,10 @@ impl<R: Runtime> Spawn for Unnamed<R> {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.0, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.0.spawn_blocking(work)
+    }
 }
 
 /// The harness's runtime answering `"smol"`, the name of a runtime the core supports and no store
@@ -63,6 +67,10 @@ impl<R: Runtime> Spawn for Smol<R> {
 
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.0, fut)
+    }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.0.spawn_blocking(work)
     }
 }
 

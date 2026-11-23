@@ -108,6 +108,10 @@ impl Spawn for Clocked {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
         self.tokio.try_spawn(fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.tokio.spawn_blocking(work)
+    }
 }
 
 /// Planted break: a client's connect with no bound of its own.

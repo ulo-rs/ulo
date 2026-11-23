@@ -14,9 +14,9 @@ use futures_io::{AsyncRead, AsyncWrite};
 use futures_util::future::{Either, join, select};
 use futures_util::stream::FuturesUnordered;
 use futures_util::{AsyncReadExt, AsyncWriteExt, FutureExt, SinkExt, StreamExt, select_biased};
-use ulo::{Bound, BoundAddr, BoxError, BoxFuture, Runtime, Spawn, TaskHandle, Timer};
+use ulo::{Bound, BoundAddr, BoxError, BoxFuture, Refused, Runtime, RuntimeShutDown, Spawn, TaskHandle, Timer};
 use ulo_net::rustls::ServerConfig;
-use ulo_net::{Activation, BoundListener, Endpoint, EndpointSpec, Tls};
+use ulo_net::{Activation, BindError, BoundListener, Endpoint, EndpointSpec, HostPort, Lookup, ResolveCause, ResolveError, Target, Tls};
 use ulo_rpc::link::Inbound;
 use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
 use ulo_transport::sync::{Watch, ordered};
@@ -111,6 +111,8 @@ impl Incoming {
 /// from the drop.
 pub struct Core {
     endpoint: EndpointSpec,
+    /// How a host name becomes addresses: the system resolver unless `set_lookup` replaced it.
+    lookup: Lookup,
     tls: Option<Tls>,
     codec: Codec,
     max_frame: Option<u64>,
@@ -140,7 +142,8 @@ impl Drop for Owned {
 }
 
 struct Prepared {
-    endpoint: Endpoint,
+    /// One endpoint, or each address a host name resolved to, in the resolver's order.
+    endpoints: Vec<Endpoint>,
     tls: Option<Arc<ServerConfig>>,
 }
 
@@ -174,6 +177,7 @@ impl Core {
     pub fn new(endpoint: EndpointSpec) -> Core {
         Core {
             endpoint,
+            lookup: Lookup::system(),
             tls: None,
             codec: Codec::Json,
             max_frame: None,
@@ -217,6 +221,12 @@ impl Core {
         self.max_connections = connections;
     }
 
+    /// The lookup a host name is resolved through in place of the system resolver, for a test that
+    /// answers addresses of its choosing at each connect.
+    pub fn set_lookup(&mut self, lookup: Lookup) {
+        self.lookup = lookup;
+    }
+
     /// How long a server connection stays open idle: [`DEFAULT_IDLE_TIMEOUT`] at `Bound::Default`,
     /// none at `Bound::Unbounded`.
     pub fn idle_timeout(&self) -> Option<Duration> {
@@ -255,24 +265,32 @@ impl Core {
     }
 
     /// Everything that can fail before a socket, reported together with `usable`, the link's own
-    /// refusal: the endpoint, an inherited socket, the TLS configuration, a zero `max_frame` or one
-    /// below the size of the server's own answer to a frame over it, a zero `idle_timeout` and a
-    /// zero `max_connections`.
+    /// refusal: the endpoint, a host name resolving to no address, an inherited socket, the TLS
+    /// configuration, a zero `max_frame` or one below the size of the server's own answer to a
+    /// frame over it, a zero `idle_timeout` and a zero `max_connections`.
     /// `timer` is the app's, `AppHandle::timer`, which bounds each server connection's linger.
-    pub fn prepare(&mut self, usable: Result<(), BoxError>, timer: Option<Arc<dyn Timer>>) -> Result<(), BoxError> {
+    ///
+    /// A host name is resolved here, once, on `runtime`'s blocking work; `listen` binds the first of
+    /// its addresses that binds, in the resolver's order, as `std::net::TcpListener::bind` does,
+    /// and looks nothing up. `runtime` is `None` only when `usable` refused for want of
+    /// one, so a host name is then left unresolved and `usable`'s refusal reported.
+    pub async fn prepare(&mut self, usable: Result<(), BoxError>, timer: Option<Arc<dyn Timer>>, runtime: Option<&dyn Runtime>) -> Result<(), BoxError> {
         self.timer = timer;
         let mut problems = Vec::new();
         if let Err(error) = usable {
             problems.push(error.to_string());
         }
-        let endpoint = match self.endpoint.resolve() {
-            Ok(endpoint) => Some(endpoint),
+        let endpoints = match self.server_endpoints(runtime).await {
+            Ok(endpoints) => endpoints,
             Err(error) => {
-                problems.push(error.to_string());
+                problems.push(error);
                 None
             }
         };
-        if let Some(Endpoint::Inherited(name)) = &endpoint {
+        for name in endpoints.iter().flatten().filter_map(|endpoint| match endpoint {
+            Endpoint::Inherited(name) => Some(name),
+            Endpoint::Addr(_) => None,
+        }) {
             match Activation::get() {
                 Ok(activation) if activation.contains(name) => {}
                 Ok(activation) => problems.push(activation.unavailable(name).to_string()),
@@ -307,14 +325,27 @@ impl Core {
         if self.max_connections == Count::Max(0) {
             problems.push("`.max_connections(Count::Max(0))` would accept no connection".to_owned());
         }
-        match (endpoint, problems.as_slice()) {
-            (Some(endpoint), []) => {
-                self.prepared = Some(Prepared { endpoint, tls });
+        match (endpoints, problems.as_slice()) {
+            (Some(endpoints), []) => {
+                self.prepared = Some(Prepared { endpoints, tls });
                 Ok(())
             }
             (_, [problem]) => Err(problem.clone().into()),
             (_, problems) => Err(format!("{} problems:\n  - {}", problems.len(), problems.join("\n  - ")).into()),
         }
+    }
+
+    /// The endpoints a server may listen on: the one written, or each address its host name
+    /// resolves to, each through [`EndpointSpec::resolve`]'s `ULO_DEV` lookup. `None` for a host
+    /// name with no runtime to resolve it on.
+    async fn server_endpoints(&self, runtime: Option<&dyn Runtime>) -> Result<Option<Vec<Endpoint>>, String> {
+        let host = match self.endpoint.target().map_err(|error| error.to_string())? {
+            Target::Endpoint(_) => return self.endpoint.resolve().map(|endpoint| Some(vec![endpoint])).map_err(|error| error.to_string()),
+            Target::Host(host) => host,
+        };
+        let Some(runtime) = runtime else { return Ok(None) };
+        let addrs = self.lookup.resolve(&host, runtime).await.map_err(|error| error.to_string())?;
+        addrs.into_iter().map(|addr| EndpointSpec::from(addr).resolve()).collect::<Result<_, _>>().map(Some).map_err(|error| error.to_string())
     }
 
     /// Binds the prepared endpoint, hands the socket and the TLS configuration to `adopt`, which
@@ -334,7 +365,7 @@ impl Core {
         if accept.is_some() {
             return Err("the TCP link is already listening".into());
         }
-        let listener = BoundListener::bind(&prepared.endpoint)?;
+        let listener = bind_first(&prepared.endpoints)?;
         let local = listener.local_addr();
         let listener = adopt(listener, prepared.tls.clone())?;
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", local).tls(prepared.tls.is_some())];
@@ -354,23 +385,54 @@ impl Core {
         Ok(Box::pin(inbound))
     }
 
-    /// The address a client connects to, as written: under `ulo dev`, resolving would turn the
-    /// address of the socket the command holds into that socket, which a client cannot connect
-    /// through. Text is parsed as an IP address and port, and a host name is refused: the link
-    /// resolves none. The client side speaks plain TCP: a link with `tls` set is refused. Each
-    /// refusal is permanent, so a link's `usable` reports it where the client takes the link.
-    pub fn client_addr(&self) -> Result<SocketAddr, BoxError> {
-        let endpoint = self
-            .endpoint
-            .resolve_as_written()
-            .map_err(|error| format!("the TCP link takes IP addresses only and resolves no host name: {error}"))?;
-        let Endpoint::Addr(addr) = endpoint else {
-            return Err(format!("a TCP client connects to an address; {endpoint} is a socket a server listens on").into());
+    /// What a client connects to, as written: under `ulo dev`, resolving would turn the address of
+    /// the socket the command holds into that socket, which a client cannot connect through. Text
+    /// is an IP address and port or a host name and port, which `dial` resolves. Refused: other
+    /// text, an inherited socket, and `tls` set, the client side speaking plain TCP. Each refusal
+    /// is permanent, so a link's `usable` reports it where the client takes the link; a host name
+    /// resolving to no address is not one, since a later connect may find it.
+    pub fn check_client(&self) -> Result<(), BoxError> {
+        self.client_target().map(drop)
+    }
+
+    fn client_target(&self) -> Result<Dial, BoxError> {
+        let target = match self.endpoint.target()? {
+            Target::Endpoint(Endpoint::Addr(addr)) => Dial::Addr(addr),
+            Target::Host(host) => Dial::Host(host),
+            Target::Endpoint(endpoint) => {
+                return Err(format!("a TCP client connects to an address; {endpoint} is a socket a server listens on").into());
+            }
         };
         if self.tls.is_some() {
             return Err("the TCP link's client side speaks no TLS; `Tcp::tls` sets a server's certificate".into());
         }
-        Ok(addr)
+        Ok(target)
+    }
+
+    /// The client's socket, from `connect` handed each address in turn until one connects: the
+    /// endpoint's address, or the addresses its host name resolves to, in the resolver's order. The
+    /// name is resolved at every call, on `runtime`'s blocking work, so a connection made after the
+    /// name's addresses change reaches the new ones. Fails with what `check_client` refuses, with
+    /// the [`ResolveError`] for a name resolving to no address, with `RuntimeShutDown` for a
+    /// runtime that has shut down, and, when no address connects, with the last address's error.
+    pub async fn dial<S, F, Fut>(&self, runtime: &dyn Runtime, mut connect: F) -> Result<S, BoxError>
+    where
+        F: FnMut(SocketAddr) -> Fut,
+        Fut: Future<Output = Result<S, BoxError>>,
+    {
+        let addrs = match self.client_target()? {
+            Dial::Addr(addr) => vec![addr],
+            Dial::Host(host) => self.lookup.resolve(&host, runtime).await.map_err(resolve_failure)?,
+        };
+        let mut last = None;
+        for addr in addrs {
+            match connect(addr).await {
+                Ok(stream) => return Ok(stream),
+                Err(error) if error.is::<RuntimeShutDown>() => return Err(error),
+                Err(error) => last = Some(error),
+            }
+        }
+        Err(last.unwrap_or_else(|| "the TCP link had no address to connect to".into()))
     }
 
     /// A client connection over the two halves of a connected socket: its writer and its reply
@@ -462,6 +524,32 @@ impl Core {
 
     pub fn bound(&self) -> Vec<BoundAddr> {
         lock(&self.state.bound).clone()
+    }
+}
+
+/// The first of `endpoints` that binds, else the last one's error.
+fn bind_first(endpoints: &[Endpoint]) -> Result<BoundListener, BindError> {
+    let mut last = None;
+    for endpoint in endpoints {
+        match BoundListener::bind(endpoint) {
+            Ok(listener) => return Ok(listener),
+            Err(error) => last = Some(error),
+        }
+    }
+    Err(last.expect("a prepared server has an endpoint"))
+}
+
+/// What a client connects to, before any lookup.
+enum Dial {
+    Addr(SocketAddr),
+    Host(HostPort),
+}
+
+/// A runtime that has shut down is reported as one, as every other refusal of the runtime is.
+fn resolve_failure(error: ResolveError) -> BoxError {
+    match error.cause() {
+        ResolveCause::Refused => RuntimeShutDown::new(Refused).into(),
+        _ => error.into(),
     }
 }
 

@@ -1,5 +1,5 @@
-//! A runtime that has shut down refuses to spawn, to time and to run a future as a value, never a
-//! panic; a running one refuses neither.
+//! A runtime that has shut down refuses to spawn, to run blocking work, to time and to run a future
+//! as a value, never a panic; a running one refuses neither.
 
 use std::future::pending;
 use std::sync::Arc;
@@ -30,7 +30,8 @@ pub async fn running<R: Runtime>(rt: R) {
 }
 
 /// Once `stoppable`'s runtime has shut down: `try_spawn` answers `Err(Refused)` with the future
-/// unrun, `spawn` a handle that ends `Aborted` with the future unrun, `try_sleep` `Err(Refused)` at
+/// unrun, `spawn` a handle that ends `Aborted` with the future unrun, `spawn_blocking` a handle
+/// that ends `Aborted` with the work unrun, `try_sleep` `Err(Refused)` at
 /// once, `sleep` ends at once, a sleep under way at the shutdown answers `Err(Refused)`, a task
 /// pending then ends `Aborted`, and `now` answers. Each of `stoppable`'s other clocks times while
 /// the runtime runs and refuses alike once it has shut down. Every wait is timed on `rt`.
@@ -73,6 +74,11 @@ pub async fn shut_down<R: Runtime>(rt: R, stoppable: Stoppable<R>) {
     let end = within(&rt, handle).await.expect("the handle `spawn` answered on a runtime that has shut down did not end");
     assert!(end.is_aborted(), "a task spawned on a runtime that has shut down ended {end:?}");
     assert!(!ran.load(Ordering::SeqCst), "a task spawned on a runtime that has shut down ran");
+    let flag = Arc::clone(&ran);
+    let work = stopped.spawn_blocking(Box::new(move || flag.store(true, Ordering::SeqCst)));
+    let end = within(&rt, work).await.expect("the handle `spawn_blocking` answered on a runtime that has shut down did not end");
+    assert!(end.is_aborted(), "blocking work handed to a runtime that has shut down ended {end:?}");
+    assert!(!ran.load(Ordering::SeqCst), "blocking work handed to a runtime that has shut down ran");
 
     let slept = within(&rt, stopped.try_sleep(LONG)).await;
     assert_eq!(slept, Some(Err(Refused)), "a runtime that has shut down answered an hour's `try_sleep` with {slept:?}");

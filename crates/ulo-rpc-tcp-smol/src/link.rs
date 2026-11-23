@@ -51,15 +51,24 @@ use ulo_rpc_tcp_core::{Accept, Core, Incoming};
 /// [`with_runtime`](Self::with_runtime) names, or else the one the link runs under, a server's app's,
 /// taken in `prepare`, and a client's own, which `RpcClient` hands to `connect`: the app's inside an
 /// app, the one given to `RpcClient::new` outside one.
+///
+/// A host name, `billing:7000`, is resolved through the system resolver, `ToSocketAddrs`, so
+/// `/etc/hosts`, nsswitch and the search list apply, as that runtime's blocking work
+/// (`Runtime::spawn_blocking`, `blocking::unblock` on `ulo_runtime_smol::Smol`). A server resolves
+/// it once, in `prepare`, binds the first of its addresses that binds, and reports a name resolving to no address as a
+/// `Configure` refusal beside its other problems. A client resolves it at every connect and tries
+/// each address in the resolver's order until one connects, so a reconnect follows the name to new
+/// addresses; a name resolving to no address fails that connect, the call failing `Unavailable`
+/// with the name and the resolver's error.
 pub struct Tcp {
     core: Core,
     runtime: Option<Arc<dyn Runtime>>,
 }
 
 impl Tcp {
-    /// The link on `endpoint`: text parsed in `prepare`, an `Endpoint`, or a `SocketAddr`. A
-    /// server may listen on an inherited socket; a client connects to an IP address and port, such
-    /// as `10.0.0.5:7000`, and is refused a host name where it takes the link.
+    /// The link on `endpoint`: text parsed in `prepare`, an `Endpoint`, or a `SocketAddr`. Text is
+    /// an IP address and port, `10.0.0.5:7000` or `[::1]:7000`, or a host name and port,
+    /// `billing:7000`. A server may also listen on an inherited socket.
     pub fn new(endpoint: impl Into<EndpointSpec>) -> Self {
         Tcp { core: Core::new(endpoint.into()), runtime: None }
     }
@@ -151,9 +160,10 @@ impl Link for Tcp {
     }
 
     /// A client's link refuses here what its `connect` would refuse on every call: an endpoint that
-    /// is not an IP address and port, the link resolving no host name, and `tls` set.
+    /// is neither an IP address and port nor a host name and port, an inherited socket, and `tls`
+    /// set.
     fn usable(&self) -> Result<(), BoxError> {
-        self.core.client_addr().map(drop)
+        self.core.check_client()
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
@@ -161,7 +171,8 @@ impl Link for Tcp {
             self.runtime = app.runtime().cloned();
         }
         let usable = self.server_runtime().map(drop);
-        self.core.prepare(usable, app.timer().cloned())
+        let runtime = self.runtime.clone();
+        self.core.prepare(usable, app.timer().cloned(), runtime.as_deref()).await
     }
 
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
@@ -171,9 +182,9 @@ impl Link for Tcp {
     }
 
     async fn connect(&self, handed: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
-        let addr = self.core.client_addr()?;
+        self.core.check_client()?;
         let runtime = self.runtime.clone().unwrap_or_else(|| Arc::clone(handed));
-        let stream = TcpStream::connect(addr).await?;
+        let stream = self.core.dial(&*runtime, |addr| async move { Ok(TcpStream::connect(addr).await?) }).await?;
         let _ = stream.set_nodelay(true);
         let timer = Arc::clone(handed) as Arc<dyn Timer>;
         Ok(self.core.connect(&runtime, timer, Box::pin(stream.clone()), Box::pin(stream)))
@@ -216,5 +227,108 @@ impl Accept for SmolListener {
             let (reader, writer) = acceptor.accept(stream).await?.split();
             Ok((Box::pin(reader) as _, Box::pin(writer) as _))
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener as StdListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, mpsc};
+    use std::time::Duration;
+
+    use ulo_net::Lookup;
+    use ulo_rpc_conformance::{Harness, OnSmol};
+    use ulo_runtime_smol::{Executor, Smol};
+
+    use super::*;
+
+    /// How long a test waits for anything before it fails.
+    const PATIENCE: Duration = Duration::from_secs(5);
+
+    async fn listening() -> TcpListener {
+        TcpListener::bind("127.0.0.1:0").await.expect("a loopback port")
+    }
+
+    async fn accepted(timer: &dyn Timer, listener: &TcpListener, which: &str) {
+        ulo::timeout(timer, PATIENCE, listener.accept())
+            .await
+            .unwrap_or_else(|_| panic!("{which} accepted no connection"))
+            .unwrap_or_else(|error| panic!("{which} failed to accept: {error}"));
+    }
+
+    fn on(endpoint: &str, lookup: Lookup) -> Tcp {
+        let mut tcp = Tcp::new(endpoint);
+        tcp.core.set_lookup(lookup);
+        tcp
+    }
+
+    /// F416: each connect looks the name up again on the runtime the client hands it, so a
+    /// connect made after the name's address changed reaches the new one.
+    #[test]
+    fn each_connect_resolves_the_name_again() {
+        OnSmol::block_on(async {
+            let (first, second) = (listening().await, listening().await);
+            let answers = [first.local_addr().expect("an address"), second.local_addr().expect("an address")];
+            let asked = Arc::new(AtomicUsize::new(0));
+            let counting = Arc::clone(&asked);
+            let tcp = on(
+                "billing:7000",
+                Lookup::from_fn(move |host| {
+                    assert_eq!(host.to_string(), "billing:7000", "the name looked up");
+                    Ok(vec![answers[counting.fetch_add(1, Ordering::SeqCst).min(1)]])
+                }),
+            );
+            let runtime: Arc<dyn Runtime> = Arc::new(OnSmol::runtime());
+            let _one = tcp.connect(&runtime).await.expect("the first connect");
+            accepted(&*runtime, &first, "the address the name had at the first connect").await;
+            let _two = tcp.connect(&runtime).await.expect("the second connect");
+            accepted(&*runtime, &second, "the address the name had at the second connect").await;
+            assert_eq!(asked.load(Ordering::SeqCst), 2, "the lookups two connects made");
+        });
+    }
+
+    /// F416: a connect tries each address the name resolves to, in order, until one connects.
+    #[test]
+    fn a_connect_tries_each_address_until_one_connects() {
+        OnSmol::block_on(async {
+            let closed = StdListener::bind("127.0.0.1:0").and_then(|listener| listener.local_addr()).expect("a port, closed once its listener drops");
+            let live = listening().await;
+            let answers = vec![closed, live.local_addr().expect("an address")];
+            let tcp = on("billing:7000", Lookup::from_fn(move |_| Ok(answers.clone())));
+            let runtime: Arc<dyn Runtime> = Arc::new(OnSmol::runtime());
+            let _connected = tcp.connect(&runtime).await.expect("a connect past a refused address");
+            accepted(&*runtime, &live, "the second address").await;
+        });
+    }
+
+    /// F416: the lookup runs as the runtime's blocking work, off every thread running its
+    /// executor. With the test's thread the executor's only one, the lookup waits for a release
+    /// that a task on that executor sends, which it can send only while the connect leaves the
+    /// thread free.
+    #[test]
+    fn a_connect_resolves_off_the_thread_polling_it() {
+        let smol = Smol::new(Arc::new(Executor::new()));
+        let runtime: Arc<dyn Runtime> = Arc::new(smol.clone());
+        smol.block_on(async move {
+            let live = listening().await;
+            let addr = live.local_addr().expect("an address");
+            let (release, released) = mpsc::channel::<()>();
+            let released = Mutex::new(released);
+            let tcp = on(
+                "billing:7000",
+                Lookup::from_fn(move |_| match released.lock().expect("the release's lock").recv_timeout(PATIENCE) {
+                    Ok(()) => Ok(vec![addr]),
+                    Err(_) => Err(io::Error::other("the lookup's release never came: the lookup held the thread polling the connect")),
+                }),
+            );
+            let releasing = runtime.spawn(Box::pin(async move {
+                let _ = release.send(());
+            }));
+            let connected = tcp.connect(&runtime).await;
+            assert!(connected.is_ok(), "the connect failed: {:?}", connected.err());
+            accepted(&*runtime, &live, "the address the lookup answered").await;
+            assert!(releasing.await.is_finished(), "the releasing task ends");
+        });
     }
 }

@@ -514,6 +514,10 @@ impl<S: Spawn> Spawn for Handed<S> {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.spawn, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.spawn.spawn_blocking(work)
+    }
 }
 
 /// A connection the client's link opens after a `close` is not ended by that close's grace.

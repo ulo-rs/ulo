@@ -12,9 +12,9 @@ use tokio::net::UdpSocket;
 use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
-use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Permanent, Runtime, Timer};
+use ulo::{AppHandle, BoundAddr, BoxError, BoxFuture, Permanent, Refused, Runtime, RuntimeShutDown, Timer};
 use ulo_runtime_tokio::Tokio;
-use ulo_net::{Endpoint, EndpointSpec};
+use ulo_net::{Endpoint, EndpointSpec, HostPort, Lookup, ResolveCause, ResolveError, Target};
 use ulo_rpc::link::{Inbound, UNARY_ONLY};
 use ulo_rpc::{
     Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, Link, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
@@ -67,13 +67,25 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 /// polled on any executor or on a plain thread. A link built outside a runtime and given none
 /// refuses in `usable`, so a client is refused where it
 /// takes the link and a server's `listen()` fails, and in `connect`. So does an endpoint that is
-/// not an IP address and port: the link resolves no host name.
+/// neither an IP address and port nor a host name and port, and an inherited one.
+///
+/// A host name, `billing:7000`, is resolved through the system resolver, `ToSocketAddrs`, so
+/// `/etc/hosts`, nsswitch and the search list apply, on the held runtime's blocking pool
+/// (`Runtime::spawn_blocking`). A server resolves it once, in `prepare`, which fails on a name
+/// resolving to no address, and binds the first of its addresses that binds. A client resolves it at every connect,
+/// each `connect` binding a new socket, and connects its socket to the first address the OS
+/// accepts, in the resolver's order, so a later connect follows the name to new addresses; a name
+/// resolving to no address fails that connect, the call failing `Unavailable` with the name and
+/// the resolver's error.
 pub struct Udp {
     pub(crate) endpoint: EndpointSpec,
+    /// How a host name becomes addresses: the system resolver, or a test's.
+    pub(crate) lookup: Lookup,
     pub(crate) codec: Codec,
     pub(crate) runtime: Option<Tokio>,
-    /// Set by `prepare`.
-    pub(crate) prepared: Option<SocketAddr>,
+    /// Set by `prepare`: the address, or each address a host name resolved to, in the resolver's
+    /// order.
+    pub(crate) prepared: Option<Vec<SocketAddr>>,
     /// The app's clock, taken in `prepare`, which bounds the server writer's last sends.
     timer: Option<Arc<dyn Timer>>,
     pub(crate) state: Arc<State>,
@@ -130,12 +142,14 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Udp {
-    /// The link on `endpoint`: text parsed as an IP address and port in `usable`, where a client
-    /// takes the link, and in a server's `prepare`, or a `SocketAddr`. An inherited endpoint is
-    /// refused there too, since the activation adopts listening TCP sockets alone.
+    /// The link on `endpoint`: text read in `usable`, where a client takes the link, and in a
+    /// server's `prepare`, as an IP address and port, `10.0.0.5:7000` or `[::1]:7000`, or a host
+    /// name and port, `billing:7000`; or a `SocketAddr`. An inherited endpoint is refused there
+    /// too, since the activation adopts listening TCP sockets alone.
     pub fn new(endpoint: impl Into<EndpointSpec>) -> Self {
         Udp {
             endpoint: endpoint.into(),
+            lookup: Lookup::system(),
             codec: Codec::Json,
             runtime: Tokio::try_current(),
             prepared: None,
@@ -173,21 +187,37 @@ impl Udp {
     }
 
     /// The endpoint as written on both sides: `resolve` would turn an address `ulo dev --listen`
-    /// holds as a TCP socket into that socket, which a datagram socket cannot be. Text is parsed as
-    /// an IP address and port, and a host name is refused: the link resolves none. Each refusal is
-    /// permanent, so `usable` reports it where the client takes the link.
-    fn address(&self) -> Result<SocketAddr, BoxError> {
-        let endpoint = self
-            .endpoint
-            .resolve_as_written()
-            .map_err(|error| format!("the UDP link takes IP addresses only and resolves no host name: {error}"))?;
-        match endpoint {
-            Endpoint::Addr(addr) => Ok(addr),
-            endpoint => Err(format!(
-                "{endpoint}: the UDP link takes an address; the activation adopts listening TCP sockets alone"
-            )
-            .into()),
+    /// holds as a TCP socket into that socket, which a datagram socket cannot be. Text is an IP
+    /// address and port or a host name and port. Each refusal is permanent, so `usable` reports it
+    /// where the client takes the link.
+    fn target(&self) -> Result<Target, BoxError> {
+        let target = self.endpoint.target()?;
+        match target {
+            Target::Endpoint(Endpoint::Addr(_)) | Target::Host(_) => Ok(target),
+            target => Err(format!("{target}: the UDP link takes an address; the activation adopts listening TCP sockets alone").into()),
         }
+    }
+
+    /// The endpoint's address, or the addresses its host name resolves to on the link's runtime,
+    /// in the resolver's order; looked up again at every call.
+    async fn addresses(&self, runtime: &Tokio) -> Result<Vec<SocketAddr>, BoxError> {
+        match self.target()? {
+            Target::Endpoint(Endpoint::Addr(addr)) => Ok(vec![addr]),
+            Target::Host(host) => self.resolve(&host, runtime).await,
+            Target::Endpoint(endpoint) => Err(format!("{endpoint}: the UDP link takes an address").into()),
+        }
+    }
+
+    async fn resolve(&self, host: &HostPort, runtime: &Tokio) -> Result<Vec<SocketAddr>, BoxError> {
+        self.lookup.resolve(host, runtime).await.map_err(resolve_failure)
+    }
+}
+
+/// A runtime that has shut down is reported as one, as every other refusal of the runtime is.
+fn resolve_failure(error: ResolveError) -> BoxError {
+    match error.cause() {
+        ResolveCause::Refused => RuntimeShutDown::new(Refused).into(),
+        _ => error.into(),
     }
 }
 
@@ -217,7 +247,7 @@ impl Link for Udp {
 
     fn usable(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
-        self.address().map(drop)
+        self.target().map(drop)
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
@@ -227,7 +257,8 @@ impl Link for Udp {
         let runtime = self.runtime()?;
         runtime.run(async {}).await.map_err(Permanent::new)?;
         runtime.require_io().map_err(Permanent::new)?;
-        self.prepared = Some(self.address()?);
+        // A host name is resolved here alone, so the server binds one address for its life.
+        self.prepared = Some(self.addresses(&runtime).await?);
         self.timer = app.timer().cloned();
         Ok(())
     }
@@ -235,7 +266,7 @@ impl Link for Udp {
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
         // The server routes by the `p` each frame carries; the socket takes every pattern.
         let _ = subscriptions;
-        let Some(addr) = self.prepared else {
+        let Some(addrs) = self.prepared.clone() else {
             return Err("the UDP link listens once `prepare` has resolved its endpoint".into());
         };
         if lock(&self.receiving).is_some() {
@@ -245,7 +276,8 @@ impl Link for Udp {
             return Err(NoTimer { link: "UDP" }.into());
         };
         let runtime = self.runtime()?;
-        let socket = Arc::new(runtime.run(UdpSocket::bind(addr)).await.map_err(Permanent::new)??);
+        // `bind` over a slice binds the first address that binds, as `std::net::UdpSocket::bind` does.
+        let socket = Arc::new(runtime.run(async move { UdpSocket::bind(addrs.as_slice()).await }).await.map_err(Permanent::new)??);
         *lock(&self.state.bound) = vec![BoundAddr::new("rpc", socket.local_addr()?)];
         *lock(&self.state.socket) = Some(Arc::clone(&socket));
         let (writes, queued) = ordered::channel(WRITE_QUEUE);
@@ -266,14 +298,25 @@ impl Link for Udp {
     }
 
     async fn connect(&self, _runtime: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
-        let addr = self.address()?;
+        self.target()?;
         let runtime = self.runtime()?;
-        let local: SocketAddr = if addr.is_ipv4() { (Ipv4Addr::UNSPECIFIED, 0).into() } else { (Ipv6Addr::UNSPECIFIED, 0).into() };
+        let addrs = self.addresses(&runtime).await?;
         let socket = runtime
             .run(async move {
-                let socket = UdpSocket::bind(local).await?;
-                socket.connect(addr).await?;
-                Ok::<_, io::Error>(socket)
+                let mut last = None;
+                for addr in addrs {
+                    let local: SocketAddr = if addr.is_ipv4() { (Ipv4Addr::UNSPECIFIED, 0).into() } else { (Ipv6Addr::UNSPECIFIED, 0).into() };
+                    let connected = async {
+                        let socket = UdpSocket::bind(local).await?;
+                        socket.connect(addr).await?;
+                        Ok::<_, io::Error>(socket)
+                    };
+                    match connected.await {
+                        Ok(socket) => return Ok(socket),
+                        Err(error) => last = Some(error),
+                    }
+                }
+                Err(last.unwrap_or_else(|| io::Error::other("the UDP link had no address to send to")))
             })
             .await??;
         // The reply lane holds the socket; the writer reaches it through a `Weak`, so the socket is
@@ -1311,5 +1354,132 @@ mod tests {
         .now_or_never();
         assert!(drained.is_some(), "the drain waited with every send complete");
         assert_eq!(sent, 3);
+    }
+}
+
+#[cfg(test)]
+mod host_names {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    use super::*;
+
+    /// How long a test waits for anything before it fails.
+    const PATIENCE: Duration = Duration::from_secs(5);
+
+    fn on(endpoint: &str, lookup: Lookup) -> Udp {
+        let mut udp = Udp::new(endpoint);
+        udp.lookup = lookup;
+        udp
+    }
+
+    async fn receiving() -> UdpSocket {
+        UdpSocket::bind("127.0.0.1:0").await.expect("a loopback port")
+    }
+
+    /// Sends one `cancel` through `outbound` and waits for `socket` to receive a datagram.
+    async fn reaches(outbound: &Outbound, socket: &UdpSocket, which: &str) {
+        (outbound.send)(Pattern::new("host_names"), Frame::Cancel { id: 1 }, None).await.expect("the frame is sent");
+        let mut buf = [0u8; 256];
+        tokio::time::timeout(PATIENCE, socket.recv_from(&mut buf))
+            .await
+            .unwrap_or_else(|_| panic!("{which} received no datagram"))
+            .unwrap_or_else(|error| panic!("{which} failed to receive: {error}"));
+    }
+
+    /// F416: each connect looks the name up again, so a connect made after the name's address
+    /// changed sends to the new one. The lookup answers the first socket, then the second.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn each_connect_resolves_the_name_again() {
+        let (first, second) = (receiving().await, receiving().await);
+        let answers = [first.local_addr().expect("an address"), second.local_addr().expect("an address")];
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&asked);
+        let udp = on(
+            "billing:7000",
+            Lookup::from_fn(move |host| {
+                assert_eq!(host.to_string(), "billing:7000", "the name looked up");
+                Ok(vec![answers[counting.fetch_add(1, Ordering::SeqCst).min(1)]])
+            }),
+        );
+        let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+        let one = udp.connect(&runtime).await.expect("the first connect");
+        reaches(&one, &first, "the address the name had at the first connect").await;
+        let two = udp.connect(&runtime).await.expect("the second connect");
+        reaches(&two, &second, "the address the name had at the second connect").await;
+        assert_eq!(asked.load(Ordering::SeqCst), 2, "the lookups two connects made");
+    }
+
+    /// F416: the lookup runs on the link's blocking pool, off the thread polling the connect. On a
+    /// current-thread runtime the lookup waits for a release that a task on that thread sends, which
+    /// it can send only while the connect leaves the thread free.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_connect_resolves_off_the_thread_polling_it() {
+        let socket = receiving().await;
+        let addr = socket.local_addr().expect("an address");
+        let (release, released) = mpsc::channel::<()>();
+        let released = Mutex::new(released);
+        let udp = on(
+            "billing:7000",
+            Lookup::from_fn(move |_| match lock(&released).recv_timeout(PATIENCE) {
+                Ok(()) => Ok(vec![addr]),
+                Err(_) => Err(io::Error::other("the lookup's release never came: the lookup held the thread polling the connect")),
+            }),
+        );
+        let releasing = tokio::spawn(async move {
+            let _ = release.send(());
+        });
+        let connected = udp.connect(&(Arc::new(Tokio::current()) as Arc<dyn Runtime>)).await;
+        let outbound = connected.unwrap_or_else(|error| panic!("the connect failed: {error}"));
+        reaches(&outbound, &socket, "the address the lookup answered").await;
+        releasing.await.expect("the releasing task ends");
+    }
+
+    struct Empty;
+
+    impl ulo::Module for Empty {
+        fn identity(&self) -> ulo::ModuleIdentity {
+            ulo::ModuleIdentity::of_type::<Self>()
+        }
+
+        fn register(&self, _m: &mut ulo::ModuleDef<'_>) {}
+    }
+
+    /// F416: a server binds the first of its host name's addresses that binds, as
+    /// `std::net::UdpSocket::bind` does: `192.0.2.1`, a documentation address no interface holds,
+    /// is refused by the OS, and the loopback address after it binds.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_binds_the_first_of_its_host_name_s_addresses_that_binds() {
+        let mut udp = on("billing:0", Lookup::from_fn(|host| Ok(vec![SocketAddr::from(([192, 0, 2, 1], host.port())), SocketAddr::from(([127, 0, 0, 1], host.port()))])));
+        let app = ulo::App::builder(Empty).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        udp.prepare(&app.handle()).await.expect("the link prepares");
+        let _inbound = udp.listen(&[]).await.expect("the link listens past an address no interface holds");
+        let bound: Vec<_> = udp.bound().iter().map(|bound| bound.addr.ip()).collect();
+        assert_eq!(bound, vec![std::net::IpAddr::from([127, 0, 0, 1])], "the address the server bound");
+        udp.close().await.expect("the link closes");
+        let _ = app.close(ulo::Signal::new("host_names")).await;
+    }
+
+    /// F416: a server on a host name resolves it once, in `prepare`, and binds the first address
+    /// it answers that binds; `listen` looks nothing up.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_server_resolves_its_host_name_once_and_binds_the_first_address() {
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&asked);
+        let mut udp = on(
+            "billing:0",
+            Lookup::from_fn(move |host| {
+                counting.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![SocketAddr::from(([127, 0, 0, 1], host.port())), SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], host.port()))])
+            }),
+        );
+        let app = ulo::App::builder(Empty).runtime(Tokio::current()).wire().expect("the app wires").connect().await.expect("the app connects");
+        udp.prepare(&app.handle()).await.expect("the link prepares");
+        let _inbound = udp.listen(&[]).await.expect("the link listens");
+        let bound: Vec<_> = udp.bound().iter().map(|bound| bound.addr.ip()).collect();
+        assert_eq!(bound, vec![std::net::IpAddr::from([127, 0, 0, 1])], "the address the server bound");
+        assert_eq!(asked.load(Ordering::SeqCst), 1, "the lookups a server on a host name made through `prepare` and `listen`");
+        udp.close().await.expect("the link closes");
+        let _ = app.close(ulo::Signal::new("host_names")).await;
     }
 }

@@ -9875,6 +9875,7 @@ version = "0.1.0-alpha.3"
 dependencies = [
  "async-executor",
  "async-io",
+ "blocking",
  "event-listener 5.4.1",
  "ulo",
  "ulo-runtime-conformance",

@@ -13,6 +13,8 @@ categories = ["asynchronous"]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.3" }
 async-executor.workspace = true
 async-io.workspace = true
+# `spawn_blocking`'s pool, smol's `unblock`; already in the tree through async-net and async-process.
+blocking.workspace = true
 # `block_on`'s stop signal to its workers; already in the tree through async-lock.
 event-listener.workspace = true
 

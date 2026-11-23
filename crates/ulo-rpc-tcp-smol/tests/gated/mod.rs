@@ -108,7 +108,9 @@ pub fn serve_limited(probe: &Probe, max_frame: Option<u64>) -> Server {
     if let Some(bytes) = max_frame {
         core.set_max_frame(bytes);
     }
-    core.prepare(Ok(()), Some(Arc::new(clock.clone()))).expect("the link prepares");
+    futures_util::FutureExt::now_or_never(core.prepare(Ok(()), Some(Arc::new(clock.clone())), None))
+        .expect("`prepare` on an address waits on nothing")
+        .expect("the link prepares");
     let (accepting, meter) = (Arc::clone(&gate), probe.meter());
     let runtime: Arc<dyn Runtime> = Arc::new(probe.runtime());
     let inbound = core

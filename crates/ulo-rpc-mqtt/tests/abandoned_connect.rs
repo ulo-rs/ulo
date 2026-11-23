@@ -139,6 +139,10 @@ impl Spawn for Clocked {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
         self.tokio.try_spawn(fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.tokio.spawn_blocking(work)
+    }
 }
 
 /// Waits in real time until a wait of exactly `WITHIN` is live on `clock`, then moves the clock

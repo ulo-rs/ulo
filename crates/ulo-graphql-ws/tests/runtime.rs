@@ -67,6 +67,10 @@ impl Spawn for Counting {
         self.spawned.fetch_add(1, Ordering::SeqCst);
         Spawn::try_spawn(&self.tokio, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.tokio.spawn_blocking(work)
+    }
 }
 
 /// Answers every subscription with two events.

@@ -129,6 +129,21 @@ impl Spawn for Manual {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, Refused> {
         Ok(self.spawn(fut))
     }
+
+    /// Runs the work at once, on the calling thread: the scripted runtime has no thread of its
+    /// own to hand it to.
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        TaskHandle::launch_blocking(work, |work| {
+            work();
+            ManualTask(Arc::new(Job {
+                fut: Mutex::new(None),
+                queued: AtomicBool::new(false),
+                done: AtomicBool::new(true),
+                ended: Mutex::new(None),
+                ready: Arc::downgrade(&self.ready),
+            }))
+        })
+    }
 }
 
 impl Timer for Manual {
@@ -340,6 +355,11 @@ impl Accept for Handed {
     }
 }
 
+/// `Core::prepare` on an address, which waits on nothing: only a host name is looked up.
+fn prepared(prepare: impl Future<Output = Result<(), BoxError>>) -> Result<(), BoxError> {
+    prepare.now_or_never().expect("`prepare` on an address waits on nothing")
+}
+
 fn framed(frame: &[u8]) -> Vec<u8> {
     let mut bytes = (frame.len() as u32).to_be_bytes().to_vec();
     bytes.extend_from_slice(frame);
@@ -383,7 +403,7 @@ impl Running {
     fn start(manual: &Manual, answer: Answer, settings: impl FnOnce(&mut Core)) -> Running {
         let mut core = Core::new(EndpointSpec::from(SocketAddr::from(([127, 0, 0, 1], 0))));
         settings(&mut core);
-        core.prepare(Ok(()), Some(Arc::new(manual.clone()) as Arc<dyn Timer>)).expect("the link prepares");
+        prepared(core.prepare(Ok(()), Some(Arc::new(manual.clone()) as Arc<dyn Timer>), None)).expect("the link prepares");
         let (connect, incoming) = channel::unbounded();
         let accepted = Arc::new(AtomicUsize::new(0));
         let handed = Handed { incoming, accepted: Arc::clone(&accepted) };
@@ -582,7 +602,7 @@ fn a_max_frame_below_its_own_answer_is_refused() {
             let mut core = Core::new(EndpointSpec::from(SocketAddr::from(([127, 0, 0, 1], 0))));
             core.set_codec(codec);
             core.set_max_frame(limit);
-            core.prepare(Ok(()), None).map_err(|error| error.to_string())
+            prepared(core.prepare(Ok(()), None, None)).map_err(|error| error.to_string())
         };
         let refused = prepared(floor - 1).expect_err("a limit below its own answer prepares");
         assert!(refused.contains(&format!("is below {floor} bytes")), "{codec:?}: {refused}");
@@ -592,13 +612,60 @@ fn a_max_frame_below_its_own_answer_is_refused() {
     }
 }
 
+/// F416: a server on a host name resolves it once, in `prepare`, through the link's lookup, and
+/// binds the first address it answers that binds; `listen` looks nothing up.
+#[test]
+fn a_server_resolves_its_host_name_once_and_binds_the_first_address() {
+    let manual = Manual::new();
+    let asked = Arc::new(AtomicUsize::new(0));
+    let counting = Arc::clone(&asked);
+    let mut core = Core::new(EndpointSpec::from("billing:0"));
+    core.set_lookup(Lookup::from_fn(move |host| {
+        counting.fetch_add(1, AtomicOrdering::SeqCst);
+        Ok(vec![SocketAddr::from(([127, 0, 0, 1], host.port())), SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], host.port()))])
+    }));
+    prepared(core.prepare(Ok(()), Some(Arc::new(manual.clone()) as Arc<dyn Timer>), Some(&manual))).expect("the link prepares");
+    let (_connect, incoming) = channel::unbounded();
+    let handed = Handed { incoming, accepted: Arc::new(AtomicUsize::new(0)) };
+    let _inbound = core.listen(Arc::new(manual.clone()) as Arc<dyn Runtime>, move |_, _| Ok(handed)).expect("the link listens");
+    let bound: Vec<_> = core.bound().iter().map(|bound| bound.addr.ip()).collect();
+    assert_eq!(bound, vec![std::net::IpAddr::from([127, 0, 0, 1])], "the address the server bound");
+    assert_eq!(asked.load(AtomicOrdering::SeqCst), 1, "the lookups a server on a host name made through `prepare` and `listen`");
+}
+
+/// F416: a server binds the first of its host name's addresses that binds, as
+/// `std::net::TcpListener::bind` does: `192.0.2.1`, a documentation address no interface holds,
+/// is refused by the OS, and the loopback address after it binds.
+#[test]
+fn a_server_binds_the_first_of_its_host_name_s_addresses_that_binds() {
+    let manual = Manual::new();
+    let mut core = Core::new(EndpointSpec::from("billing:0"));
+    core.set_lookup(Lookup::from_fn(|host| Ok(vec![SocketAddr::from(([192, 0, 2, 1], host.port())), SocketAddr::from(([127, 0, 0, 1], host.port()))])));
+    prepared(core.prepare(Ok(()), Some(Arc::new(manual.clone()) as Arc<dyn Timer>), Some(&manual))).expect("the link prepares");
+    let (_connect, incoming) = channel::unbounded();
+    let handed = Handed { incoming, accepted: Arc::new(AtomicUsize::new(0)) };
+    let _inbound = core.listen(Arc::new(manual.clone()) as Arc<dyn Runtime>, move |_, _| Ok(handed)).expect("the link listens past an address no interface holds");
+    let bound: Vec<_> = core.bound().iter().map(|bound| bound.addr.ip()).collect();
+    assert_eq!(bound, vec![std::net::IpAddr::from([127, 0, 0, 1])], "the address the server bound");
+}
+
+/// F416: a server whose host name resolves to no address is refused in `prepare`, naming it.
+#[test]
+fn a_server_whose_host_name_resolves_to_nothing_is_refused_in_prepare() {
+    let manual = Manual::new();
+    let mut core = Core::new(EndpointSpec::from("billing:0"));
+    core.set_lookup(Lookup::from_fn(|_| Err(io::Error::new(io::ErrorKind::NotFound, "no such host"))));
+    let refused = prepared(core.prepare(Ok(()), None, Some(&manual))).expect_err("a host name resolving to nothing prepares").to_string();
+    assert_eq!(refused, "`billing:0` resolved to no address: no such host");
+}
+
 /// A zero `idle_timeout` and a zero `max_connections` are refused in `prepare`, each named.
 #[test]
 fn zero_bounds_are_refused() {
     let mut core = Core::new(EndpointSpec::from(SocketAddr::from(([127, 0, 0, 1], 0))));
     core.set_idle_timeout(Bound::After(Duration::ZERO));
     core.set_max_connections(Count::Max(0));
-    let refused = core.prepare(Ok(()), None).expect_err("zero bounds prepare").to_string();
+    let refused = prepared(core.prepare(Ok(()), None, None)).expect_err("zero bounds prepare").to_string();
     assert!(refused.contains("`.idle_timeout(Bound::After(Duration::ZERO))`"), "{refused}");
     assert!(refused.contains("`.max_connections(Count::Max(0))`"), "{refused}");
 }
@@ -612,7 +679,7 @@ mod checker {
     fn start_with(manual: &Manual, settings: impl FnOnce(&mut Core), answer: impl Fn(&Manual, Delivery) + Send + 'static) -> Running {
         let mut core = Core::new(EndpointSpec::from(SocketAddr::from(([127, 0, 0, 1], 0))));
         settings(&mut core);
-        core.prepare(Ok(()), Some(Arc::new(manual.clone()) as Arc<dyn Timer>)).expect("the link prepares");
+        prepared(core.prepare(Ok(()), Some(Arc::new(manual.clone()) as Arc<dyn Timer>), None)).expect("the link prepares");
         let (connect, incoming) = channel::unbounded();
         let accepted = Arc::new(AtomicUsize::new(0));
         let handed = Handed { incoming, accepted: Arc::clone(&accepted) };

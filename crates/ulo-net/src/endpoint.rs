@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use crate::activation::{Activation, ActivationError};
+use crate::host::HostPort;
 
 /// Where a server listens.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -28,7 +29,7 @@ impl Endpoint {
     pub fn parse(text: &str) -> Result<Endpoint, EndpointError> {
         text.parse::<SocketAddr>()
             .map(Endpoint::Addr)
-            .map_err(|_| EndpointError { text: text.to_owned() })
+            .map_err(|_| EndpointError { text: text.to_owned(), expected: Expected::Address })
     }
 
     /// The inherited socket `LISTEN_FDNAMES` names `name`.
@@ -66,15 +67,53 @@ impl fmt::Display for Endpoint {
     }
 }
 
-/// Text that is not a socket address.
+/// What an endpoint names before any lookup: an [`Endpoint`], or a host name and port, which the
+/// TCP and UDP links resolve through the system resolver ([`HostPort::resolve`]).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Target {
+    Endpoint(Endpoint),
+    Host(HostPort),
+}
+
+impl fmt::Display for Target {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Target::Endpoint(endpoint) => fmt::Display::fmt(endpoint, f),
+            Target::Host(host) => fmt::Display::fmt(host, f),
+        }
+    }
+}
+
+/// Text that is not a socket address, or, where a host name is accepted, not a host name and port
+/// either.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndpointError {
     text: String,
+    expected: Expected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expected {
+    Address,
+    AddressOrHost,
+}
+
+impl EndpointError {
+    pub(crate) fn address_or_host(text: &str) -> EndpointError {
+        EndpointError { text: text.to_owned(), expected: Expected::AddressOrHost }
+    }
 }
 
 impl fmt::Display for EndpointError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "`{}` is not a socket address such as `0.0.0.0:8080`", self.text)
+        match self.expected {
+            Expected::Address => write!(f, "`{}` is not a socket address such as `0.0.0.0:8080`", self.text),
+            Expected::AddressOrHost => write!(
+                f,
+                "`{}` is neither a socket address such as `0.0.0.0:8080` nor a host name and port such as `billing:7000`",
+                self.text
+            ),
+        }
     }
 }
 
@@ -119,6 +158,22 @@ impl EndpointSpec {
         match &self.0 {
             Spec::Parsed(endpoint) => Ok(endpoint.clone()),
             Spec::Text(text) => Endpoint::parse(text),
+        }
+    }
+
+    /// What the endpoint names as written, a host name accepted: text that is a socket address is
+    /// an [`Endpoint::Addr`], as [`resolve_as_written`](Self::resolve_as_written) reads it, and
+    /// other text a [`HostPort`]. Nothing is looked up, and no `ULO_DEV` lookup is made. For a
+    /// link that resolves host names, the TCP and UDP links; a server listening on a host name
+    /// resolves it once, and [`resolve`](Self::resolve) on the address it picks makes the
+    /// `ULO_DEV` lookup.
+    pub fn target(&self) -> Result<Target, EndpointError> {
+        match &self.0 {
+            Spec::Parsed(endpoint) => Ok(Target::Endpoint(endpoint.clone())),
+            Spec::Text(text) => match Endpoint::parse(text) {
+                Ok(endpoint) => Ok(Target::Endpoint(endpoint)),
+                Err(_) => HostPort::parse(text).map(Target::Host),
+            },
         }
     }
 }

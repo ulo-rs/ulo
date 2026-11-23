@@ -58,6 +58,10 @@ impl Spawn for Handed {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         Spawn::try_spawn(&self.spawn, fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.spawn.spawn_blocking(work)
+    }
 }
 
 /// [`Handed`] whose wait for a Pong is refused only once the Pong is due: the clock moves past
@@ -94,6 +98,10 @@ impl Spawn for Late {
 
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         self.0.try_spawn(fut)
+    }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.0.spawn_blocking(work)
     }
 }
 
@@ -318,6 +326,10 @@ impl Spawn for Blocked {
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         self.handed.try_spawn(fut)
     }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.handed.spawn_blocking(work)
+    }
 }
 
 /// A connection on `runtime` whose first Ping went out after `echoes` echoed messages, with the
@@ -448,6 +460,10 @@ impl Spawn for Closer {
 
     fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<TaskHandle, ulo::Refused> {
         self.0.try_spawn(fut)
+    }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> TaskHandle {
+        self.0.spawn_blocking(work)
     }
 }
 

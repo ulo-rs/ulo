@@ -55,17 +55,25 @@ use ulo_runtime_tokio::{NoIoDriver, Tokio};
 /// refuses in `usable`, so a client is refused where it takes the link and a server's `listen()`
 /// fails, and in `connect`. A runtime built without its IO driver (`enable_io`) is refused the
 /// same way ([`Tokio::require_io`]), a server's as a permanent `Configure`. A client's link also refuses in `usable` what
-/// its `connect` would refuse on every call: an endpoint that is not an IP address and port, the
-/// link resolving no host name, and `tls` set.
+/// its `connect` would refuse on every call: an endpoint that is neither an IP address and port nor
+/// a host name and port, an inherited socket, and `tls` set.
+///
+/// A host name, `billing:7000`, is resolved through the system resolver, `ToSocketAddrs`, so
+/// `/etc/hosts`, nsswitch and the search list apply, on the held runtime's blocking pool
+/// (`Runtime::spawn_blocking`). A server resolves it once, in `prepare`, binds the first of its
+/// addresses that binds, and reports a name resolving to no address as a `Configure` refusal beside its other problems.
+/// A client resolves it at every connect and tries each address in the resolver's order until one
+/// connects, so a reconnect follows the name to new addresses; a name resolving to no address
+/// fails that connect, the call failing `Unavailable` with the name and the resolver's error.
 pub struct Tcp {
     core: Core,
     runtime: Option<Tokio>,
 }
 
 impl Tcp {
-    /// The link on `endpoint`: text parsed in `prepare`, an `Endpoint`, or a `SocketAddr`. A
-    /// server may listen on an inherited socket; a client connects to an IP address and port, such
-    /// as `10.0.0.5:7000`, and is refused a host name where it takes the link.
+    /// The link on `endpoint`: text parsed in `prepare`, an `Endpoint`, or a `SocketAddr`. Text is
+    /// an IP address and port, `10.0.0.5:7000` or `[::1]:7000`, or a host name and port,
+    /// `billing:7000`. A server may also listen on an inherited socket.
     pub fn new(endpoint: impl Into<EndpointSpec>) -> Self {
         Tcp { core: Core::new(endpoint.into()), runtime: Tokio::try_current() }
     }
@@ -158,7 +166,7 @@ impl Link for Tcp {
 
     fn usable(&self) -> Result<(), BoxError> {
         self.runtime()?.require_io()?;
-        self.core.client_addr().map(drop)
+        self.core.check_client()
     }
 
     async fn prepare(&mut self, app: &AppHandle) -> Result<(), BoxError> {
@@ -167,11 +175,12 @@ impl Link for Tcp {
         let usable = self.runtime().map(drop);
         // `listen` binds on the link's runtime: one that has shut down is refused here, before
         // any server binds, and alone, since `Core::prepare` reports its problems as text.
-        if let Ok(runtime) = self.runtime() {
+        let runtime = self.runtime().ok();
+        if let Some(runtime) = &runtime {
             runtime.run(async {}).await.map_err(Permanent::new)?;
             runtime.require_io().map_err(Permanent::new)?;
         }
-        self.core.prepare(usable, app.timer().cloned())
+        self.core.prepare(usable, app.timer().cloned(), runtime.as_ref().map(|runtime| runtime as &dyn Runtime)).await
     }
 
     async fn listen(&self, subscriptions: &[Subscription]) -> Result<Inbound, BoxError> {
@@ -186,9 +195,13 @@ impl Link for Tcp {
     }
 
     async fn connect(&self, handed: &Arc<dyn Runtime>) -> Result<Outbound, BoxError> {
-        let addr = self.core.client_addr()?;
+        self.core.check_client()?;
         let runtime = self.runtime()?;
-        let stream = runtime.run(TcpStream::connect(addr)).await??;
+        let stream = self.core.dial(&runtime, |addr| {
+            let connecting = runtime.run(TcpStream::connect(addr));
+            async move { Ok(connecting.await??) }
+        })
+        .await?;
         let _ = stream.set_nodelay(true);
         let (reader, writer) = stream.into_split();
         let runtime: Arc<dyn Runtime> = Arc::new(runtime);
@@ -248,4 +261,117 @@ impl Accept for TokioListener {
 fn halves(stream: TlsStream<TcpStream>) -> (Reader, Writer) {
     let (reader, writer): (ReadHalf<_>, WriteHalf<_>) = tokio::io::split(stream);
     (Box::pin(reader.compat()), Box::pin(writer.compat_write()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::TcpListener as StdListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, mpsc};
+    use std::time::Duration;
+
+    use ulo_net::Lookup;
+
+    use super::*;
+
+    /// How long a test waits for anything before it fails.
+    const PATIENCE: Duration = Duration::from_secs(5);
+
+    /// A listener on a loopback port, accepting on the test's runtime.
+    async fn listening() -> TcpListener {
+        TcpListener::bind("127.0.0.1:0").await.expect("a loopback port")
+    }
+
+    async fn accepted(listener: &TcpListener, which: &str) {
+        tokio::time::timeout(PATIENCE, listener.accept())
+            .await
+            .unwrap_or_else(|_| panic!("{which} accepted no connection"))
+            .unwrap_or_else(|error| panic!("{which} failed to accept: {error}"));
+    }
+
+    fn on(endpoint: &str, lookup: Lookup) -> Tcp {
+        let mut tcp = Tcp::new(endpoint);
+        tcp.core.set_lookup(lookup);
+        tcp
+    }
+
+    /// F416: each connect looks the name up again, so a connect made after the name's address
+    /// changed reaches the new one. The lookup answers the first listener, then the second.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn each_connect_resolves_the_name_again() {
+        let (first, second) = (listening().await, listening().await);
+        let answers = [first.local_addr().expect("an address"), second.local_addr().expect("an address")];
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&asked);
+        let tcp = on(
+            "billing:7000",
+            Lookup::from_fn(move |host| {
+                assert_eq!(host.to_string(), "billing:7000", "the name looked up");
+                Ok(vec![answers[counting.fetch_add(1, Ordering::SeqCst).min(1)]])
+            }),
+        );
+        let runtime: Arc<dyn Runtime> = Arc::new(Tokio::current());
+        let _one = tcp.connect(&runtime).await.expect("the first connect");
+        accepted(&first, "the address the name had at the first connect").await;
+        let _two = tcp.connect(&runtime).await.expect("the second connect");
+        accepted(&second, "the address the name had at the second connect").await;
+        assert_eq!(asked.load(Ordering::SeqCst), 2, "the lookups two connects made");
+    }
+
+    /// F416: a connect tries each address the name resolves to, in order, until one connects.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_connect_tries_each_address_until_one_connects() {
+        let closed = StdListener::bind("127.0.0.1:0").and_then(|listener| listener.local_addr()).expect("a port, closed once its listener drops");
+        let live = listening().await;
+        let answers = vec![closed, live.local_addr().expect("an address")];
+        let tcp = on("billing:7000", Lookup::from_fn(move |_| Ok(answers.clone())));
+        let _connected = tcp.connect(&(Arc::new(Tokio::current()) as Arc<dyn Runtime>)).await.expect("a connect past a refused address");
+        accepted(&live, "the second address").await;
+    }
+
+    /// F416: the lookup runs as the runtime's blocking work, off the thread polling the connect. On a
+    /// current-thread runtime the lookup waits for a release that a task on that thread sends, which
+    /// it can send only while the connect leaves the thread free.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_connect_resolves_off_the_thread_polling_it() {
+        let live = listening().await;
+        let addr = live.local_addr().expect("an address");
+        let (release, released) = mpsc::channel::<()>();
+        let released = Mutex::new(released);
+        let tcp = on(
+            "billing:7000",
+            Lookup::from_fn(move |_| match released.lock().expect("the release's lock").recv_timeout(PATIENCE) {
+                Ok(()) => Ok(vec![addr]),
+                Err(_) => Err(io::Error::other("the lookup's release never came: the lookup held the thread polling the connect")),
+            }),
+        );
+        let releasing = tokio::spawn(async move {
+            let _ = release.send(());
+        });
+        let connected = tcp.connect(&(Arc::new(Tokio::current()) as Arc<dyn Runtime>)).await;
+        assert!(connected.is_ok(), "the connect failed: {:?}", connected.err());
+        accepted(&live, "the address the lookup answered").await;
+        releasing.await.expect("the releasing task ends");
+    }
+
+    /// F416: a link whose runtime has shut down runs no lookup, and its connect fails as
+    /// `RuntimeShutDown`, as every other refusal of that runtime does, not as an unresolved name.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_lookup_its_runtime_refuses_is_runtime_shut_down() {
+        let stopped = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().expect("a runtime to shut down");
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&asked);
+        let tcp = on(
+            "billing:7000",
+            Lookup::from_fn(move |_| {
+                counting.fetch_add(1, Ordering::SeqCst);
+                Err(io::Error::other("the lookup ran on a runtime that has shut down"))
+            }),
+        )
+        .with_handle(stopped.handle().clone());
+        std::thread::spawn(move || drop(stopped)).join().expect("the runtime shuts down");
+        let refused = tcp.connect(&(Arc::new(Tokio::current()) as Arc<dyn Runtime>)).await.err().expect("a connect on a runtime that has shut down");
+        assert!(refused.is::<ulo::RuntimeShutDown>(), "the connect failed as `{refused}`, not as `RuntimeShutDown`");
+        assert_eq!(asked.load(Ordering::SeqCst), 0, "the lookups a runtime that has shut down ran");
+    }
 }

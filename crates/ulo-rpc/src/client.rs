@@ -2105,6 +2105,10 @@ mod tests {
         fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<ulo::TaskHandle, ulo::Refused> {
             ulo::Spawn::try_spawn(&self.tokio, fut)
         }
+
+        fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> ulo::TaskHandle {
+            self.tokio.spawn_blocking(work)
+        }
     }
 
     /// A [`SilentLink`] whose every connect takes `takes` of a [`Stepped`] clock.
@@ -2289,6 +2293,10 @@ mod tests {
 
         fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<ulo::TaskHandle, ulo::Refused> {
             ulo::Spawn::try_spawn(&self.tokio, fut)
+        }
+
+        fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> ulo::TaskHandle {
+            self.tokio.spawn_blocking(work)
         }
     }
 
