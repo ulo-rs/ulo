@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use ulo_grpc::Server;
+use ulo_grpc::{Encoding, Server};
 use ulo_grpc::config::Tls;
 use ulo_runtime_tokio::{Tokio, shutdown_signal};
 
@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let port = std::env::var("PORT").unwrap_or_else(|_| "10000".into());
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
-    let mut server = Server::new(format!("{host}:{port}")).reflection(false);
+    let mut server = Server::new(format!("{host}:{port}")).reflection(false).send_encodings([Encoding::Gzip]);
     let tls = match (std::env::var_os("TLS_CERT"), std::env::var_os("TLS_KEY")) {
         (Some(cert), Some(key)) => Some(Tls::from_pem_files(cert, key)),
         (None, None) => None,

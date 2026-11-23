@@ -14,9 +14,9 @@
 # `oauth2_auth_token`, `google_default_credentials`, `compute_engine_channel_credentials`).
 # `pick_first_unary` tests the client's `pick_first` policy and reads a `server_id` the server does
 # not fill. `orca_per_rpc` and `orca_oob` read ORCA load reports, which the server does not send.
-# The interop descriptions' `cacheable_unary`, `client_compressed_unary`, `server_compressed_unary`,
-# `client_compressed_streaming`, `server_compressed_streaming` and
-# `max_concurrent_streams_connection_scaling` are cases the grpc-go client does not implement.
+# The interop descriptions' `cacheable_unary` and `max_concurrent_streams_connection_scaling` are
+# cases the grpc-go client does not implement. Neither does it implement the four compression
+# cases, which `compression_cases.txt` lists for `ulo-grpc-interop-client`.
 
 empty_unary EmptyUnaryCall
 large_unary LargeUnaryCall
