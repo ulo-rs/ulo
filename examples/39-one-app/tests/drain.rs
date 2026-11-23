@@ -18,7 +18,7 @@ struct Held {
     http: JoinHandle<Reply>,
     ws: ex_support::ws::Socket,
     rpc: JoinHandle<Result<String, ulo_rpc::RpcError>>,
-    grpc: JoinHandle<Result<tonic::Response<Note>, tonic::Status>>,
+    grpc: JoinHandle<Result<ulo_grpc::tonic::Response<Note>, ulo_grpc::tonic::Status>>,
 }
 
 /// One `hold` in flight on each transport, all four inside their handlers.
@@ -106,7 +106,7 @@ async fn an_execution_still_held_when_the_window_ends_is_refused_with_the_shutdo
     let rpc = bounded(held.rpc).await.unwrap().expect_err("refused");
     assert_eq!((rpc.kind(), rpc.message()), (ErrorKind::Unavailable, "the server is shutting down"));
     let grpc = bounded(held.grpc).await.unwrap().expect_err("refused");
-    assert_eq!((grpc.code(), grpc.message()), (tonic::Code::Unavailable, "the server is shutting down"));
+    assert_eq!((grpc.code(), grpc.message()), (ulo_grpc::tonic::Code::Unavailable, "the server is shutting down"));
 }
 
 /// Longer than the whole scripted close. The callee times a call's deadline on the app's clock, so

@@ -12,16 +12,17 @@ publish = false
 
 [dependencies]
 ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.3" }
-# What the code `ulo-build` writes names: tonic's client over a channel, the prost messages and
-# their codec.
+# No `prost`, `prost-types`, `tonic` or `tonic-prost` here: the library is the generated code
+# alone, and it compiling is the check that the code `ulo-build` writes reaches them through
+# `ulo-grpc`'s re-exports.
+
+[dev-dependencies]
+# The tests' own calls: tonic's client and codec, prost's encoding, the well-known types.
 prost.workspace = true
-# The well-known types `probe.proto` imports, other than `Empty`.
 prost-types.workspace = true
 # `gzip`: the compression tests' client compressing its requests and inflating replies.
 tonic = { workspace = true, features = ["channel", "codegen", "gzip"] }
 tonic-prost.workspace = true
-
-[dev-dependencies]
 # The gzip messages the compression tests write and read by hand.
 flate2.workspace = true
 ulo = { path = "../ulo" }

@@ -1,7 +1,7 @@
-//! The `ServiceGenerator` wrapping tonic's: after tonic writes a service's client, it appends one
-//! `ulo_grpc::Method` marker per method under the service's module, and the `ulo_grpc::GrpcClient`
-//! impl for the client. Each package's file ends with `FILE_DESCRIPTOR_SET` when a descriptor set
-//! is written.
+//! The `ServiceGenerator` wrapping tonic's: it binds `tonic` inside the client module tonic writes
+//! (`scope_tonic`), and after the client it appends one `ulo_grpc::Method` marker per method under
+//! the service's module, and the `ulo_grpc::GrpcClient` impl for the client. Each package's file
+//! ends with `FILE_DESCRIPTOR_SET` when a descriptor set is written.
 //!
 //! For the service `users.v1.UserService` with the method `GetUser`, the appended code is:
 //!
@@ -16,7 +16,7 @@
 //!         type Response = super::User;
 //!     }
 //! }
-//! impl ::ulo_grpc::GrpcClient for user_service_client::UserServiceClient<::tonic::transport::Channel> { .. }
+//! impl ::ulo_grpc::GrpcClient for user_service_client::UserServiceClient<::ulo_grpc::tonic::transport::Channel> { .. }
 //! ```
 
 use std::fmt::Write as _;
@@ -36,7 +36,12 @@ pub(crate) struct Markers {
 impl ServiceGenerator for Markers {
     fn generate(&mut self, service: Service, buf: &mut String) {
         let appended = markers(&service, self.build_client);
-        self.tonic.generate(service, buf);
+        let mut client = String::new();
+        self.tonic.generate(service, &mut client);
+        if self.build_client {
+            client = scope_tonic(&client);
+        }
+        buf.push_str(&client);
         buf.push_str(&appended);
     }
 
@@ -55,6 +60,32 @@ impl ServiceGenerator for Markers {
             );
         }
     }
+}
+
+/// tonic's client module with `tonic` bound to `ulo_grpc`'s re-export, so the crate running the
+/// build step needs no `tonic` of its own.
+///
+/// tonic-build writes bare `tonic::` paths, with no setting to change them, inside a module of its
+/// own, which a `use` outside the module does not reach. One `use ::ulo_grpc::tonic;` above the
+/// module's first import binds the name for every path in the module, and an item in the module
+/// shadows a `tonic` the crate depends on directly, whichever version that is.
+///
+/// # Panics
+///
+/// When the client has no `use tonic::codegen::*;` line, which a tonic-build writing its client
+/// differently would cause: the build script stops there, naming the line and the two ways past
+/// it, rather than leaving every `tonic::` path in the client unresolved.
+fn scope_tonic(client: &str) -> String {
+    const ANCHOR: &str = "use tonic::codegen::*;";
+    let Some((head, tail)) = client.split_once(ANCHOR) else {
+        panic!(
+            "ulo-build: the client module tonic-build wrote has no `{ANCHOR}` line, above which ulo-build binds `tonic` to \
+             `ulo_grpc::tonic`; this tonic-build release writes its clients differently from the ones ulo-build supports. \
+             Hold tonic-build at an earlier release with `cargo update -p tonic-build --precise <version>`, or generate no \
+             clients with `ulo_build::configure().build_client(false)`"
+        );
+    };
+    format!("{head}use ::ulo_grpc::tonic;\n    {ANCHOR}{tail}")
 }
 
 /// The marker module of `service`, and the client's `GrpcClient` impl when tonic writes a client.
@@ -81,9 +112,9 @@ fn markers(service: &Service, build_client: bool) -> String {
     }
     let _ = writeln!(out, "}}");
     if build_client {
-        let client = format!("{module}_client::{}Client<::tonic::transport::Channel>", service.name);
+        let client = format!("{module}_client::{}Client<::ulo_grpc::tonic::transport::Channel>", service.name);
         let _ = writeln!(out, "impl ::ulo_grpc::GrpcClient for {client} {{");
-        let _ = writeln!(out, "    fn from_channel(channel: ::tonic::transport::Channel) -> Self {{");
+        let _ = writeln!(out, "    fn from_channel(channel: ::ulo_grpc::tonic::transport::Channel) -> Self {{");
         let _ = writeln!(out, "        Self::new(channel)");
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out, "}}");

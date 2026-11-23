@@ -1,5 +1,5 @@
-//! Support for the code `ulo-grpc-macros` generates. Not part of the public API: names and shapes
-//! here change with the macros.
+//! Support for the code `ulo-grpc-macros` and `ulo-build` generate. Not part of the public API:
+//! names and shapes here change with the generators.
 //!
 //! `#[method(Marker)]` writes, beside the handler, a hidden method taking the same parameters that
 //! calls the handler and turns its output into an [`Answer`] through [`ReplyProbe`]. The
@@ -24,6 +24,9 @@ use ulo::{BoxError, Shape};
 use ulo_transport::{CallError, ErrorKind, IntoReply, IntoReplyError};
 
 pub use ulo_transport as transport;
+
+/// The codec every client `ulo-build` writes names, as `codec_path`.
+pub use tonic_prost::ProstCodec;
 
 use crate::extract::{Message, Request, Streaming};
 use crate::method::Method;

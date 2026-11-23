@@ -18,11 +18,7 @@ ulo-rpc = { path = "../ulo-rpc", version = "=0.1.0-alpha.3" }
 ulo-transport = { path = "../ulo-transport", version = "=0.1.0-alpha.3" }
 ulo-ws = { path = "../ulo-ws", version = "=0.1.0-alpha.3" }
 futures-util.workspace = true
-# What the code `ulo-build` writes names.
-prost.workspace = true
 serde = { workspace = true, features = ["derive"] }
-tonic = { workspace = true, features = ["channel", "codegen"] }
-tonic-prost.workspace = true
 
 [build-dependencies]
 ulo-build = { path = "../ulo-build", version = "=0.1.0-alpha.3" }
