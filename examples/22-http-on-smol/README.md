@@ -12,9 +12,10 @@ The server listens on `PORT` (default 3000); Ctrl-C closes it.
 
 Read first:
 
-- `src/main.rs`: the runtime is `Smol::new(executor)` and `block_on` drives the app. The SIGINT/SIGTERM future is
-  written here with `async-signal`, since only the tokio crate ships one.
+- `src/main.rs`: `ulo_runtime_smol::run`, example 01's `main` with the runtime crate and the server
+  swapped. It builds an executor, starts the application and serves until Ctrl-C or SIGTERM.
 - `src/lib.rs`: the controller is example 01's; `server` is `ServerOn<SmolListener>`.
-- `tests/hello.rs`: example 01's assertions, on a smol runtime with two worker threads.
+- `tests/hello.rs`: example 01's assertions, the phases written out on a `Smol` runtime with two
+  worker threads, which `block_on` drives.
 
 Previous: [21 http-in-axum](../21-http-in-axum).

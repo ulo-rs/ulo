@@ -11,14 +11,15 @@ categories = ["asynchronous"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.3" }
-tokio = { workspace = true, features = ["rt", "time", "signal", "macros", "net"] }
+# `rt-multi-thread` for the runtime `run` builds.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "signal", "macros", "net"] }
+tracing.workspace = true
 
 [dev-dependencies]
 ulo-runtime-conformance = { path = "../ulo-runtime-conformance" }
 futures-executor.workspace = true
-# `tests/own_subscriber.rs` installs a global subscriber before the suite's.
-tracing.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+# `tests/run.rs` writes the child's log to its stdout, where the parent reads it.
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [lints]
 workspace = true

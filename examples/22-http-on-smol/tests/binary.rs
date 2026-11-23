@@ -6,7 +6,7 @@ use ex_support::Bin;
 #[test]
 fn the_binary_serves_on_the_port_it_is_given_and_exits_clean_on_sigterm() {
     let mut bin = Bin::server(env!("CARGO_BIN_EXE_ex-22-http-on-smol"), &[]);
-    let mut stream = TcpStream::connect(bin.addr()).expect("the printed address accepts connections");
+    let mut stream = TcpStream::connect(bin.serving()).expect("the port it was given accepts connections");
     stream.write_all(b"GET / HTTP/1.1\r\nhost: example\r\nconnection: close\r\n\r\n").unwrap();
     let mut reply = String::new();
     stream.read_to_string(&mut reply).unwrap();

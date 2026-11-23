@@ -2,12 +2,14 @@
 //! carries: `main` is the one part of an example the library's tests do not reach.
 //!
 //! A server example's `main` reads `PORT` (default 3000) and prints one `listening on http://ADDR`
-//! line per bound address; its smoke test starts it with [`Bin::server`], which hands it a free port
-//! and checks the printed address is that port. Every wait is bounded by [`GUARD`] of real time, so
-//! a binary that never prints or never exits fails the test instead of hanging it.
+//! line per bound address, or calls `run`, which prints nothing; its smoke test starts it with
+//! [`Bin::server`], which hands it a free port, and checks the printed address is that port
+//! ([`Bin::addr`]) or that the port accepts ([`Bin::serving`]). Every wait is bounded by [`GUARD`]
+//! of real time, so a binary that never prints, never listens or never exits fails the test instead
+//! of hanging it.
 
 use std::io::{BufRead, BufReader, Read};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpStream};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::thread::{self, JoinHandle};
@@ -96,6 +98,25 @@ impl Bin {
                 }
                 return addr;
             }
+        }
+    }
+
+    /// For a [`server`](Self::server) whose `main` prints no address: waits until `127.0.0.1` on the
+    /// port it was given accepts a connection and returns that address. It panics when the binary
+    /// ends first or nothing accepts within [`GUARD`], so a `main` binding another port fails.
+    pub fn serving(&mut self) -> SocketAddr {
+        let port = self.port.expect("`serving` reads the port `Bin::server` handed the binary");
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let started = Instant::now();
+        loop {
+            if TcpStream::connect(addr).is_ok() {
+                return addr;
+            }
+            if let Some(status) = self.child.try_wait().expect("the child can be polled") {
+                panic!("the binary ended {status} before accepting on {addr}");
+            }
+            assert!(started.elapsed() < GUARD, "nothing accepted on {addr} within {GUARD:?}");
+            thread::sleep(Duration::from_millis(5));
         }
     }
 
