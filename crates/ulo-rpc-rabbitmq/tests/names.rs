@@ -13,6 +13,7 @@ use std::net::TcpListener;
 use ulo::{App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Module, ModuleDef, ModuleIdentity};
 use ulo::{Mount, Resolver, Signal, StartupError};
 use ulo_rpc::{Reply, Rpc, RpcCx, RpcHandler, Server};
+use ulo_rpc_conformance::relay::refusing_addr;
 use ulo_rpc_rabbitmq::RabbitMq;
 use ulo_runtime_tokio::Tokio;
 use ulo_transport::Count;
@@ -119,8 +120,7 @@ async fn refused<const BYTES: usize, const EVERY: bool>(parts: &[String]) {
 
 /// A start that went past the names to connect, which a port refusing connections fails.
 async fn served<const BYTES: usize, const EVERY: bool>() {
-    let port = TcpListener::bind("127.0.0.1:0").expect("a loopback port").local_addr().expect("the port's address").port();
-    let error = started::<BYTES, EVERY>(port).await;
+    let error = started::<BYTES, EVERY>(refusing_addr().port()).await;
     assert!(!ulo::is_permanent(&error), "a {BYTES}-byte pattern was refused rather than connected for: {error}");
     let StartupError::Bind { source, .. } = error else { panic!("expected a `Bind` failure, got: {error}") };
     let cause = source.into_inner();

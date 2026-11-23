@@ -19,6 +19,7 @@ use ulo::{
     Timer, controller, handlers, is_permanent,
 };
 use ulo_conformance_support::ScriptedTimer;
+use ulo_conformance_support::relay::refusing_addr;
 use ulo_runtime_tokio::Tokio;
 use ulo_ws::WsModule;
 use ulo_ws_redis::Redis;
@@ -97,10 +98,9 @@ async fn until(what: &str, done: impl Fn() -> bool) {
     }
 }
 
-/// A port that refuses connections for as long as the test runs.
-fn closed_port() -> String {
-    let held = StdListener::bind("127.0.0.1:0").expect("a local port");
-    format!("redis://{}", held.local_addr().expect("its address"))
+/// A Redis URL whose port refuses connections for as long as the test runs.
+fn refusing_url() -> String {
+    format!("redis://{}", refusing_addr())
 }
 
 fn is_refusal(error: &(dyn std::error::Error + 'static)) -> bool {
@@ -119,7 +119,7 @@ fn bind_cause(error: StartupError) -> ulo::BoxError {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn listen_over_a_refusing_redis_fails_as_bind_naming_the_connection_error() {
     let clock = ScriptedTimer::new();
-    let listening = tokio::spawn(listen_on(Redis::url(closed_port()).connect_within(WITHIN), clock.clone()));
+    let listening = tokio::spawn(listen_on(Redis::url(refusing_url()).connect_within(WITHIN), clock.clone()));
     // The bound is armed on the app's clock at its full length, and the first attempt has failed
     // once the reconnect delay is armed.
     until("the bound and a failed first attempt", || clock.live(WITHIN) == 1 && clock.live(RECONNECT_DELAY) == 1).await;
@@ -190,7 +190,7 @@ async fn an_adapter_runtime_with_no_time_driver_listens() {
 async fn an_adapter_runtime_with_no_time_driver_still_reports_a_refusing_redis() {
     let clock = ScriptedTimer::new();
     let runtime = runtime_without_time();
-    let adapter = Redis::url(closed_port()).with_handle(runtime.handle().clone()).connect_within(WITHIN);
+    let adapter = Redis::url(refusing_url()).with_handle(runtime.handle().clone()).connect_within(WITHIN);
     let listening = tokio::spawn(listen_on(adapter, clock.clone()));
     // The reconnect delay is the app's, so it is armed though the adapter's runtime has no clock.
     until("the bound and a failed first attempt", || clock.live(WITHIN) == 1 && clock.live(RECONNECT_DELAY) == 1).await;
@@ -208,7 +208,7 @@ async fn an_adapter_runtime_with_no_time_driver_still_reports_a_refusing_redis()
 async fn a_clock_that_refuses_the_bound_fails_listen_as_a_permanent_runtime_shut_down() {
     let clock = ScriptedTimer::new();
     clock.refuse(WITHIN);
-    let outcome = listen_on(Redis::url(closed_port()).connect_within(WITHIN), clock.clone()).await;
+    let outcome = listen_on(Redis::url(refusing_url()).connect_within(WITHIN), clock.clone()).await;
     let error = outcome.expect_err("listen succeeded on a clock that refuses its bound");
     let StartupError::Bind { source, .. } = &error else { panic!("expected `Bind`, got: {error}") };
     assert!(is_permanent(&error), "a clock that has shut down refuses every later start too: {error}");
@@ -226,7 +226,7 @@ async fn a_clock_that_refuses_the_reconnect_delay_ends_the_subscription_as_a_per
     let clock = ScriptedTimer::new();
     clock.refuse(RECONNECT_DELAY);
     // Bounded in real time: a task that ignored the refusal would retry without pausing.
-    let listening = tokio::time::timeout(PATIENCE, listen_on(Redis::url(closed_port()).connect_within(WITHIN), clock.clone()));
+    let listening = tokio::time::timeout(PATIENCE, listen_on(Redis::url(refusing_url()).connect_within(WITHIN), clock.clone()));
     let outcome = listening.await.expect("listen did not end on the refused reconnect delay");
     let error = outcome.expect_err("listen succeeded with no Redis");
     assert!(is_permanent(&error), "a subscription that cannot pace itself cannot be retried: {error}");
@@ -268,7 +268,7 @@ impl Timer for RefusesAfterTheBound {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_bound_that_had_passed_when_the_clock_refused_reports_its_expiry() {
     let clock = RefusesAfterTheBound(ScriptedTimer::new());
-    let outcome = listen_on(Redis::url(closed_port()).connect_within(WITHIN), clock).await;
+    let outcome = listen_on(Redis::url(refusing_url()).connect_within(WITHIN), clock).await;
     let error = outcome.expect_err("listen succeeded with no Redis");
     let StartupError::Bind { source, .. } = &error else { panic!("expected `Bind`, got: {error}") };
     assert!(source.to_string().contains("did not confirm the broadcast subscription"), "the bound's expiry is reported: {source}");

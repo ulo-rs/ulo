@@ -22,6 +22,8 @@ ulo-runtime-smol = { path = "../ulo-runtime-smol", version = "=0.1.0-alpha.3", o
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio", version = "=0.1.0-alpha.3", optional = true }
 # The relay's threads signal their ends through its oneshot, which needs no runtime.
 futures-channel.workspace = true
+# `relay::refusing_addr` binds its socket before connecting it, which `std` cannot.
+socket2.workspace = true
 # `rt-multi-thread`: `OnTokio`'s runtime.
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "net"], optional = true }
 

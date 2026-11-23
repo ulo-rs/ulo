@@ -8939,6 +8939,7 @@ name = "ulo-conformance-support"
 version = "0.1.0-alpha.3"
 dependencies = [
  "futures-channel",
+ "socket2 0.6.5",
  "tokio",
  "ulo",
  "ulo-conformance-support",
