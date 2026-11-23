@@ -1,20 +1,29 @@
 //! The gRPC extractors, each consuming the request body, so a handler taking two of them fails the
 //! pairwise check naming both (transports DESIGN §6.1). `#[method(Marker)]` checks the message type
 //! each names against the marker's `Request`, and `Streaming<T>` against its shape, at compile time.
+//!
+//! Each decodes through `tonic::Streaming` given the request's encoding, so a message whose
+//! compressed flag is set is inflated in it, into a buffer that stops growing at
+//! [`MESSAGE_LIMIT`]: a message larger than the limit, on the wire or once inflated, is refused
+//! before more than the limit is held.
 
+use std::error::Error;
+use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures_core::Stream;
-use tonic::Code;
-use tonic::codec::BufferSettings;
+use tonic::codec::{BufferSettings, DecodeBuf, Decoder};
+use tonic::{Code, Status};
 use tonic_prost::ProstDecoder;
+use ulo_http::HttpBody;
 use ulo_transport::{ExtractError, FromCall};
 
 use crate::transport::{Grpc, GrpcCx, GrpcMetadata};
 
-/// The largest message a request may carry, tonic's own default: a larger one fails extraction as
-/// `ExtractError::TooLarge`.
+/// The largest message a request may carry, tonic's own default, as it arrives and once
+/// decompressed: a larger one fails extraction as `ExtractError::TooLarge`, which the wire sends
+/// as RESOURCE_EXHAUSTED.
 pub(crate) const MESSAGE_LIMIT: usize = 4 * 1024 * 1024;
 
 /// The request message: `Message<pb::GetUserRequest>`.
@@ -76,16 +85,24 @@ impl<T: prost::Message + Default + Send + 'static> FromCall<Grpc> for Streaming<
 
     async fn from_call(cx: &GrpcCx) -> Result<Self, ExtractError> {
         let body = cx.take_body().ok_or(ExtractError::Missing { param: "stream" })?;
-        let inner = tonic::Streaming::new_request(decoder::<T>(), body, None, Some(MESSAGE_LIMIT));
-        Ok(Streaming { inner })
+        Ok(Streaming { inner: decoding(cx, body, ProstDecoder::new(BufferSettings::default())) })
     }
 }
 
+/// An item past the 4 MiB message limit is RESOURCE_EXHAUSTED whether its length prefix or its
+/// inflated size passes it; tonic answers OUT_OF_RANGE for the first.
 impl<T> Stream for Streaming<T> {
     type Item = Result<T, tonic::Status>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.inner).poll_next(cx)
+        Pin::new(&mut self.inner).poll_next(cx).map(|item| {
+            item.map(|item| {
+                item.map_err(|status| match status.code() {
+                    Code::OutOfRange => Status::resource_exhausted(status.message()),
+                    _ => status,
+                })
+            })
+        })
     }
 }
 
@@ -95,24 +112,68 @@ impl FromCall<Grpc> for GrpcMetadata {
     }
 }
 
-fn decoder<T: prost::Message + Default>() -> ProstDecoder<T> {
-    ProstDecoder::new(BufferSettings::default())
+/// The request's messages decoded by `decoder`, each one flagged compressed inflated in the
+/// request's encoding, at most [`MESSAGE_LIMIT`] bytes on the wire and once inflated.
+fn decoding<D>(cx: &GrpcCx, body: HttpBody, decoder: D) -> tonic::Streaming<D::Item>
+where
+    D: Decoder<Error = Status> + Send + 'static,
+{
+    tonic::Streaming::new_request(decoder, body, cx.inner.encoding, Some(MESSAGE_LIMIT))
 }
 
-/// The first message of the request body. A body another extractor took, or one ending before a
-/// whole message, is `Missing`; one over [`MESSAGE_LIMIT`] is `TooLarge`; one that does not decode
-/// as `T` is `Malformed`, the decoder's status redacted through the app.
+/// A request body breaking gRPC's message framing: a compressed flag on a call whose
+/// `grpc-encoding` names no compression, a flag other than 0 and 1, a compressed message that does
+/// not inflate, a body ending inside a message. Carried as an `ExtractError::Malformed`'s source,
+/// and sent as INTERNAL, the code the compression specification requires for the first of them.
+#[derive(Debug)]
+pub(crate) struct Framing(Status);
+
+impl fmt::Display for Framing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0.message())
+    }
+}
+
+impl Error for Framing {}
+
+/// prost's decoder with its failure moved off INTERNAL, the code tonic gives a framing failure
+/// too, so [`first_message`] tells a message that does not decode from a body that breaks the
+/// framing.
+struct Unframed<T>(ProstDecoder<T>);
+
+impl<T: prost::Message + Default> Decoder for Unframed<T> {
+    type Item = T;
+    type Error = Status;
+
+    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<T>, Status> {
+        self.0.decode(src).map_err(|status| Status::invalid_argument(status.message()))
+    }
+
+    fn buffer_settings(&self) -> BufferSettings {
+        self.0.buffer_settings()
+    }
+}
+
+/// The first message of the request body. A body another extractor took, or one ending before
+/// any message, is `Missing`; one over [`MESSAGE_LIMIT`], as it arrives or once inflated, is
+/// `TooLarge`; one that does not decode as `T` is `Malformed`, the decoder's status redacted
+/// through the app; one breaking the framing is `Malformed` with a [`Framing`] as its source.
 #[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn first_message<T>(cx: &GrpcCx, param: &'static str) -> Result<T, ExtractError>
 where
     T: prost::Message + Default + Send + 'static,
 {
     let body = cx.take_body().ok_or(ExtractError::Missing { param })?;
-    let mut messages = tonic::Streaming::new_request(decoder::<T>(), body, None, Some(MESSAGE_LIMIT));
+    let mut messages = decoding(cx, body, Unframed(ProstDecoder::<T>::new(BufferSettings::default())));
     match messages.message().await {
         Ok(Some(message)) => Ok(message),
         Ok(None) => Err(ExtractError::Missing { param }),
-        Err(status) if status.code() == Code::OutOfRange => Err(ExtractError::TooLarge { param, limit: MESSAGE_LIMIT as u64 }),
+        Err(status) if matches!(status.code(), Code::OutOfRange | Code::ResourceExhausted) => {
+            Err(ExtractError::TooLarge { param, limit: MESSAGE_LIMIT as u64 })
+        }
+        Err(status) if status.code() == Code::Internal => {
+            Err(ExtractError::Malformed { param, source: cx.app().redact(Box::new(Framing(status))) })
+        }
         Err(status) => Err(ExtractError::Malformed { param, source: cx.app().redact(Box::new(status)) }),
     }
 }

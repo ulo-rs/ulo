@@ -34,8 +34,13 @@
 //! controller written without the attribute mounts the same handler value, a [`GrpcHandler`]. gRPC
 //! serves on its own port; nothing routes an `application/grpc` request arriving on the HTTP
 //! server's port to it.
+//!
+//! Message compression is gzip ([`Encoding`]): the server decompresses a gzip request unless
+//! [`Server::accept_encodings`] says otherwise, and compresses a reply in gzip only when
+//! [`Server::send_encodings`] lists it and the caller's `grpc-accept-encoding` does too.
 
 mod client;
+mod compression;
 mod dispatch;
 mod extract;
 mod handler;
@@ -75,6 +80,7 @@ pub mod __private;
 pub use ulo_transport::__derive;
 
 pub use client::{ClientTls, GrpcClient, GrpcClientModule, GrpcEndpoint, outgoing};
+pub use compression::Encoding;
 pub use extract::{Message, Request, Streaming};
 pub use handler::GrpcHandler;
 pub use health::GrpcHealth;

@@ -80,6 +80,9 @@ pub(crate) struct CxInner {
     pub(crate) handler: Option<MountedHandler<Grpc>>,
     /// The request body, taken once by the extractor that decodes it.
     pub(crate) body: Mutex<Option<HttpBody>>,
+    /// The encoding the request's `grpc-encoding` names, `None` for `identity`: a message whose
+    /// compressed flag is set is decompressed in it.
+    pub(crate) encoding: Option<tonic::codec::CompressionEncoding>,
 }
 
 /// What a call's context reads of the connection it arrived on.

@@ -158,6 +158,7 @@ diesel = { version = "2.3", default-features = false }
 diesel-async = { version = "0.9", default-features = false }
 diesel_migrations = "2.3"
 event-listener = "5.4"
+flate2 = "1.1"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 futures-channel = "0.3"
 futures-core = "0.3"

@@ -22,6 +22,7 @@ use ulo_net::{Activation, BoundListener, Endpoint, EndpointSpec, ListenerName, T
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{Admission, Count, ShedLog};
 
+use crate::compression::{Encoding, Encodings};
 use crate::handler::GrpcHandler;
 use crate::dispatch::{Dispatcher, Route, builtin};
 use crate::health::GrpcHealth;
@@ -67,6 +68,8 @@ pub struct Server {
     pub(crate) timeout_grace: Bound,
     pub(crate) reflection: bool,
     pub(crate) descriptor_sets: Vec<&'static [u8]>,
+    pub(crate) accept_encodings: Vec<Encoding>,
+    pub(crate) send_encodings: Vec<Encoding>,
     /// Set by `prepare`, taken by `bind`.
     pub(crate) prepared: Option<Prepared>,
     /// Set by `bind`.
@@ -109,6 +112,8 @@ impl Server {
             timeout_grace: Bound::Default,
             reflection: cfg!(debug_assertions),
             descriptor_sets: Vec::new(),
+            accept_encodings: vec![Encoding::Gzip],
+            send_encodings: Vec::new(),
             prepared: None,
             running: None,
             bound: Vec::new(),
@@ -193,6 +198,36 @@ impl Server {
     /// `.file_descriptor_set(pb::FILE_DESCRIPTOR_SET)`.
     pub fn file_descriptor_set(mut self, encoded: &'static [u8]) -> Self {
         self.descriptor_sets.push(encoded);
+        self
+    }
+
+    /// The encodings a request's messages may be compressed in, beside `identity`, which is
+    /// always accepted: `[Encoding::Gzip]` unset, and `[]` accepts `identity` alone. A request
+    /// whose `grpc-encoding` names another is answered UNIMPLEMENTED before its handler runs, and
+    /// every response carries `grpc-accept-encoding` naming these, `identity` last, the
+    /// UNIMPLEMENTED included, as the compression specification prescribes. The health and
+    /// reflection services accept the same.
+    ///
+    /// A message whose compressed flag is set is inflated in the call's encoding, its message
+    /// limit, 4 MiB, applying to the inflated size: the inflate stops when it reaches the limit,
+    /// and the call is answered RESOURCE_EXHAUSTED, so a small message that inflates to gigabytes
+    /// costs the limit and no more. A compressed flag on a call whose `grpc-encoding` names no
+    /// compression is INTERNAL.
+    pub fn accept_encodings(mut self, encodings: impl IntoIterator<Item = Encoding>) -> Self {
+        self.accept_encodings = encodings.into_iter().collect();
+        self
+    }
+
+    /// The encodings a reply's messages may be compressed in: none unset. A call whose
+    /// `grpc-accept-encoding` lists one of these has every message of its reply compressed in the
+    /// first it lists, the reply's `grpc-encoding` naming it; any other call's reply is sent
+    /// uncompressed. A trailers-only reply carries no message to compress.
+    ///
+    /// Off unset: compressing costs the server CPU on every reply for bandwidth a local network
+    /// does not need, and a compressed length can disclose the contents of a reply mixing a
+    /// secret with text a caller chose, as TLS compression did (CRIME).
+    pub fn send_encodings(mut self, encodings: impl IntoIterator<Item = Encoding>) -> Self {
+        self.send_encodings = encodings.into_iter().collect();
         self
     }
 
@@ -382,9 +417,10 @@ impl ulo::Server for Server {
                 None
             }
         };
+        let encodings = Encodings::new(&self.accept_encodings, &self.send_encodings);
         let mut reflection = Vec::new();
         if self.reflection {
-            match reflection::services(&self.descriptor_sets) {
+            match reflection::services(&self.descriptor_sets, &encodings) {
                 Ok(services) => reflection = services,
                 Err(reason) => failures.push(reason),
             }
@@ -442,7 +478,7 @@ impl ulo::Server for Server {
             app: mounted.app().clone(),
             timer: Arc::clone(mounted.timer()),
             routes,
-            health: vec![builtin(health.service())],
+            health: vec![builtin(encodings.accepted_codecs().fold(health.service(), |service, codec| service.accept_compressed(codec)))],
             reflection,
             stage,
             admission: Admission::new(self.max_inflight.max_inflight())
@@ -454,6 +490,7 @@ impl ulo::Server for Server {
                 Bound::After(grace) => Some(grace),
                 Bound::Unbounded => None,
             },
+            encodings,
         };
         self.prepared = Some(Prepared { endpoints, tls, dispatcher: Arc::new(dispatcher), health, services, shed });
         Ok(())

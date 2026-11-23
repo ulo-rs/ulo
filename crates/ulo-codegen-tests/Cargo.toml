@@ -17,10 +17,13 @@ ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.3" }
 prost.workspace = true
 # The well-known types `probe.proto` imports, other than `Empty`.
 prost-types.workspace = true
-tonic = { workspace = true, features = ["channel", "codegen"] }
+# `gzip`: the compression tests' client compressing its requests and inflating replies.
+tonic = { workspace = true, features = ["channel", "codegen", "gzip"] }
 tonic-prost.workspace = true
 
 [dev-dependencies]
+# The gzip messages the compression tests write and read by hand.
+flate2.workspace = true
 ulo = { path = "../ulo" }
 # The S6 fixture: `StoreModule::migrate` on a store without a migration lock.
 ulo-config = { path = "../ulo-config" }

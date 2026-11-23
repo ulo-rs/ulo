@@ -377,8 +377,9 @@ jobs:
     runs-on: ubuntu-latest
     # A hung case fails the job, not the runner's six hours: each case is also bounded by the
     # script's own per-case timeout, and the job bound exceeds the script's worst case (two passes
-    # of 17 runs at 60 s each) so the script reports its reasons before the job is cancelled.
-    timeout-minutes: 45
+    # of 17 runs, then two of 5, at 60 s each) so the script reports its reasons before the job is
+    # cancelled.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -423,6 +424,17 @@ jobs:
           --server target/debug/ulo-grpc-interop
           --client "$RUNNER_TEMP/interop-client/client --server_host={host} --server_port={port} --test_case={case}"
           --expect 16
+          --tls
+      # The four compression cases, which grpc-go's client does not implement, through
+      # `ulo-grpc-interop-client`, a tonic client with gzip enabled that takes grpc-go's flags and
+      # reads each reply message's compressed flag off the body. The same runner and the same two
+      # passes; the list and its allowances are in `compression_cases.txt`.
+      - run: >-
+          python3 crates/ulo-grpc-interop/interop/run.py
+          --server target/debug/ulo-grpc-interop
+          --client "target/debug/ulo-grpc-interop-client --server_host={host} --server_port={port} --test_case={case}"
+          --cases crates/ulo-grpc-interop/interop/compression_cases.txt
+          --expect 4
           --tls
 
   bench-build:
