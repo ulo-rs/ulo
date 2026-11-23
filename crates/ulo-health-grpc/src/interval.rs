@@ -15,6 +15,8 @@ const DEFAULT_INTERVAL: Duration = Duration::from_secs(5);
 #[derive(Debug)]
 pub struct ZeroInterval;
 
+const _: () = assert!(size_of::<ZeroInterval>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for ZeroInterval {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(

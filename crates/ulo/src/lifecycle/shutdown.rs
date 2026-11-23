@@ -372,7 +372,7 @@ async fn run_shutdown_hook(
             Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
         }
     };
-    Some(ShutdownFailure::Hook { hook: hook.kind, key: owner_key(graph, owner), reason })
+    Some(ShutdownFailure::Hook { hook: hook.kind, key: owner_key(graph, owner), reason: Box::new(reason) })
 }
 
 /// The partial teardown of a connect walk that failed (§9.2): the `OnModuleDestroy` hooks of

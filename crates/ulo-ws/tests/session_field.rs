@@ -22,14 +22,17 @@ struct NeedsSession {
 fn classify(e: &LookupError) -> String {
     match e {
         LookupError::NotFound { key, kind } => format!("NotFound {kind:?} {key}"),
-        LookupError::Construct { key, reason: FailureReason::Errored(r) } => {
-            let undeclared = r
-                .downcast_ref::<Permanent>()
-                .and_then(|p| std::error::Error::source(p))
-                .and_then(|s| s.downcast_ref::<UndeclaredRead>())
-                .map(|u| u.to_string());
-            format!("Construct {key} undeclared={undeclared:?}")
-        }
+        LookupError::Construct { key, reason } => match &**reason {
+            FailureReason::Errored(r) => {
+                let undeclared = r
+                    .downcast_ref::<Permanent>()
+                    .and_then(|p| std::error::Error::source(p))
+                    .and_then(|s| s.downcast_ref::<UndeclaredRead>())
+                    .map(|u| u.to_string());
+                format!("Construct {key} undeclared={undeclared:?}")
+            }
+            _ => format!("other: {e}"),
+        },
         other => format!("other: {other}"),
     }
 }

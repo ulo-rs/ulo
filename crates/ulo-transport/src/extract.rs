@@ -197,6 +197,8 @@ pub enum ExtractError {
     CallEnded { param: &'static str },
 }
 
+const _: () = assert!(size_of::<ExtractError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl ExtractError {
     pub fn param(&self) -> &'static str {
         match self {

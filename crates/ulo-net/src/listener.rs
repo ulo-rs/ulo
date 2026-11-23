@@ -65,6 +65,8 @@ pub enum BindError {
     Activation(ActivationError),
 }
 
+const _: () = assert!(size_of::<BindError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for BindError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

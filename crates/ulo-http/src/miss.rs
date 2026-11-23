@@ -25,6 +25,8 @@ pub struct NoRoute {
     _private: (),
 }
 
+const _: () = assert!(size_of::<NoRoute>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl NoRoute {
     /// `NotFound`, rendered 404 by its kind, with this as its source.
     pub(crate) fn error() -> CallError {
@@ -57,6 +59,8 @@ pub struct MethodNotAllowed {
     method: Method,
     allow: HeaderValue,
 }
+
+const _: () = assert!(size_of::<MethodNotAllowed>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl MethodNotAllowed {
     /// `method` refused on a path that answers the methods in `allow`, comma-separated.
@@ -113,6 +117,8 @@ pub struct MethodNotImplemented {
     method: Method,
 }
 
+const _: () = assert!(size_of::<MethodNotImplemented>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl MethodNotImplemented {
     /// The method the request used.
     pub fn method(&self) -> &Method {
@@ -152,6 +158,8 @@ impl Error for MethodNotImplemented {}
 pub struct NotAcceptable {
     available: Vec<String>,
 }
+
+const _: () = assert!(size_of::<NotAcceptable>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl NotAcceptable {
     /// A refusal naming the media types the handler answers, which RFC 9110 has the 406 list.

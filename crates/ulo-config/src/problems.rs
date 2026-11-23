@@ -60,6 +60,8 @@ pub struct Problems {
     pub(crate) list: Vec<Problem>,
 }
 
+const _: () = assert!(size_of::<Problems>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl Problems {
     pub fn new() -> Self {
         Problems { list: Vec::new() }

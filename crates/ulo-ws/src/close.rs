@@ -141,6 +141,8 @@ pub enum CloseCodeError {
     Unassigned { code: u16 },
 }
 
+const _: () = assert!(size_of::<CloseCodeError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for CloseCodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

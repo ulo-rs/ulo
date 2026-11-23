@@ -100,8 +100,11 @@ async fn a_keyed_module_s_failing_hook_names_the_module_with_its_qualifier() {
     }))
     .await;
 
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = *connect_error else {
+        panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!(hook, HookKind::OnModuleInit);
     assert_eq!(key.key(), Key::of::<Mod<K>, Replica>(), "the module's own type and the qualifier of the instance that failed");
@@ -115,8 +118,11 @@ struct Deep;
 /// `module` and `key` of the construction failure `connect` answers, and the error the deepest
 /// constructor returned.
 fn construction_failure(error: StartupError) -> (Key, String, String) {
-    let StartupError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a construction failure, got: {error}");
+    };
+    let ConnectError::Construct { key, module, reason, .. } = *connect_error else {
+        panic!("expected a construction failure, got: {connect_error}");
     };
     let FailureReason::Errored(source) = reason else { panic!("expected an errored construction, got: {reason}") };
     (key.key(), module.to_string(), source.to_string())

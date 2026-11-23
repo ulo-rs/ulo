@@ -50,6 +50,8 @@ pub struct Tokio {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoIoDriver;
 
+const _: () = assert!(size_of::<NoIoDriver>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for NoIoDriver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the tokio runtime was built without its IO driver: call `enable_io()` (or `enable_all()`) on its `Builder`")

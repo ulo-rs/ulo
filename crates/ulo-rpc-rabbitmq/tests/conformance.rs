@@ -303,7 +303,7 @@ async fn a_broker_lost_between_the_two_connections_fails_listen_at_the_bound() {
     };
     assert!(!ulo::is_permanent(&error), "a lost broker is marked permanent, though a later start may reach it: {error}");
     let StartupError::Bind { source, .. } = error else { panic!("expected a `Bind` failure, got: {error}") };
-    let cause = source.into_inner();
+    let cause = source.original();
     let timed_out = cause.downcast_ref::<ConnectTimedOut>().unwrap_or_else(|| panic!("the `Bind` does not carry `ConnectTimedOut`: {cause:?}"));
     assert_eq!((timed_out.within(), timed_out.address()), (LOST_WITHIN, relay.to_string().as_str()));
     assert!(

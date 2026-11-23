@@ -94,6 +94,8 @@ pub struct CidrError {
     reason: Reason,
 }
 
+const _: () = assert!(size_of::<CidrError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Reason {
     Address,

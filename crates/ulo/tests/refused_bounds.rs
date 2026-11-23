@@ -130,7 +130,10 @@ fn pending_init_hook() -> Mod<Root> {
 }
 
 fn hook_failure(error: &StartupError) -> (HookKind, Key, &FailureReason) {
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
+        panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = &**connect_error else {
         panic!("expected a hook failure, got: {error}");
     };
     (*hook, key.key(), reason)
@@ -194,7 +197,10 @@ fn pending_singleton() -> Mod<Root> {
 }
 
 fn construct_failure(error: &StartupError) -> (Key, String, &FailureReason) {
-    let StartupError::Connect { error: ConnectError::Construct { key, module, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
+        panic!("expected a construction failure, got: {error}");
+    };
+    let ConnectError::Construct { key, module, reason, .. } = &**connect_error else {
         panic!("expected a construction failure, got: {error}");
     };
     (key.key(), module.to_string(), reason)
@@ -276,7 +282,10 @@ fn pending_check_whole() -> Mod<Root> {
 }
 
 fn readiness_failure(error: &StartupError) -> (Key, u32, &FailureReason) {
-    let StartupError::Connect { error: ConnectError::Readiness { key, attempts, reason, .. }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
+        panic!("expected a readiness failure, got: {error}");
+    };
+    let ConnectError::Readiness { key, attempts, reason, .. } = &**connect_error else {
         panic!("expected a readiness failure, got: {error}");
     };
     (key.key(), *attempts, reason)

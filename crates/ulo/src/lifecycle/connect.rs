@@ -30,7 +30,6 @@ use crate::timer::{BoxError, BoundKind, Resolved, RuntimeShutDown, resolve_bound
 /// `App::connect` passes the whole graph; `load` passes what the lazy module brought, after
 /// swapping the extended graph in, since every step reads `shared.graph()`. The phase is the
 /// caller's: `App::connect` moves it around this call, and `load` runs while the app is Running.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], modules: &[ModuleId]) -> Result<(), TornDown> {
     for (position, &id) in singletons.iter().enumerate() {
         if let Err(error) = build_and_check(shared, id).await {
@@ -52,8 +51,7 @@ pub(crate) async fn connect(shared: &Arc<AppShared>, singletons: &[BindingId], m
 }
 
 /// Builds the singleton `id` unless it is built, then runs its readiness check.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-async fn build_and_check(shared: &Arc<AppShared>, id: BindingId) -> Result<(), ConnectError> {
+async fn build_and_check(shared: &Arc<AppShared>, id: BindingId) -> Result<(), Box<ConnectError>> {
     if shared.singletons.get(id).is_none() {
         build_singleton(shared, id).await?;
     }
@@ -129,12 +127,12 @@ fn has_init_hook(graph: &Graph, owner: HookOwner) -> bool {
 /// A connect walk's failure and what the destroy hooks run after it recorded, the two fields of
 /// `StartupError::Connect` and `LoadError::Connect`.
 pub(crate) struct TornDown {
-    pub(crate) error: ConnectError,
+    pub(crate) error: Box<ConnectError>,
     pub(crate) teardown: Vec<ShutdownFailure>,
 }
 
 /// `error` after the destroy hooks of `initialized` have run (§9.2).
-pub(crate) async fn torn_down(shared: &Arc<AppShared>, initialized: &[HookOwner], error: ConnectError) -> TornDown {
+pub(crate) async fn torn_down(shared: &Arc<AppShared>, initialized: &[HookOwner], error: Box<ConnectError>) -> TornDown {
     let teardown = tear_down(shared, initialized).await;
     TornDown { error, teardown }
 }
@@ -144,8 +142,7 @@ pub(crate) async fn torn_down(shared: &Arc<AppShared>, initialized: &[HookOwner]
 ///
 /// The store holds the instance as the recipe built it; a contribution's `into_primary` and the
 /// `also_as` coercions are applied by whoever reads it under another key.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> Result<(), ConnectError> {
+pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> Result<(), Box<ConnectError>> {
     let graph = shared.graph();
     let binding = graph.binding(id);
     let ctor = match &binding.record.recipe {
@@ -169,12 +166,12 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
             return Ok(());
         }
         Outcome::Done(Err(ConstructError::Failed(e))) => FailureReason::Errored(redact(&graph.secrets, e)),
-        Outcome::Done(Err(ConstructError::Dependency(e))) => return Err(dependency_failure(&graph, binding, e)),
+        Outcome::Done(Err(ConstructError::Dependency(e))) => return Err(Box::new(dependency_failure(&graph, binding, e))),
         Outcome::Panicked(p) => FailureReason::Panicked(p),
         Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
         Outcome::Refused(refused) => shut_down(&graph.secrets, refused),
     };
-    Err(ConnectError::Construct { key: binding_key(binding), module: module_name(&graph, binding.origin), reason })
+    Err(Box::new(ConnectError::Construct { key: binding_key(binding), module: module_name(&graph, binding.origin), reason }))
 }
 
 /// Runs a readiness check: attempts under the attempt bound, `retries` more after an `Err` or an
@@ -184,8 +181,7 @@ pub(crate) async fn build_singleton(shared: &Arc<AppShared>, id: BindingId) -> R
 /// `RuntimeShutDown`, its source the last attempt's error, unless the whole-check bound had passed
 /// on the clock by then, which ends it as that bound's `TimedOut`.
 /// `Readiness { key, module, attempts, reason }` on failure, the reason by the rules of §9.3.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), ConnectError> {
+pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready: &ReadyRecord) -> Result<(), Box<ConnectError>> {
     let graph = shared.graph();
     let binding = graph.binding(id);
     let secrets = &graph.secrets;
@@ -255,18 +251,17 @@ pub(crate) async fn run_readiness(shared: &Arc<AppShared>, id: BindingId, ready:
         Outcome::TimedOut { after, limit } => FailureReason::TimedOut { after, limit },
         Outcome::Refused(refused) => shut_down(secrets, refused),
     };
-    Err(ConnectError::Readiness {
+    Err(Box::new(ConnectError::Readiness {
         key: binding_key(binding),
         module: module_name(&graph, binding.origin),
         attempts: attempts.load(Ordering::Relaxed),
         reason,
-    })
+    }))
 }
 
 /// Every hook of `kind` on the owners of `plan`, in its order. `Hook { hook, key, reason }` on the
 /// first failure, with the position in `plan` of the owner whose hook failed.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
-pub(crate) async fn run_startup_hooks(shared: &Arc<AppShared>, kind: HookKind, plan: &[HookOwner]) -> Result<(), (ConnectError, usize)> {
+pub(crate) async fn run_startup_hooks(shared: &Arc<AppShared>, kind: HookKind, plan: &[HookOwner]) -> Result<(), (Box<ConnectError>, usize)> {
     let graph = shared.graph();
     for (position, &owner) in plan.iter().enumerate() {
         for hook in hooks_of(&graph, owner).iter().filter(|h| h.kind == kind) {
@@ -277,7 +272,7 @@ pub(crate) async fn run_startup_hooks(shared: &Arc<AppShared>, kind: HookKind, p
                 Some(Outcome::TimedOut { after, limit }) => FailureReason::TimedOut { after, limit },
                 Some(Outcome::Refused(refused)) => shut_down(&graph.secrets, refused),
             };
-            return Err((ConnectError::Hook { hook: kind, key: owner_key(&graph, owner), reason }, position));
+            return Err((Box::new(ConnectError::Hook { hook: kind, key: owner_key(&graph, owner), reason }), position));
         }
     }
     Ok(())
@@ -384,7 +379,7 @@ fn dependency_failure(graph: &Graph, binding: &FrozenBinding, error: LookupError
     match error {
         LookupError::Construct { key, reason } => {
             let module = owner_of(graph, binding.origin, key.key()).unwrap_or(binding.origin);
-            ConnectError::Construct { key, module: module_name(graph, module), reason }
+            ConnectError::Construct { key, module: module_name(graph, module), reason: *reason }
         }
         other => ConnectError::Construct {
             key: binding_key(binding),

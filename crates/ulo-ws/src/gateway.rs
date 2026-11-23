@@ -362,11 +362,13 @@ pub struct ConnectRefused {
     /// The answer under `refuse = handshake`, a 401 without `WWW-Authenticate` taking the
     /// server's challenge when the handshake is answered.
     pub(crate) status: StatusCode,
-    pub(crate) headers: HeaderMap,
+    pub(crate) headers: Box<HeaderMap>,
     /// Refused for the server's own state, the drain or `max_connections`: under
     /// `refuse = handshake` its 503 carries the server's `Retry-After`.
     pub(crate) shed: bool,
 }
+
+const _: () = assert!(size_of::<ConnectRefused>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl ConnectRefused {
     /// A refusal with the close code `code` and `reason`. Refused: a reason over 123 bytes of
@@ -374,7 +376,7 @@ impl ConnectRefused {
     pub fn code(code: CloseCode, reason: impl Into<String>) -> Result<Self, CloseCodeError> {
         let reason = reason.into();
         check_reason(&reason)?;
-        Ok(ConnectRefused { close_code: code, reason, kind: None, status: StatusCode::FORBIDDEN, headers: HeaderMap::new(), shed: false })
+        Ok(ConnectRefused { close_code: code, reason, kind: None, status: StatusCode::FORBIDDEN, headers: Box::default(), shed: false })
     }
 
     /// A refusal of kind `kind`, closing with the code [`CloseCode::of_kind`] gives;
@@ -408,7 +410,7 @@ impl ConnectRefused {
             reason: ulo_transport::SHUTDOWN_MESSAGE.to_owned(),
             kind: None,
             status: StatusCode::SERVICE_UNAVAILABLE,
-            headers: HeaderMap::new(),
+            headers: Box::default(),
             shed: true,
         }
     }
@@ -439,7 +441,7 @@ impl From<CallError> for ConnectRefused {
             Some(Ok(close_code)) => (close_code, truncated(error.message().to_owned())),
             _ => by_kind(kind, error.message()),
         };
-        ConnectRefused { close_code, reason, kind: Some(kind), status, headers, shed: false }
+        ConnectRefused { close_code, reason, kind: Some(kind), status, headers: Box::new(headers), shed: false }
     }
 }
 

@@ -124,6 +124,8 @@ pub struct ResolveError {
     cause: ResolveCause,
 }
 
+const _: () = assert!(size_of::<ResolveError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 /// Why a host name resolved to no address.
 #[derive(Debug)]
 #[non_exhaustive]

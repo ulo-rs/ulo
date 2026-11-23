@@ -54,7 +54,7 @@ const DEFAULT_SHED_RETRY_AFTER: Duration = Duration::from_secs(1);
 /// running and calls `Link::close`; a refusal not yet sent, or a delivery the inbound stream had
 /// ready and `serve` had not read, is logged at `warn` with how many there were, since its caller
 /// gets no answer from this server.
-pub struct Server<L: Link> {
+pub struct Server<L> {
     pub(crate) link: L,
     pub(crate) max_inflight: Count,
     pub(crate) max_queued_items: Count,

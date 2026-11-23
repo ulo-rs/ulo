@@ -409,6 +409,8 @@ pub enum ActivationError {
     Io(Arc<io::Error>),
 }
 
+const _: () = assert!(size_of::<ActivationError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for ActivationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

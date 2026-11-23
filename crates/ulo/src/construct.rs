@@ -80,6 +80,8 @@ pub enum ConstructError {
     Failed(BoxError),
 }
 
+const _: () = assert!(size_of::<ConstructError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl ConstructError {
     pub fn failed(e: impl Into<BoxError>) -> Self {
         ConstructError::Failed(e.into())

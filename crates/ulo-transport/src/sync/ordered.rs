@@ -66,6 +66,8 @@ impl<T> Inner<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Closed;
 
+const _: () = assert!(size_of::<Closed>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for Closed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the queue's receiver has gone")

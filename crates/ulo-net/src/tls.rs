@@ -243,6 +243,8 @@ pub enum TlsError {
     Rustls(rustls::Error),
 }
 
+const _: () = assert!(size_of::<TlsError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl fmt::Display for TlsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

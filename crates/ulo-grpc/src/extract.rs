@@ -145,7 +145,6 @@ impl Error for Undecodable {}
 /// any message, is `Missing`; one over [`MESSAGE_LIMIT`], as it arrives or once inflated, is
 /// `TooLarge`; one that does not decode as `T`, or breaks the framing, is `Malformed` with an
 /// [`Undecodable`] as its source, redacted through the app.
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn first_message<T>(cx: &GrpcCx, param: &'static str) -> Result<T, ExtractError>
 where
     T: prost::Message + Default + Send + 'static,

@@ -226,8 +226,11 @@ async fn a_failing_init_hook_fails_connect_naming_the_hook_and_the_key_and_stops
     }))
     .await;
 
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = *connect_error else {
+        panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!(hook, HookKind::OnModuleInit);
     assert_eq!(key.key(), Key::of::<S2, ()>());
@@ -252,8 +255,11 @@ async fn a_failing_bootstrap_hook_fails_connect_after_every_init_hook_ran() {
     }))
     .await;
 
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = *connect_error else {
+        panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!(hook, HookKind::OnApplicationBootstrap);
     assert_eq!(key.key(), Key::of::<BootFails, ()>());
@@ -281,8 +287,11 @@ async fn a_panicking_hook_is_a_panicked_failure_the_core_recognises() {
     let boxed: BoxError = Box::new(error);
     assert!(ulo::is_panic(&boxed), "`is_panic` finds the panic under the startup error");
     let error = boxed.downcast::<StartupError>().unwrap();
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = *error else {
+    let StartupError::Connect { error: connect_error, .. } = *error else {
         panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = *connect_error else {
+        panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!(hook, HookKind::OnModuleInit);
     assert_eq!(key.key(), Key::of::<S1, ()>());
@@ -305,8 +314,11 @@ async fn a_hook_that_outlives_its_own_bound_is_timed_out_with_the_item_limit() {
     .unwrap();
     let error = within("connect", app.connect()).await.err().expect("connect succeeded with a hook that never returns");
 
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = *connect_error else {
+        panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!((hook, key.key()), (HookKind::OnModuleInit, Key::of::<S1, ()>()));
     let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
@@ -328,8 +340,11 @@ async fn a_hook_with_no_bound_of_its_own_takes_the_apps_hook_timeout() {
     .unwrap();
     let error = within("connect", app.connect()).await.err().expect("connect succeeded with a hook that never returns");
 
-    let StartupError::Connect { error: ConnectError::Hook { reason: FailureReason::TimedOut { after, limit }, .. }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook timeout, got: {error}");
+    };
+    let ConnectError::Hook { reason: FailureReason::TimedOut { after, limit }, .. } = *connect_error else {
+        panic!("expected a hook timeout, got: {connect_error}");
     };
     assert_eq!((after, limit), (Duration::from_secs(7), Limit::Default));
 }
@@ -414,8 +429,11 @@ async fn a_failing_module_hook_names_the_module() {
     }))
     .await;
 
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = *connect_error else {
+        panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!(hook, HookKind::OnModuleInit);
     assert_eq!(key.key(), Key::of::<Mod<A>, ()>(), "a module hook is named by the module's own type");
@@ -503,8 +521,11 @@ async fn a_closure_hook_whose_parameter_read_fails_never_runs_and_is_errored() {
     }))
     .await;
 
-    let StartupError::Connect { error: ConnectError::Hook { hook, key, reason }, .. } = error else {
+    let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook failure, got: {error}");
+    };
+    let ConnectError::Hook { hook, key, reason, .. } = *connect_error else {
+        panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!((hook, key.key()), (HookKind::OnModuleInit, Key::of::<S1, ()>()));
     let FailureReason::Errored(source) = reason else { panic!("a failed read is `Errored`, got: {reason}") };

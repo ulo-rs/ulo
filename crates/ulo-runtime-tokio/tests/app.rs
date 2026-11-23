@@ -218,9 +218,10 @@ async fn the_app_s_waits_read_the_timer_set_after_the_runtime() {
     let connected = tokio::time::timeout(PATIENCE, wired.connect())
         .await
         .expect("the init hook ran on the runtime's own clock, not the timer's");
-    let Err(StartupError::Connect { error: ConnectError::Hook { reason, .. }, .. }) = connected else {
+    let Err(StartupError::Connect { error, .. }) = connected else {
         panic!("a hook that never returns did not fail the connect phase");
     };
+    let ConnectError::Hook { reason, .. } = *error else { panic!("the connect phase failed other than in a hook: {error}") };
     assert!(matches!(reason, FailureReason::TimedOut { .. }), "the hook failed otherwise: {reason}");
 }
 
@@ -303,7 +304,7 @@ async fn listen_bare(builder: AppBuilder) -> (Result<App<Serving>, StartupError>
 }
 
 fn assert_runtime_missing(listened: Result<App<Serving>, StartupError>, prepared: &Prepared, what: &str) {
-    let Err(StartupError::Bind { transport, source }) = listened else {
+    let Err(StartupError::Bind { transport, source, .. }) = listened else {
         panic!("{what} binding a transport was not refused at `listen()`");
     };
     assert_eq!(transport.to_string(), "Bare", "the refusal names the transport bound");

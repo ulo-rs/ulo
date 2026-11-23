@@ -36,7 +36,6 @@ impl Module for Root {
     }
 }
 
-#[allow(clippy::result_large_err, reason = "the error type is public, so its size is an API decision rather than this function's")]
 async fn listen(builder: ulo::AppBuilder) -> Result<(), StartupError> {
     let app = builder.runtime(Tokio::current()).wire()?.connect().await?;
     let bound = app.bind(ulo_ws_hyper::Server::new("127.0.0.1:0")).listen().await?;

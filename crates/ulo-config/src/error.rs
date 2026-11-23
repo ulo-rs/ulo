@@ -15,6 +15,8 @@ pub struct ConfigError {
     pub(crate) problems: Problems,
 }
 
+const _: () = assert!(size_of::<ConfigError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
 impl ConfigError {
     pub fn problems(&self) -> &Problems {
         &self.problems

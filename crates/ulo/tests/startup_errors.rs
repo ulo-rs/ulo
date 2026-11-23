@@ -57,7 +57,7 @@ async fn a_construction_fault_is_a_connect_startup_error() {
         m.try_singleton(|| async { Err::<S1, _>(Boom::new("down")) });
     }))
     .await;
-    assert!(matches!(error, StartupError::Connect { error: ConnectError::Construct { .. }, .. }), "got: {error}");
+    assert!(matches!(&error, StartupError::Connect { error, .. } if matches!(**error, ConnectError::Construct { .. })), "got: {error}");
 }
 
 #[tokio::test]
@@ -109,7 +109,7 @@ async fn a_bind_failure_closes_the_servers_already_bound_and_is_a_bind_startup_e
     )
     .await;
 
-    let StartupError::Bind { transport, source } = error else { panic!("expected a bind failure, got: {error}") };
+    let StartupError::Bind { transport, source, .. } = error else { panic!("expected a bind failure, got: {error}") };
     assert_eq!(transport, TypeName::of::<TB>(), "the error names the transport that failed");
     assert!(source.downcast_ref::<Boom>().is_some(), "the transport's own error is reachable");
     assert_eq!(

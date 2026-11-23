@@ -105,8 +105,7 @@ impl Module for Root {
     }
 }
 
-/// `listen()`'s answer, its refusal boxed: a `StartupError` is large.
-async fn listen(register: fn(&mut ModuleDef<'_>)) -> Result<App<Listening>, Box<StartupError>> {
+async fn listen(register: fn(&mut ModuleDef<'_>)) -> Result<App<Listening>, StartupError> {
     App::builder(Root(register))
         .runtime(Tokio::current())
         .wire()
@@ -117,7 +116,6 @@ async fn listen(register: fn(&mut ModuleDef<'_>)) -> Result<App<Listening>, Box<
         .bind(ulo_rpc::Server::new(Tcp::new("127.0.0.1:0")))
         .listen()
         .await
-        .map_err(Box::new)
 }
 
 struct Running {
@@ -192,7 +190,7 @@ async fn hand_written_handlers_answer_as_their_attribute_written_twins() {
 /// `listen()`'s refusal and its text.
 async fn refused(register: fn(&mut ModuleDef<'_>)) -> String {
     let Err(error) = listen(register).await else { panic!("listen() accepted an app it should refuse") };
-    assert!(matches!(*error, StartupError::Configure(_)), "{error}");
+    assert!(matches!(error, StartupError::Configure(_)), "{error}");
     error.to_string()
 }
 

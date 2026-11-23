@@ -218,11 +218,11 @@ async fn a_failing_or_panicking_build_inside_a_call_is_a_construct_error() {
     .await;
     app.execute(ExecOptions::new(), async |exec| {
         match exec.get::<Fails>().await {
-            Err(LookupError::Construct { key, reason: FailureReason::Errored(_) }) => assert_eq!(key.key(), Key::of::<Fails, ()>()),
+            Err(LookupError::Construct { key, reason }) if matches!(*reason, FailureReason::Errored(_)) => assert_eq!(key.key(), Key::of::<Fails, ()>()),
             other => panic!("expected Construct(Errored), found {:?}", other.map(|_| ())),
         }
         let panicked = exec.get::<Panics>().await.map(|_| ()).unwrap_err();
-        assert!(matches!(&panicked, LookupError::Construct { reason: FailureReason::Panicked(_), .. }), "{panicked:?}");
+        assert!(matches!(&panicked, LookupError::Construct { reason, .. } if matches!(**reason, FailureReason::Panicked(_))), "{panicked:?}");
         assert!(ulo::is_panic(&(Box::new(panicked) as ulo::BoxError)), "is_panic finds it through the lookup error");
         let errored = exec.get::<Fails>().await.map(|_| ()).unwrap_err();
         assert!(!ulo::is_panic(&(Box::new(errored) as ulo::BoxError)));
