@@ -15,10 +15,19 @@ const PATIENCE: Duration = Duration::from_secs(5);
 /// How many sockets of each kind bound to port 0 the reservation is tested against. A listener std
 /// binds is marked `SO_REUSEADDR`, which Linux hands a random odd port of the lower half of its
 /// default ephemeral range, 7 058 ports; a socket not marked is handed a random odd port of the
-/// whole range, 14 116, which holds the refusing port wherever it lies. macOS hands either a random
-/// port of its 16 384. This many reach all but a fraction of a percent of each, and a port bound and
-/// released before them is handed out again.
+/// whole range, 14 116, which holds the refusing port wherever it lies. This many reach all but a
+/// fraction of a percent of each, and a port bound and released before them is handed out again.
+#[cfg(target_os = "linux")]
 const EPHEMERAL_BINDS: usize = 100_000;
+
+/// A sample elsewhere. macOS keeps a closed socket's control block until a periodic sweep: the
+/// Linux count leaves over 100 000 alive at once, which beside other test processes exhausts the
+/// kernel's supply, and every socket call on the host then fails with `ENOBUFS`. A port-0
+/// bind passes over a port held in the kernel's table, which
+/// `a_socket_not_marked_cannot_bind_the_refusing_address` pins; these draws of macOS's 16 384
+/// ports check it without covering the range.
+#[cfg(not(target_os = "linux"))]
+const EPHEMERAL_BINDS: usize = 1_000;
 
 #[test]
 fn every_connect_to_the_refusing_address_is_refused() {
@@ -41,6 +50,14 @@ fn a_listener_held_open_completes_a_connect_it_never_accepts() {
 fn a_listener_cannot_bind_the_refusing_address() {
     let addr = refusing_addr();
     let error = TcpListener::bind(addr).map(drop).expect_err("a listener bound the refusing address");
+    assert_eq!(error.kind(), ErrorKind::AddrInUse, "binding {addr} failed otherwise than as in use: {error}");
+}
+
+#[test]
+fn a_socket_not_marked_cannot_bind_the_refusing_address() {
+    let addr = refusing_addr();
+    let unmarked = Socket::new(Domain::IPV4, Type::STREAM, None).expect("a socket");
+    let error = unmarked.bind(&addr.into()).expect_err("a socket not marked `SO_REUSEADDR` bound the refusing address");
     assert_eq!(error.kind(), ErrorKind::AddrInUse, "binding {addr} failed otherwise than as in use: {error}");
 }
 
