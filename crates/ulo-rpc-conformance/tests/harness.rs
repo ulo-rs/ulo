@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use ulo_rpc_conformance::relay::Relay;
+use ulo_rpc_conformance::relay::{Relay, refusing_addr};
 use ulo_rpc_conformance::{Harness, OnSmol, OnTokio, Slots};
 
 /// How long a read here waits before it counts as no answer.
@@ -176,9 +176,7 @@ fn the_relay_carries_both_ways_and_a_cut_ends_every_connection() {
 #[test]
 fn a_connection_the_upstream_refuses_is_closed() {
     bounded(async {
-        // A port nothing listens on: bound and released.
-        let refused = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).and_then(|listener| listener.local_addr()).expect("a loopback port");
-        let relay = Relay::start(refused).await;
+        let relay = Relay::start(refusing_addr()).await;
         let mut client = connect(relay.addr());
         assert_eq!(read(&mut client), b"", "the client's connection ends when the upstream refuses the relay");
     });

@@ -13,6 +13,8 @@
 //! listener on the host. A host process already listening on `127.0.0.1` at that port, a relay or
 //! an editor's local server, is the more specific match, and a connection to `127.0.0.1` reaches
 //! it instead of the container.
+//!
+//! [`refusing_addr`] is a loopback address that refuses every connect for the life of the process.
 
 use std::future::Future;
 use std::io::{self, Read, Write};
@@ -282,6 +284,43 @@ pub async fn reachable(addr: SocketAddr, within: Duration) {
         Ok(Err(error)) => crate::startup_failed!("{addr} did not accept a connection within {within:?}: {}", report(&error)),
         Err(oneshot::Canceled) => crate::startup_failed!("the thread trying {addr} ended without an answer"),
     }
+}
+
+/// A loopback address that refuses every TCP connection for as long as the process runs, for a
+/// scenario or test that needs a connect to fail as refused: a relay's upstream nothing answers
+/// at, or a link or store URL naming no server.
+///
+/// Its port is the local end of a loopback connection the process holds until it exits. A connect
+/// to it matches no listener and no connection, and is reset. No IPv4 listener bound to port 0
+/// later, in this process or another, is given its number. On Linux no listener on `[::]` is given
+/// it either, and no listener naming the port can bind it. On macOS a listener bound to port 0 on
+/// `[::]`, which accepts IPv4 connects too, can be given it, and a listener naming the port and
+/// marked `SO_REUSEADDR`, as std marks every listener, can bind it.
+///
+/// A port bound and released is free at once, and the next listener bound to port 0 anywhere on
+/// the host can be handed it. A listener held open completes a connect from its backlog without
+/// accepting it. A socket bound and neither connected nor listening has macOS drop the connect
+/// unanswered, where Linux resets it.
+pub fn refusing_addr() -> SocketAddr {
+    static REFUSING: OnceLock<(socket2::Socket, TcpStream, SocketAddr)> = OnceLock::new();
+    REFUSING
+        .get_or_init(|| {
+            let connected = || -> io::Result<(socket2::Socket, TcpStream, SocketAddr)> {
+                // Bound before it connects, and not marked `SO_REUSEADDR`: Linux lets a connect
+                // share the local port of a socket that only connected, which could connect a
+                // client to itself, and lets a socket marked `SO_REUSEADDR` bind beside another
+                // marked with it while neither listens. std marks every listener it binds.
+                let held = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, Some(socket2::Protocol::TCP))?;
+                held.bind(&SocketAddr::from((Ipv4Addr::LOCALHOST, 0)).into())?;
+                let peer = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+                held.connect(&peer.local_addr()?.into())?;
+                let (accepted, _) = peer.accept()?;
+                let addr = held.local_addr()?.as_socket().ok_or_else(|| io::Error::other("the bound socket has no IP address"))?;
+                Ok((held, accepted, addr))
+            };
+            connected().unwrap_or_else(|error| crate::startup_failed!("no loopback port was reserved to refuse connections: {}", report(&error)))
+        })
+        .2
 }
 
 /// Relays each connection to `upstream`, or closes it at once during an outage or while no

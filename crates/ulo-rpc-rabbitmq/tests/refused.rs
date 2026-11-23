@@ -1,15 +1,15 @@
 //! A broker refusing the first connect fails the start as `Bind`, carrying the broker's error, in
 //! the time the refusal takes: the first connection is made without lapin's auto-recovery, which
-//! would retry it sixteen times on a backoff past 30 s. The address is a port nothing listens on,
-//! so no broker is needed.
+//! would retry it sixteen times on a backoff past 30 s. The address is a port that refuses
+//! connections, so no broker is needed.
 
 use std::error::Error;
 use std::io::ErrorKind;
-use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
 use ulo::{App, Module, ModuleDef, ModuleIdentity, Signal, StartupError};
 use ulo_rpc::Server;
+use ulo_rpc_conformance::relay::refusing_addr;
 use ulo_rpc_rabbitmq::RabbitMq;
 use ulo_runtime_tokio::Tokio;
 
@@ -25,9 +25,9 @@ impl Module for Root {
     }
 }
 
-/// A loopback port that refuses connections: bound, read and released.
+/// A loopback port that refuses connections for as long as the test runs.
 fn refusing_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").expect("a loopback port").local_addr().expect("the port's address").port()
+    refusing_addr().port()
 }
 
 /// How long a refusal may take to report; a refused loopback connect answers in milliseconds.

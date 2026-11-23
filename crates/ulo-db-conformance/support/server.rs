@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -17,7 +17,7 @@ use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use ulo::{BoxError, BoxFuture};
 use ulo_db::{Migrations, Store};
-use ulo_db_conformance::relay::{Relay, reachable, unshadowed};
+use ulo_db_conformance::relay::{Relay, reachable, refusing_addr, unshadowed};
 use ulo_db_conformance::{MigrationProbe, report, startup_failed};
 
 static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
@@ -103,10 +103,9 @@ impl Server {
     }
 }
 
-/// A loopback port nothing listens on.
+/// A loopback port that refuses connections for as long as the test runs.
 pub fn dead_port() -> u16 {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port");
-    listener.local_addr().expect("its address").port()
+    refusing_addr().port()
 }
 
 /// Options read the way a configuration section is: from a map of fields.
