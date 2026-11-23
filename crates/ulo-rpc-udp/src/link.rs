@@ -51,7 +51,8 @@ const CUT_GRACE: Duration = Duration::from_secs(2);
 ///
 /// A client holds no connection, so `close` ends what stands for one: each socket the client side
 /// bound stops receiving and is released, its reply lane ends, and the calls waiting on it fail
-/// `Unavailable`. A call made afterwards binds a new socket.
+/// `Unavailable`. A socket that has already failed has told its calls, and its reply lane ends
+/// once the client drops that connection. A call made afterwards binds a new socket.
 ///
 /// Each socket has one writer task, fed in order by every send on it, so the datagrams one
 /// socket sends leave it in the order they were sent.
@@ -146,7 +147,8 @@ pub(crate) struct State {
     draining: watch::Sender<bool>,
     /// Calls in flight: ids mapped and not yet forgotten.
     held: watch::Sender<usize>,
-    /// Advanced by `close`; a client socket's reply lane ends when it changes.
+    /// Advanced by `close`; a client socket's reply lane ends when it changes, unless the socket
+    /// has already failed.
     client_epoch: watch::Sender<u64>,
 }
 
@@ -339,8 +341,9 @@ impl Link for Udp {
                 Err(last.unwrap_or_else(|| io::Error::other("the UDP link had no address to send to")))
             })
             .await??;
-        // The reply lane holds the socket; the writer reaches it through a `Weak`, so the socket is
-        // released once the lane ends, at `close` or when the OS reports the server unreachable.
+        // The reply lane's reader holds the socket; the writer reaches it through a `Weak`, so the
+        // socket is released once the reader returns, at `close` or when the OS reports the server
+        // unreachable.
         let socket = Arc::new(socket);
         let codec = self.codec;
         let epoch = self.state.client_epoch.subscribe();
@@ -352,14 +355,20 @@ impl Link for Udp {
         // Queued at the call, so datagrams leave in the order their sends were called.
         let send = Box::new(move |_pattern: Pattern, frame: Frame, _reply_to: Option<ReplyTo>| -> BoxFuture<'static, Result<(), BoxError>> {
             let (awaiting, refused, sent_to) = (Arc::clone(&sending), Arc::clone(&refusing), sending_to.clone());
-            let queued = encode(codec, &frame).and_then(|bytes| lock(&awaiting).sent(&frame).map(|()| write(&writes, bytes, None)));
+            let sent = encode(codec, &frame).map(|bytes| (lock(&awaiting).sent(&frame), bytes));
             let id = request_id(&frame);
+            let queued = match sent {
+                Ok((Sent::Queued, bytes)) => write(&writes, bytes, None),
+                Ok((Sent::Told(lane, frame), _)) => return Box::pin(async move { lane.send(frame).await.map_err(|_| BoxError::from("the UDP link's reply lane is closed")) }),
+                Ok((Sent::Dropped, _)) => return Box::pin(async { Ok(()) }),
+                Err(error) => return Box::pin(async move { Err(error) }),
+            };
             Box::pin(async move {
-                let error = match queued?.await {
+                let error = match queued.await {
                     Ok(()) => return Ok(()),
                     Err(error) => error,
                 };
-                Err(lock(&awaiting).send_failed(id, error, &sent_to, &refused))
+                lock(&awaiting).send_failed(id, error, &sent_to, &refused)
             })
         });
         let (frames, replies) = mpsc::channel(REPLY_QUEUE);
@@ -468,19 +477,42 @@ impl SentTo {
 }
 
 /// The calls a client socket has sent a request for and not seen end, and, once the socket has
-/// failed, what each call is told.
+/// failed, what each call is told and the reply lane that tells it.
+///
+/// Every request learns of the failure through the reply lane, after the `goaway` the lane sends
+/// first, and never from its own send: the client reads the `goaway` before any failure, so a
+/// call made once a request was told the socket failed finds the connection closed and connects
+/// again. An event whose send the host refused is told by that send, having no reply to wait for,
+/// so a call made right after it may still be sent on the failed socket.
 #[derive(Default)]
 struct Awaiting {
     ids: HashSet<u64>,
     failed: Option<String>,
+    /// Set once the reply lane has sent its `goaway`; a request after it is answered here.
+    lane: Option<mpsc::Sender<Frame>>,
+}
+
+/// What becomes of a frame handed to a client socket.
+enum Sent {
+    /// Written to the socket.
+    Queued,
+    /// A request reaching the socket after the `goaway`: its failure, sent on the reply lane
+    /// behind the `goaway`, where its call reads it.
+    Told(mpsc::Sender<Frame>, Frame),
+    /// An event or a `cancel` reaching the socket after the `goaway`, lost as a datagram to a host
+    /// nothing listens on is.
+    Dropped,
 }
 
 impl Awaiting {
-    /// Records `frame` as sent: a request awaits its reply, and a `cancel` ends that wait. Refused
-    /// once the socket has failed, with what the calls waiting on it were told.
-    fn sent(&mut self, frame: &Frame) -> Result<(), BoxError> {
-        if let Some(failed) = &self.failed {
-            return Err(failed.clone().into());
+    /// Records `frame` as sent: a request awaits its reply, and a `cancel` ends that wait. Once the
+    /// reply lane has sent its `goaway`, nothing more is written to the socket.
+    fn sent(&mut self, frame: &Frame) -> Sent {
+        if let (Some(lane), Some(failed)) = (&self.lane, &self.failed) {
+            return match request_id(frame) {
+                Some(id) => Sent::Told(lane.clone(), Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, failed.clone(), Details::new()) }),
+                None => Sent::Dropped,
+            };
         }
         match frame {
             Frame::Req { id, .. } | Frame::Open { id, .. } => {
@@ -491,30 +523,36 @@ impl Awaiting {
             }
             _ => {}
         }
-        Ok(())
+        Sent::Queued
     }
 
-    /// What a call whose datagram did not leave is told, its wait ended. The host's refusal is
-    /// reported once, to the socket's receive or to its next send, whichever reads it first, so a
-    /// send the host refused fails the socket as the receive would, `refused` waking the reply
-    /// lane to answer the calls awaiting it; once the socket has failed, a send that fails for
-    /// any reason, a datagram still queued as the lane released the socket among them, is told
-    /// what those calls were.
-    fn send_failed(&mut self, id: Option<u64>, error: BoxError, sent_to: &SentTo, refused: &Notify) -> BoxError {
-        if let Some(id) = id {
-            self.ids.remove(&id);
-        }
+    /// The answer to a send whose datagram did not leave. The host's refusal is reported once, to
+    /// the socket's receive or to its next send, whichever reads it first, so a send the host
+    /// refused fails the socket as the receive would, `refused` waking the reply lane, and an
+    /// event or a `cancel` it refused is answered with the failure, the one report an emitting
+    /// client gets. Once the socket has failed, any other send succeeds: a request's call is among
+    /// those the lane answers, its id kept for it, and an event or a `cancel` is lost, as a
+    /// datagram to a host nothing listens on is. A send failing otherwise before then ends its
+    /// call's wait with its own error.
+    fn send_failed(&mut self, id: Option<u64>, error: BoxError, sent_to: &SentTo, refused: &Notify) -> Result<(), BoxError> {
         if self.failed.is_none()
             && let Some(io) = error.downcast_ref::<io::Error>()
             && io.kind() == io::ErrorKind::ConnectionRefused
         {
-            self.failed = Some(sent_to.failure(io));
+            let failure = sent_to.failure(io);
+            self.failed = Some(failure.clone());
             refused.notify_one();
+            if id.is_none() {
+                return Err(failure.into());
+            }
         }
-        match &self.failed {
-            Some(failed) => failed.clone().into(),
-            None => error,
+        if self.failed.is_some() {
+            return Ok(());
         }
+        if let Some(id) = id {
+            self.ids.remove(&id);
+        }
+        Err(error)
     }
 }
 
@@ -527,11 +565,12 @@ fn request_id(frame: &Frame) -> Option<u64> {
 
 /// Reads the client socket's reply datagrams into `frames` until the link closes, the reply lane
 /// is dropped, or the OS reports the server unreachable; the socket is released as this returns.
-/// A failed socket, its receive failing or a send the host refused waking `refused`, first
-/// delivers each reply its receive buffer already holds, since a host may report a pending
-/// refusal ahead of a datagram that arrived before it, then answers each call it still awaits
-/// `err` of kind `unavailable` naming `sent_to` before the lane ends, and refuses a send after it
-/// the same way, so no call is left to read the lane's end alone.
+/// A failed socket, its receive failing or a send the host refused waking `refused`, first sends a
+/// `goaway`, which closes the connection to new calls, then delivers each reply its receive buffer
+/// already holds, since a host may report a pending refusal ahead of a datagram that arrived
+/// before it, then answers each call it still awaits `err` of kind `unavailable` naming `sent_to`.
+/// The lane stays open for a request reaching the socket after that, which [`Awaiting::sent`]
+/// answers the same way, and ends once the connection is dropped.
 async fn read_replies(
     socket: Arc<UdpSocket>,
     epoch: watch::Receiver<u64>,
@@ -553,15 +592,22 @@ async fn read_replies(
             () = refused.notified() => Err(io::Error::from(io::ErrorKind::ConnectionRefused)),
             received = socket.recv(&mut buffer) => received,
         };
-        // An error here is the OS reporting the server unreachable: the reply lane ends, and the
-        // next call binds a new socket.
+        // An error here is the OS reporting the server unreachable: the `goaway` below closes the
+        // connection, and the next call binds a new socket.
         let len = match received {
             Ok(len) => len,
             Err(error) => {
-                tracing::debug!(%error, addr = %sent_to.addr, "the UDP link's reply lane ended");
-                // Recorded first, under the lock `Awaiting::sent` takes, so no request joins the
-                // calls awaiting the socket while its buffer is drained.
-                let failure = lock(&awaiting).failed.get_or_insert_with(|| sent_to.failure(&error)).clone();
+                tracing::debug!(%error, addr = %sent_to.addr, "the UDP link's client socket failed");
+                if frames.send(Frame::Goaway).await.is_err() {
+                    return;
+                }
+                // Recorded after the `goaway` is queued, under the lock `Awaiting::sent` takes, so a
+                // request either joins the calls taken below or is answered behind the `goaway`.
+                let failure = {
+                    let mut awaiting = lock(&awaiting);
+                    awaiting.lane = Some(frames.clone());
+                    awaiting.failed.get_or_insert_with(|| sent_to.failure(&error)).clone()
+                };
                 for datagram in already_queued(&socket) {
                     if !deliver(&datagram, codec, &awaiting, &frames).await {
                         return;
@@ -574,6 +620,8 @@ async fn read_replies(
                         return;
                     }
                 }
+                #[cfg(test)]
+                tests::gate::after_failure(sent_to.addr).await;
                 return;
             }
         };
@@ -1372,6 +1420,30 @@ mod tests {
             (stopped, release)
         }
 
+        static AFTER_FAILURE: Mutex<Vec<Stop>> = Mutex::new(Vec::new());
+
+        /// Stops the reply lane of the next client socket sending to `addr` to fail once it has
+        /// answered the calls awaiting it, before it returns: the receiver answers once the lane
+        /// has stopped there, and the sender releases it.
+        pub(crate) fn stop_after_failure(addr: SocketAddr) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+            let (arrived, stopped) = oneshot::channel();
+            let (release, released) = oneshot::channel();
+            lock(&AFTER_FAILURE).push((addr, arrived, released));
+            (stopped, release)
+        }
+
+        pub(crate) async fn after_failure(addr: SocketAddr) {
+            let stop = {
+                let mut stops = lock(&AFTER_FAILURE);
+                let at = stops.iter().position(|(stopped, _, _)| *stopped == addr);
+                at.map(|at| stops.swap_remove(at))
+            };
+            if let Some((_, arrived, released)) = stop {
+                let _ = arrived.send(());
+                let _ = released.await;
+            }
+        }
+
         pub(crate) async fn after_sweep(bound: Option<SocketAddr>) {
             let stop = {
                 let mut stops = lock(&AFTER_SWEEP);
@@ -1721,20 +1793,64 @@ mod host_names {
         assert_eq!(other, "the UDP link's socket sending to 127.0.0.1:7000 failed: the interface went down");
     }
 
-    /// Once the socket has failed, a request is refused with what the calls waiting on it were
-    /// told, so a call sent between the failure and the lane's end is not left to read the end.
+    /// A request joins the calls the reply lane answers until the lane has sent its `goaway`, a
+    /// recorded failure alone changing nothing; after it, the request's failure is put on the lane
+    /// behind the `goaway`, and an event or a `cancel` is dropped, nothing written to the socket.
     #[test]
-    fn a_request_after_the_socket_failed_is_refused_with_the_failure() {
+    fn a_request_after_the_goaway_is_answered_on_the_reply_lane() {
         let mut awaiting = Awaiting::default();
         let request = |id| Frame::Req { id, pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
-        awaiting.sent(&request(1)).expect("a request before the failure");
-        awaiting.sent(&request(2)).expect("a request before the failure");
-        awaiting.sent(&Frame::Cancel { id: 2 }).expect("a cancel");
+        assert!(matches!(awaiting.sent(&request(1)), Sent::Queued), "a request before the failure");
+        assert!(matches!(awaiting.sent(&request(2)), Sent::Queued), "a request before the failure");
+        assert!(matches!(awaiting.sent(&Frame::Cancel { id: 2 }), Sent::Queued), "a cancel");
         assert_eq!(awaiting.ids, HashSet::from([1]), "the requests awaiting a reply");
         awaiting.failed = Some("the socket failed".to_owned());
-        let refused = awaiting.sent(&request(3)).expect_err("a request after the failure");
-        assert_eq!(refused.to_string(), "the socket failed");
-        assert_eq!(awaiting.ids, HashSet::from([1]), "a refused request awaits nothing");
+        assert!(matches!(awaiting.sent(&request(3)), Sent::Queued), "a request after the failure, before the `goaway`");
+        assert_eq!(awaiting.ids, HashSet::from([1, 3]), "the calls the lane takes");
+        let (lane, _replies) = tokio::sync::mpsc::channel(1);
+        awaiting.lane = Some(lane);
+        match awaiting.sent(&request(4)) {
+            Sent::Told(_, Frame::Err { id, error }) => assert_eq!((id, error.kind, error.message.as_str()), (4, ErrorKind::Unavailable, "the socket failed")),
+            _ => panic!("a request after the `goaway` was not answered on the lane"),
+        }
+        let event = Frame::Evt { pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        assert!(matches!(awaiting.sent(&event), Sent::Dropped), "an event after the `goaway`");
+        assert!(matches!(awaiting.sent(&Frame::Cancel { id: 1 }), Sent::Dropped), "a cancel after the `goaway`");
+        assert_eq!(awaiting.ids, HashSet::from([1, 3]), "nothing after the `goaway` changes the calls taken");
+    }
+
+    /// A request reaching the socket while the reply lane waits for room for its `goaway` joins
+    /// the calls the lane takes, so no call is told the socket failed ahead of the `goaway`. On one
+    /// thread, the lane, its one slot full, runs until its `goaway` waits.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_request_before_the_goaway_is_queued_joins_the_calls_the_lane_takes() {
+        let silent = receiving().await;
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("a loopback port");
+        socket.connect(silent.local_addr().expect("an address")).await.expect("the socket connects");
+        let (_epoch, epoch) = watch::channel(0);
+        let (frames, mut replies) = tokio::sync::mpsc::channel(1);
+        frames.send(Frame::Cancel { id: 0 }).await.expect("the lane's one slot is filled");
+        let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4]), failed: Some("the socket failed".to_owned()), lane: None }));
+        let refused = Arc::new(Notify::new());
+        refused.notify_one();
+        let sent_to = SentTo { addr: silent.local_addr().expect("an address"), name: None };
+        let reading = tokio::spawn(read_replies(Arc::new(socket), epoch, Codec::Json, frames, Arc::clone(&awaiting), refused, sent_to));
+        tokio::task::yield_now().await;
+        let request = Frame::Req { id: 5, pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        assert!(matches!(lock(&awaiting).sent(&request), Sent::Queued), "a request before the `goaway` is queued was answered apart from the calls the lane takes");
+        let mut sent = Vec::new();
+        while sent.len() < 4 {
+            let frame = tokio::time::timeout(PATIENCE, replies.recv()).await.expect("the lane sends").expect("the lane is open");
+            sent.push(match frame {
+                Frame::Cancel { id: 0 } => "filler".to_owned(),
+                Frame::Goaway => "goaway".to_owned(),
+                Frame::Err { id, .. } => format!("err {id}"),
+                other => panic!("the reply lane sent {other:?}"),
+            });
+        }
+        sent[2..].sort();
+        assert_eq!(sent, ["filler", "goaway", "err 4", "err 5"], "the frames the lane sent");
+        tokio::time::timeout(PATIENCE, reading).await.expect("the reply lane returns").expect("the reply lane's task");
     }
 
     /// The call after a refused socket connects again and follows the name: the lookup answers
@@ -1774,10 +1890,52 @@ mod host_names {
         answering.abort();
     }
 
+    /// F693: a call made once another was told its socket failed connects again. The reply lane
+    /// is held after it has answered the refused call and before it returns, the window in which
+    /// the client could still read the connection as open; the next call, made in that window,
+    /// follows the name to `127.0.0.1:p` and is answered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_call_made_once_another_was_told_the_socket_failed_connects_again() {
+        let server = receiving().await;
+        let port = server.local_addr().expect("an address").port();
+        let refusing = SocketAddr::from((Ipv6Addr::LOCALHOST, port));
+        drop(std::net::UdpSocket::bind(refusing).expect("the port is free on `::1`"));
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counting = Arc::clone(&asked);
+        let udp = on(
+            &format!("billing:{port}"),
+            Lookup::from_fn(move |host| {
+                let first = counting.fetch_add(1, Ordering::SeqCst) == 0;
+                Ok(vec![if first { SocketAddr::from((Ipv6Addr::LOCALHOST, host.port())) } else { SocketAddr::from(([127, 0, 0, 1], host.port())) }])
+            }),
+        );
+        let answering = tokio::spawn(async move {
+            let mut buf = vec![0u8; MAX_DATAGRAM as usize + 1];
+            while let Ok((len, peer)) = server.recv_from(&mut buf).await {
+                if let Ok(Frame::Req { id, .. }) = Codec::Json.decode_frame(&buf[..len]) {
+                    let reply = Codec::Json.encode_frame(&Frame::Res { id, data: ulo_rpc::Data::new("2") }).expect("the reply encodes");
+                    let _ = server.send_to(&reply, peer).await;
+                }
+            }
+        });
+        let (held, release) = tests::gate::stop_after_failure(refusing);
+        let rpc = ulo_rpc::RpcClient::new(udp, Arc::new(Tokio::current())).expect("the client is built");
+        let refused = rpc.request::<_, u32>("host_names", &1).timeout(PATIENCE).await.expect_err("a call to an address nothing listens on");
+        assert_eq!(refused.kind(), ulo_transport::ErrorKind::Unavailable, "{refused:?}");
+        tokio::time::timeout(PATIENCE, held).await.expect("the reply lane reaches the gate").expect("the gate answers");
+        let answered = rpc.request::<_, u32>("host_names", &1).timeout(PATIENCE).await;
+        let _ = release.send(());
+        assert!(matches!(answered, Ok(2)), "the call made once the first was told the socket failed: {answered:?}");
+        assert_eq!(asked.load(Ordering::SeqCst), 2, "the lookups the two sockets made");
+        answering.abort();
+    }
+
     /// The host's refusal is reported once, to whichever of the socket's receive and its next send
-    /// reads it first. A send it reaches fails the socket as the receive would, its own call told
-    /// the address and the reply lane woken; a send failing otherwise is told its own error until
-    /// the socket has failed, and what the waiting calls were told after.
+    /// reads it first. A send it reaches fails the socket as the receive would, waking the reply
+    /// lane and keeping its call among those the lane answers, or, for an event, answered with
+    /// the failure; a send failing otherwise ends its
+    /// call with its own error until the socket has failed, and succeeds after, the lane
+    /// answering its call.
     #[test]
     fn a_send_the_host_refused_fails_the_socket_as_a_receive_would() {
         let sent_to = SentTo { addr: SocketAddr::from(([127, 0, 0, 1], 7000)), name: None };
@@ -1786,26 +1944,30 @@ mod host_names {
         let refused = Notify::new();
         let mut awaiting = Awaiting::default();
         for id in [1, 2, 3] {
-            awaiting.sent(&request(id)).expect("a request before the failure");
+            assert!(matches!(awaiting.sent(&request(id)), Sent::Queued), "a request before the failure");
         }
 
         let other = awaiting.send_failed(Some(1), io::Error::other("the interface went down").into(), &sent_to, &refused);
-        assert_eq!(other.to_string(), "the interface went down", "a send failing otherwise before the socket failed");
+        assert_eq!(other.map_err(|error| error.to_string()), Err("the interface went down".to_owned()), "a send failing otherwise before the socket failed");
         assert_eq!(awaiting.failed, None, "a send failing otherwise fails no socket");
         assert!(refused.notified().now_or_never().is_none(), "a send failing otherwise woke the reply lane");
 
         let own = awaiting.send_failed(Some(2), io::Error::from(io::ErrorKind::ConnectionRefused).into(), &sent_to, &refused);
-        assert_eq!(own.to_string(), told, "the call whose send the host refused");
+        assert!(own.is_ok(), "the send the host refused: {own:?}");
         assert_eq!(awaiting.failed.as_deref(), Some(told.as_str()), "the socket's failure");
         assert!(refused.notified().now_or_never().is_some(), "the reply lane is woken");
-        assert_eq!(awaiting.ids, HashSet::from([3]), "the calls left for the reply lane to answer");
+        assert_eq!(awaiting.ids, HashSet::from([2, 3]), "the calls left for the reply lane to answer");
+
+        let event = Awaiting::default().send_failed(None, io::Error::from(io::ErrorKind::ConnectionRefused).into(), &sent_to, &Notify::new());
+        assert_eq!(event.map_err(|error| error.to_string()), Err(told.clone()), "an event whose send the host refused");
 
         let late = awaiting.send_failed(Some(3), "the UDP link's client socket is closed".into(), &sent_to, &refused);
-        assert_eq!(late.to_string(), told, "a datagram queued as the socket failed");
+        assert!(late.is_ok(), "a datagram queued as the socket failed: {late:?}");
+        assert_eq!(awaiting.ids, HashSet::from([2, 3]), "the calls left for the reply lane to answer");
     }
 
-    /// Woken by a send the host refused, the reply lane answers each call still awaiting the socket
-    /// `err` with the failure that send recorded, then ends.
+    /// Woken by a send the host refused, the reply lane sends a `goaway`, then answers each call
+    /// still awaiting the socket `err` with the failure that send recorded, then ends.
     #[tokio::test(flavor = "current_thread")]
     async fn a_reply_lane_woken_by_a_refused_send_answers_every_waiting_call() {
         let silent = receiving().await;
@@ -1813,13 +1975,14 @@ mod host_names {
         socket.connect(silent.local_addr().expect("an address")).await.expect("the socket connects");
         let (_epoch, epoch) = watch::channel(0);
         let (frames, mut replies) = tokio::sync::mpsc::channel(8);
-        let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4, 5]), failed: Some("the socket failed".to_owned()) }));
+        let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4, 5]), failed: Some("the socket failed".to_owned()), lane: None }));
         let refused = Arc::new(Notify::new());
         refused.notify_one();
         let sent_to = SentTo { addr: silent.local_addr().expect("an address"), name: None };
         tokio::time::timeout(PATIENCE, read_replies(Arc::new(socket), epoch, Codec::Json, frames, awaiting, refused, sent_to))
             .await
             .expect("the reply lane ends once woken");
+        assert!(matches!(replies.recv().await, Some(Frame::Goaway)), "the lane's first frame is a `goaway`");
         let mut answered = Vec::new();
         while let Some(frame) = replies.recv().await {
             match frame {
@@ -1848,7 +2011,7 @@ mod host_names {
         tokio::time::timeout(PATIENCE, socket.readable()).await.expect("the reply arrives").expect("the socket is readable");
         let (_epoch, epoch) = watch::channel(0);
         let (frames, mut replies) = tokio::sync::mpsc::channel(8);
-        let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4, 5]), failed: Some("the socket failed".to_owned()) }));
+        let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4, 5]), failed: Some("the socket failed".to_owned()), lane: None }));
         let refused = Arc::new(Notify::new());
         refused.notify_one();
         let sent_to = SentTo { addr: peer.local_addr().expect("an address"), name: None };
@@ -1858,6 +2021,7 @@ mod host_names {
         let mut sent = Vec::new();
         while let Some(frame) = replies.recv().await {
             sent.push(match frame {
+                Frame::Goaway => (0, "goaway"),
                 Frame::Res { id, .. } => (id, "res"),
                 Frame::Err { id, error } => {
                     assert_eq!(error.message, "the socket failed", "call {id}");
@@ -1866,6 +2030,6 @@ mod host_names {
                 other => panic!("the reply lane sent {other:?}"),
             });
         }
-        assert_eq!(sent, vec![(4, "res"), (5, "err")], "the reply delivered, then the call left waiting failed");
+        assert_eq!(sent, vec![(0, "goaway"), (4, "res"), (5, "err")], "the connection closed, the reply delivered, then the call left waiting failed");
     }
 }
