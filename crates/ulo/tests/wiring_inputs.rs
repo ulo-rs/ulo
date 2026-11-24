@@ -96,7 +96,7 @@ fn declares_addr(m: &mut ulo::ModuleDef<'_>) {
 }
 
 fn not_seeded(errors: &ulo::WiringErrors) -> (String, TypeName, Key, TypeName, Vec<String>) {
-    let (handler, transport, input, seeder, steps) = entry!(errors, WiringError::InputNotSeeded { handler, transport, input, seeder, steps }
+    let (handler, transport, input, seeder, steps) = entry!(errors, WiringError::InputNotSeeded { handler, transport, input, seeder, steps, .. }
         => (handler.clone(), *transport, input.key(), *seeder, steps.clone()));
     (handler, transport, input, seeder, steps)
 }
@@ -145,7 +145,7 @@ fn an_input_read_from_the_seeding_transport_or_optionally_is_accepted() {
 }
 
 fn conflict(errors: &ulo::WiringErrors) -> (Key, InputOrigin, InputOrigin) {
-    entry!(errors, WiringError::InputConflict { key, first, second } => (key.key(), first.clone(), second.clone()))
+    entry!(errors, WiringError::InputConflict { key, first, second, .. } => (key.key(), first.clone(), second.clone()))
 }
 
 #[test]

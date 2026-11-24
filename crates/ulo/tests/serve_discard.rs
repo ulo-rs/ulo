@@ -198,7 +198,7 @@ async fn the_second_of_two_serves_failing_on_one_poll_is_warned_about_and_the_fi
     .unwrap_or_else(|error| panic!("listen() failed: {error}"));
     let error = within("serve", app.serve(std::future::pending())).await.expect_err("a serve that died is a failure");
 
-    let [ShutdownFailure::Serve { transport, end: ServeEnd::Errored(_) }] = &*error.failures else {
+    let [ShutdownFailure::Serve { transport, end: ServeEnd::Errored(_), .. }] = &*error.failures else {
         panic!("one `Serve` failure for the first server: {error}");
     };
     assert_eq!(*transport, TypeName::of::<TA>(), "the first bound is the trigger");

@@ -72,7 +72,7 @@ pub async fn chunked_over_the_limit<H: Host>(mode: Mode) {
         let text = String::from_utf8_lossy(&answer);
         if status == 413 {
             assert!(has_header(&answer, "content-type", "application/problem+json"), "{text:?}");
-            let detail = format!("\"detail\":\"{}\"", ExtractError::TooLarge { param: "body", limit: 16 });
+            let detail = format!("\"detail\":\"{}\"", ExtractError::too_large("body", 16));
             assert!(text.contains(&detail), "the problem names the route's limit: {text:?}");
         } else {
             assert!(text.contains(within), "the route echoes the body it read whole: {text:?}");

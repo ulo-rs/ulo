@@ -134,8 +134,8 @@ impl ErrorHandler<Http> for Report {
     async fn handle(&self, err: BoxError, _cx: &HttpCx) -> Result<Response, BoxError> {
         let call = CallError::from_boxed(err);
         let text = match call.source_as::<ExtractError>() {
-            Some(ExtractError::BodyTaken { param, extractor }) => format!("BodyTaken|{param}|{extractor}"),
-            Some(ExtractError::Missing { param }) => format!("Missing|{param}"),
+            Some(ExtractError::BodyTaken { param, extractor, .. }) => format!("BodyTaken|{param}|{extractor}"),
+            Some(ExtractError::Missing { param, .. }) => format!("Missing|{param}"),
             Some(other) => format!("other|{other}"),
             None => format!("not an extract error|{}", call.kind()),
         };

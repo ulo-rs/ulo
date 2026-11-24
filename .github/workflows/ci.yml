@@ -371,6 +371,10 @@ jobs:
       # rustdoc JSON and fails on a finding `ci/public-reach.txt` does not allow and on an allowance
       # nothing matches.
       - run: python3 scripts/public_reach.py check nightly-2026-10-11
+      # Every struct variant of a public error enum, and of an enum an error holds or hands out,
+      # is `#[non_exhaustive]` (DESIGN §10.2), in every publishable library crate, read from the
+      # same nightly's rustdoc JSON. The script self-tests on a planted unmarked variant first.
+      - run: python3 scripts/error_variants.py check nightly-2026-10-11
 
   grpc-interop:
     name: grpc interop

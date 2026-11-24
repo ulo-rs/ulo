@@ -54,7 +54,7 @@ fn duplicate_single_binding() {
         m.value(2_u32);
     }));
 
-    let (key, module, first, second) = entry!(errors, WiringError::DuplicateBinding { key, module, first, second } => (
+    let (key, module, first, second) = entry!(errors, WiringError::DuplicateBinding { key, module, first, second, .. } => (
         key.key(),
         module.to_string(),
         **first,
@@ -100,7 +100,7 @@ fn single_beside_collection() {
         m.contribute::<Svc>().value(Arc::new(Svc));
     }));
 
-    let (key, module, single, collection) = entry!(errors, WiringError::KindMix { key, module, single, collection } => (
+    let (key, module, single, collection) = entry!(errors, WiringError::KindMix { key, module, single, collection, .. } => (
         key.key(),
         module.to_string(),
         **single,
@@ -194,7 +194,7 @@ fn two_readiness_checks_for_one_key() {
             .ready(|| async { Ok::<(), Boom>(()) });
     }));
 
-    let (key, module, first, second) = entry!(errors, WiringError::DuplicateReadiness { key, module, first, second } => (
+    let (key, module, first, second) = entry!(errors, WiringError::DuplicateReadiness { key, module, first, second, .. } => (
         key.key(),
         module.to_string(),
         **first,

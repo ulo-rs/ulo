@@ -26,7 +26,7 @@ struct SD;
 
 /// The steps of the one `Cycle` entry as `(key, module)` text.
 fn steps(errors: &ulo::WiringErrors) -> Vec<(Key, String)> {
-    entry!(errors, WiringError::Cycle { path } => path.iter().map(|(k, m)| (k.key(), m.to_string())).collect::<Vec<_>>())
+    entry!(errors, WiringError::Cycle { path, .. } => path.iter().map(|(k, m)| (k.key(), m.to_string())).collect::<Vec<_>>())
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn two_separate_tangles_are_two_entries() {
         m.singleton(|_d: Dep<SD>| async { SC });
         m.singleton(|_c: Dep<SC>| async { SD });
     }));
-    let cycles = entries!(errors, WiringError::Cycle { path } => path.iter().map(|(k, _)| k.key()).collect::<Vec<_>>());
+    let cycles = entries!(errors, WiringError::Cycle { path, .. } => path.iter().map(|(k, _)| k.key()).collect::<Vec<_>>());
     assert_eq!(cycles.len(), 2, "{errors}");
     let has = |cycle: &Vec<Key>, key: Key| cycle.contains(&key);
     assert!(cycles.iter().any(|c| has(c, Key::of::<SA, ()>()) && has(c, Key::of::<SB, ()>())));

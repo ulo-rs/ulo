@@ -27,6 +27,12 @@ use crate::sse::{Event, EventName};
 /// (`code.proto`), which grpc-gateway follows; 408 means the server gave up waiting for the
 /// client's request.
 ///
+/// `Cancelled` is 499, the status nginx logs for a client that closed the request, which
+/// `google.rpc.Code` also documents for CANCELLED. No IANA registration names it, so its problem
+/// document carries no `title`. The response never reaches the caller, who has gone: the status
+/// is what the logs, the counters and an error handler reading this table see, a 4xx, so a caller
+/// leaving counts as neither a bad request nor a server fault.
+///
 /// ```
 /// use ulo_http::{ErrorKind, StatusCode, status_for};
 ///
@@ -34,6 +40,10 @@ use crate::sse::{Event, EventName};
 /// assert_eq!(status_for(ErrorKind::Timeout), StatusCode::GATEWAY_TIMEOUT);
 /// ```
 pub fn status_for(kind: ErrorKind) -> StatusCode {
+    const CLIENT_CLOSED_REQUEST: StatusCode = match StatusCode::from_u16(499) {
+        Ok(status) => status,
+        Err(_) => panic!("499 is in 100 to 999"),
+    };
     match kind {
         ErrorKind::BadRequest => StatusCode::BAD_REQUEST,
         ErrorKind::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -45,6 +55,7 @@ pub fn status_for(kind: ErrorKind) -> StatusCode {
         ErrorKind::Timeout => StatusCode::GATEWAY_TIMEOUT,
         ErrorKind::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         ErrorKind::Unimplemented => StatusCode::NOT_IMPLEMENTED,
+        ErrorKind::Cancelled => CLIENT_CLOSED_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
@@ -140,11 +151,11 @@ pub(crate) fn problem(error: &CallError, config: &HttpConfig) -> Response {
 
 /// An error no handler claimed, as a response: `Timeout` when `exec`'s cancel reason is
 /// `Deadline`, otherwise as [`render_as_is`] renders it.
-pub(crate) fn render_error(err: BoxError, exec: &ExecutionRef, config: &HttpConfig) -> Response {
+pub(crate) fn render_error(err: BoxError, exec: &ExecutionRef, app: &AppHandle, config: &HttpConfig) -> Response {
     if exec.cancel_reason() == Some(CancelReason::Deadline) {
         return problem(&timed_out(), config);
     }
-    render_as_is(err, config)
+    render_as_is(err, app, config)
 }
 
 /// An error no handler claimed, rendered as itself whatever the execution's cancel reason: what a
@@ -157,42 +168,48 @@ pub(crate) fn render_error(err: BoxError, exec: &ExecutionRef, config: &HttpConf
 /// as the source of a `CallError`, and all but `NotAcceptable` bare as well; an error handler that
 /// reshaped it to another kind is rendered by that kind, and one that set a status through
 /// [`WithHttpStatus`] by that status. A 415 carries `Accept` with the media type the extractor
-/// expected (RFC 9110 §15.5.16).
-pub(crate) fn render_as_is(err: BoxError, config: &HttpConfig) -> Response {
+/// expected (RFC 9110 §15.5.16). The document's `detail` and `details` are the error's after the
+/// app's redaction (`CallError::new`).
+pub(crate) fn render_as_is(err: BoxError, app: &AppHandle, config: &HttpConfig) -> Response {
     let error = match err.downcast::<MethodNotAllowed>() {
         Ok(refused) => (*refused).into_error(),
         Err(err) => CallError::from_boxed(err),
     };
+    rendered(&error.__into_sent(app), config)
+}
+
+/// [`render_as_is`] once the error is recognised and redacted.
+fn rendered(error: &CallError, config: &HttpConfig) -> Response {
     if error.kind() != ErrorKind::BadRequest {
-        return problem(&error, config);
+        return problem(error, config);
     }
-    if let Some(status) = own_status(&error) {
-        return document(&error, status, config);
+    if let Some(status) = own_status(error) {
+        return document(error, status, config);
     }
     if let Some(refused) = error.source_as::<MethodNotAllowed>() {
-        return method_not_allowed(&error, refused, config);
+        return method_not_allowed(error, refused, config);
     }
     if error.source_as::<NotAcceptable>().is_some() {
-        return document(&error, StatusCode::NOT_ACCEPTABLE, config);
+        return document(error, StatusCode::NOT_ACCEPTABLE, config);
     }
     match error.source_as::<ExtractError>() {
-        Some(ExtractError::TooLarge { .. }) => document(&error, StatusCode::PAYLOAD_TOO_LARGE, config),
+        Some(ExtractError::TooLarge { .. }) => document(error, StatusCode::PAYLOAD_TOO_LARGE, config),
         Some(ExtractError::UnsupportedMediaType { expected, .. }) => {
-            let mut response = document(&error, StatusCode::UNSUPPORTED_MEDIA_TYPE, config);
+            let mut response = document(error, StatusCode::UNSUPPORTED_MEDIA_TYPE, config);
             if let Ok(accept) = HeaderValue::from_str(expected) {
                 response.headers_mut().insert(ACCEPT, accept);
             }
             response
         }
-        _ => document(&error, StatusCode::BAD_REQUEST, config),
+        _ => document(error, StatusCode::BAD_REQUEST, config),
     }
 }
 
-/// A multipart read error a handler returned, as the `ExtractError` it is: `TooLarge` when the read
-/// failed because the body passed the route's limit, `Malformed` (400) for any other `multer`
-/// error, a broken boundary or a cut-off part header among them. Multer wraps a stream's error as
-/// the source of its own `StreamReadFailed`, which a handler propagating it with `?` returns, and
-/// the classification reads the error itself rather than its sources. An error that is not
+/// A multipart read error a handler returned, as the `ExtractError` it is: the one the body's read
+/// ended with, `TooLarge` when the body passed the route's limit and `Cancelled` when the caller
+/// went away mid-body, and `Malformed` (400) for any other `multer` error, a broken boundary or a
+/// cut-off part header among them. Multer wraps a stream's error as the source of its own
+/// `StreamReadFailed`, which a handler propagating it with `?` returns. An error that is not
 /// multer's is returned as it came. Applied to every error a handler returns, so the error
 /// handlers see the `ExtractError`.
 pub(crate) fn from_multipart(err: BoxError, app: &AppHandle) -> BoxError {
@@ -200,12 +217,14 @@ pub(crate) fn from_multipart(err: BoxError, app: &AppHandle) -> BoxError {
         Ok(read) => read,
         Err(err) => return err,
     };
-    if let multer::Error::StreamReadFailed(source) = &*read
-        && let Some(&ExtractError::TooLarge { param, limit }) = source.downcast_ref::<ExtractError>()
-    {
-        return Box::new(ExtractError::TooLarge { param, limit });
-    }
-    Box::new(ExtractError::Malformed { param: "body", source: app.redact(read) })
+    let read = match *read {
+        multer::Error::StreamReadFailed(source) => match source.downcast::<ExtractError>() {
+            Ok(extract) => return extract,
+            Err(source) => multer::Error::StreamReadFailed(source),
+        },
+        other => other,
+    };
+    Box::new(ExtractError::malformed("body", app.redact(Box::new(read))))
 }
 
 /// What every refusal of a call because the server is draining or closing says, on every
@@ -242,7 +261,8 @@ pub(crate) fn shed(config: &HttpConfig) -> Response {
 }
 
 /// An error after an SSE stream began, in its mid-stream form: an event named `error` whose data
-/// is the envelope `{"kind", "message", "details"}`, after which the stream ends.
+/// is the envelope `{"kind", "message", "details"}`, after which the stream ends. The caller
+/// redacts the error first (`CallError::__into_sent`).
 pub(crate) fn late_event(error: &CallError) -> Event {
     let envelope = Envelope { kind: error.kind().as_str(), message: error.message(), details: error.details() };
     let data = serde_json::to_string(&envelope).unwrap_or_else(|failure| {
@@ -365,11 +385,11 @@ mod tests {
     /// kind has still apply to the error it was set on.
     #[test]
     fn a_status_no_error_has_leaves_the_extract_error_s_own_status() {
-        let too_large = || CallError::from(ExtractError::TooLarge { param: "body", limit: 8 });
+        let too_large = || CallError::from(ExtractError::too_large("body", 8));
         let config = HttpConfig::default();
-        let ignored = render_as_is(Box::new(too_large().with_http_status(StatusCode::OK)), &config);
+        let ignored = rendered(&too_large().with_http_status(StatusCode::OK), &config);
         assert_eq!(ignored.status(), StatusCode::PAYLOAD_TOO_LARGE, "a 200 is not an error's status");
-        let named = render_as_is(Box::new(too_large().with_http_status(StatusCode::CONFLICT)), &config);
+        let named = rendered(&too_large().with_http_status(StatusCode::CONFLICT), &config);
         assert_eq!(named.status(), StatusCode::CONFLICT, "an error's own status wins over 413");
     }
 

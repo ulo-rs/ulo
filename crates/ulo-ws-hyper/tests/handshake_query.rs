@@ -75,7 +75,7 @@ impl Lobby {
     fn strict(&self, head: Dep<UpgradeHead>) -> String {
         match head.query::<Strict>() {
             Ok(_) => "ok".to_owned(),
-            Err(ExtractError::Missing { param }) => format!("missing {param}"),
+            Err(ExtractError::Missing { param, .. }) => format!("missing {param}"),
             Err(ExtractError::Malformed { param, .. }) => format!("malformed {param}"),
             Err(other) => format!("other {other}"),
         }

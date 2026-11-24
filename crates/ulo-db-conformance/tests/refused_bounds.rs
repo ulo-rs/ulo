@@ -300,7 +300,7 @@ fn a_connect_bound_that_passes_still_times_the_create_loop_out() {
     let StartupError::Connect { error: connect_error, .. } = &error else {
         panic!("the loop did not time out at the construction bound: {error:?}");
     };
-    let ConnectError::Construct { reason: FailureReason::TimedOut { after, limit }, .. } = &**connect_error else {
+    let ConnectError::Construct { reason: FailureReason::TimedOut { after, limit, .. }, .. } = &**connect_error else {
         panic!("the loop did not time out at the construction bound: {error:?}");
     };
     assert_eq!((*after, *limit), (CONNECT_WITHIN, Limit::Item));
@@ -392,7 +392,7 @@ fn a_connect_bound_refused_after_it_passed_times_the_create_loop_out() {
     let StartupError::Connect { error: connect_error, .. } = &error else {
         panic!("the loop did not time out at the construction bound: {error:?}");
     };
-    let ConnectError::Construct { reason: FailureReason::TimedOut { after, limit }, .. } = &**connect_error else {
+    let ConnectError::Construct { reason: FailureReason::TimedOut { after, limit, .. }, .. } = &**connect_error else {
         panic!("the loop did not time out at the construction bound: {error:?}");
     };
     assert_eq!((*after, *limit), (CONNECT_WITHIN, Limit::Item));

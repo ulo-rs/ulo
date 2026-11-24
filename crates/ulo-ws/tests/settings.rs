@@ -116,7 +116,7 @@ async fn an_adapter_setting_named_as_a_gateway_default_is_refused_with_both_line
         Ok(()) => panic!("wired; the adapter and the module both write `max_message`"),
     };
     assert_eq!(errors.len(), 1, "{errors}");
-    let Some(WiringError::DuplicateSetting { setting, module, first, second }) = errors.iter().next() else {
+    let Some(WiringError::DuplicateSetting { setting, module, first, second, .. }) = errors.iter().next() else {
         panic!("expected `DuplicateSetting`:\n{errors}");
     };
     assert_eq!(*setting, "max_message");

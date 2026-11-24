@@ -28,7 +28,7 @@ use support::within;
 fn extract_failure(err: &BoxError) -> Option<String> {
     let extract = err.downcast_ref::<ExtractError>().or_else(|| err.downcast_ref::<CallError>().and_then(|call| call.source_as::<ExtractError>()))?;
     Some(match extract {
-        ExtractError::Missing { param } => format!("Missing|{param}"),
+        ExtractError::Missing { param, .. } => format!("Missing|{param}"),
         ExtractError::Malformed { param, .. } => format!("Malformed|{param}"),
         ExtractError::Mismatched { param, .. } => format!("Mismatched|{param}"),
         other => format!("other|{other}"),

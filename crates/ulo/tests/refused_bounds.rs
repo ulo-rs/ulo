@@ -92,7 +92,7 @@ fn shut_down(reason: &FailureReason) -> &RuntimeShutDown {
 
 fn timed_out(reason: &FailureReason) -> (Duration, Limit) {
     match reason {
-        FailureReason::TimedOut { after, limit } => (*after, *limit),
+        FailureReason::TimedOut { after, limit, .. } => (*after, *limit),
         other => panic!("expected the bound's expiry, got: {other:?}"),
     }
 }
@@ -239,7 +239,7 @@ async fn build_in_a_call(clock: impl Timer) -> LookupError {
 
 #[tokio::test]
 async fn a_refused_construction_bound_inside_a_call_fails_the_read_with_the_refusal() {
-    let LookupError::Construct { key, reason } = build_in_a_call(refusing(BOUND)).await else {
+    let LookupError::Construct { key, reason, .. } = build_in_a_call(refusing(BOUND)).await else {
         panic!("expected a construction failure inside the call");
     };
     assert_eq!(key.key(), Key::of::<S2, ()>());
@@ -248,7 +248,7 @@ async fn a_refused_construction_bound_inside_a_call_fails_the_read_with_the_refu
 
 #[tokio::test]
 async fn a_construction_bound_inside_a_call_refused_after_it_passed_reports_the_expiry() {
-    let LookupError::Construct { key, reason } = build_in_a_call(Late::new(BOUND)).await else {
+    let LookupError::Construct { key, reason, .. } = build_in_a_call(Late::new(BOUND)).await else {
         panic!("expected a construction failure inside the call");
     };
     assert_eq!(key.key(), Key::of::<S2, ()>());
@@ -361,7 +361,7 @@ async fn shutdown_failures(builder: AppBuilder) -> Arc<[ShutdownFailure]> {
 }
 
 fn hook_cut(failures: &[ShutdownFailure]) -> (HookKind, Key, &FailureReason) {
-    let [ShutdownFailure::Hook { hook, key, reason }] = failures else {
+    let [ShutdownFailure::Hook { hook, key, reason, .. }] = failures else {
         panic!("expected one hook failure, got: {failures:?}");
     };
     (*hook, key.key(), reason)
@@ -431,7 +431,7 @@ async fn close_failures(builder: AppBuilder) -> (Arc<[ShutdownFailure]>, Log) {
 }
 
 fn close_cut(failures: &[ShutdownFailure]) -> &FailureReason {
-    let [ShutdownFailure::Close { transport, reason }] = failures else {
+    let [ShutdownFailure::Close { transport, reason, .. }] = failures else {
         panic!("expected one close failure, got: {failures:?}");
     };
     assert_eq!(*transport, TypeName::of::<TA>());

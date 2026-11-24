@@ -15,6 +15,7 @@ pub(crate) const KINDS: &[(&str, &str)] = &[
     ("unavailable", "Unavailable"),
     ("unimplemented", "Unimplemented"),
     ("internal", "Internal"),
+    ("cancelled", "Cancelled"),
 ];
 
 /// One `#[classify(<kind>)]`: the `ErrorKind` variant it names, with the word's span.

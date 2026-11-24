@@ -47,6 +47,12 @@ impl HttpBody {
     }
 
     /// Any `http_body::Body` of `Bytes`, its error boxed.
+    ///
+    /// A host handing over a request body states a read that failed because the caller went away
+    /// with an `io::Error` of kind `UnexpectedEof`, `ConnectionReset`, `ConnectionAborted`,
+    /// `BrokenPipe` or `NotConnected` down the error's `source()` chain, as hyper's errors carry
+    /// one: the body extractors then fail `ExtractError::Cancelled`, kind `Cancelled`, where any
+    /// other read error is `Malformed`.
     pub fn new<B>(body: B) -> Self
     where
         B: http_body::Body<Data = Bytes> + Send + 'static,

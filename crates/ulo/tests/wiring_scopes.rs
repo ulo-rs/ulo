@@ -188,7 +188,7 @@ fn hooks_on_an_auto_type_inferred_per_execution_are_refused() {
             .on_init(|| async { Ok::<(), Boom>(()) });
         m.controller::<TraitHooked>();
     }));
-    let found = entries!(errors, WiringError::HooksOnPerExecution { binding, module } => (binding.key(), module.to_string()));
+    let found = entries!(errors, WiringError::HooksOnPerExecution { binding, module, .. } => (binding.key(), module.to_string()));
     assert_eq!(found.len(), 2, "a closure hook on an enhancer and a trait hook on a controller: {errors}");
     assert!(found.iter().all(|(_, module)| *module == mod_name::<A>()));
     assert!(found.iter().any(|(key, _)| *key == Key::of::<TraitHooked, ()>()), "the controller with a trait hook");
@@ -312,7 +312,7 @@ fn hook_readiness_module_hook_and_metadata_closures_may_not_read_execution_data(
         m.on_init(|_user: Ext<User>| async { Ok::<(), Boom>(()) });
         m.meta::<MetaReads>();
     }));
-    let found = entries!(errors, WiringError::ClosureNeedsExecution { closure, path, at } => (closure.clone(), path.clone(), at.is_some()));
+    let found = entries!(errors, WiringError::ClosureNeedsExecution { closure, path, at, .. } => (closure.clone(), path.clone(), at.is_some()));
     assert_eq!(found.len(), 4, "{errors}");
     let named = |what: &str| found.iter().find(|(closure, ..)| closure.contains(what)).unwrap_or_else(|| panic!("no `{what}` in {found:?}"));
     assert!(named("readiness check").2, "a readiness closure points at its call");

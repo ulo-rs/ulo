@@ -36,7 +36,7 @@ struct RoutesModule;
 #[tokio::test]
 async fn a_lazy_module_with_a_controller_is_refused_naming_the_module() {
     let server = start(builder("alpha")).await;
-    let Err(LoadError::Refused(LoadRefusal::Controllers { module })) = server.handle.load(RoutesModule).await else {
+    let Err(LoadError::Refused(LoadRefusal::Controllers { module, .. })) = server.handle.load(RoutesModule).await else {
         panic!("the load should be refused");
     };
     assert_eq!(module.to_string(), "RoutesModule");

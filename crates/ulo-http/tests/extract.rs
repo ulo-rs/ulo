@@ -271,13 +271,13 @@ impl Inputs {
 
 fn describe(error: &ExtractError) -> String {
     match error {
-        ExtractError::Missing { param } => format!("Missing|{param}"),
+        ExtractError::Missing { param, .. } => format!("Missing|{param}"),
         ExtractError::Malformed { param, .. } => format!("Malformed|{param}"),
         ExtractError::Mismatched { param, .. } => format!("Mismatched|{param}"),
-        ExtractError::UnsupportedMediaType { param, expected } => format!("UnsupportedMediaType|{param}|{expected}"),
-        ExtractError::TooLarge { param, limit } => format!("TooLarge|{param}|{limit}"),
-        ExtractError::Invalid { param, violations } => format!("Invalid|{param}|{}", violations.len()),
-        ExtractError::HostMissing { param, type_name } => format!("HostMissing|{param}|{type_name}"),
+        ExtractError::UnsupportedMediaType { param, expected, .. } => format!("UnsupportedMediaType|{param}|{expected}"),
+        ExtractError::TooLarge { param, limit, .. } => format!("TooLarge|{param}|{limit}"),
+        ExtractError::Invalid { param, violations, .. } => format!("Invalid|{param}|{}", violations.len()),
+        ExtractError::HostMissing { param, type_name, .. } => format!("HostMissing|{param}|{type_name}"),
         _ => "other extract error".to_owned(),
     }
 }
@@ -553,7 +553,7 @@ async fn a_multipart_body_of_no_known_length_over_the_limit_answers_413_when_the
     // The first frame already passes the limit, so the error comes out of `next_field`.
     let reply = apps.fails(frames(parts.clone()), StatusCode::PAYLOAD_TOO_LARGE, "TooLarge|body|16").await;
     assert_eq!(reply.json()["status"], 413);
-    assert_eq!(reply.json()["detail"], ExtractError::TooLarge { param: "body", limit: 16 }.to_string(), "the problem names the limit");
+    assert_eq!(reply.json()["detail"], ExtractError::too_large("body", 16).to_string(), "the problem names the limit");
 
     // The same frames under a limit they fit are read whole.
     let fits = parts.clone();

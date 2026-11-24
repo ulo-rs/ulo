@@ -10,7 +10,7 @@ use prost::Message as _;
 use prost_types::value::Kind;
 use tonic::{Code, Status};
 use tonic_types::{ErrorDetails, FieldViolation, HelpLink, StatusExt};
-use ulo::{BoxError, CancelReason, ExecutionRef};
+use ulo::{AppHandle, BoxError, CancelReason, ExecutionRef};
 use ulo_transport::{CallError, Detail, Details, ErrorKind, ExtractError};
 
 use crate::extract::Undecodable;
@@ -19,7 +19,8 @@ use crate::extract::Undecodable;
 const VALUE_TYPE_URL: &str = "type.googleapis.com/google.protobuf.Value";
 
 /// The canonical code for `kind`: `BadRequest` and `Unprocessable` INVALID_ARGUMENT, `Conflict`
-/// ABORTED, `Timeout` DEADLINE_EXCEEDED, `TooManyRequests` RESOURCE_EXHAUSTED, and so on.
+/// ABORTED, `Timeout` DEADLINE_EXCEEDED, `TooManyRequests` RESOURCE_EXHAUSTED, `Cancelled`
+/// CANCELLED, and so on.
 pub fn code_for(kind: ErrorKind) -> Code {
     match kind {
         ErrorKind::BadRequest | ErrorKind::Unprocessable => Code::InvalidArgument,
@@ -31,6 +32,7 @@ pub fn code_for(kind: ErrorKind) -> Code {
         ErrorKind::Timeout => Code::DeadlineExceeded,
         ErrorKind::Unavailable => Code::Unavailable,
         ErrorKind::Unimplemented => Code::Unimplemented,
+        ErrorKind::Cancelled => Code::Cancelled,
         _ => Code::Internal,
     }
 }
@@ -234,6 +236,7 @@ fn kind_for(code: Code) -> ErrorKind {
         Code::DeadlineExceeded => ErrorKind::Timeout,
         Code::Unavailable => ErrorKind::Unavailable,
         Code::Unimplemented => ErrorKind::Unimplemented,
+        Code::Cancelled => ErrorKind::Cancelled,
         _ => ErrorKind::Internal,
     }
 }
@@ -242,11 +245,11 @@ fn kind_for(code: Code) -> ErrorKind {
 /// `tonic::Status` a handler or an error handler returned as it stands, an `OK` one as
 /// [`from_status`] reads it, DEADLINE_EXCEEDED when the call's deadline cancelled it, and
 /// otherwise the error as `CallError::from_boxed` recognises it.
-pub(crate) fn render(err: BoxError, exec: &ExecutionRef) -> Status {
+pub(crate) fn render(err: BoxError, exec: &ExecutionRef, app: &AppHandle) -> Status {
     if exec.cancel_reason() == Some(CancelReason::Deadline) && !err.is::<Status>() {
         return deadline_exceeded();
     }
-    render_as_is(err)
+    render_as_is(err, app)
 }
 
 /// The status for `err` whatever the execution's cancel reason: what the error handlers of a
@@ -254,12 +257,21 @@ pub(crate) fn render(err: BoxError, exec: &ExecutionRef) -> Status {
 /// `tonic::Status` as it stands, an `OK` one as [`from_status`] reads it, a `CallError`
 /// [`from_status`] built as that status, any other error as `CallError::from_boxed` recognises
 /// it; the status's metadata screened by [`screened`].
-pub(crate) fn render_as_is(err: BoxError) -> Status {
+///
+/// A `CallError`'s message and details go through the app's redaction (`CallError::new`) before
+/// anything else reads them, so one [`from_status`] built whose text held a registered secret is
+/// sent as an error of its code with the text redacted, not as the status it was built from.
+pub(crate) fn render_as_is(err: BoxError, app: &AppHandle) -> Status {
+    rendered(err, |call| call.__into_sent(app))
+}
+
+/// [`render_as_is`], `sent` giving the `CallError` as it is sent.
+fn rendered(err: BoxError, sent: impl FnOnce(CallError) -> CallError) -> Status {
     let status = match err.downcast::<Status>() {
         Ok(status) if status.code() != Code::Ok => *status,
         Ok(status) => to_status(&from_status(*status)),
         Err(err) => {
-            let call = CallError::from_boxed(err);
+            let call = sent(CallError::from_boxed(err));
             match carried(&call) {
                 Some(status) => status.clone(),
                 None => to_status(&call),
@@ -373,7 +385,7 @@ mod tests {
         let call = from_status(Status::ok("done"));
         assert_eq!((call.kind(), call.message()), (ErrorKind::Internal, OK_AS_ERROR));
         assert_eq!(call.source_as::<Status>().map(Status::code), Some(Code::Ok), "the status stays the source");
-        let sent = render_as_is(Box::new(call));
+        let sent = rendered(Box::new(call), |call| call);
         assert_eq!((sent.code(), sent.message()), (Code::Internal, OK_AS_ERROR));
     }
 
@@ -383,16 +395,16 @@ mod tests {
     fn an_ok_status_is_never_carried_as_an_error_s_status() {
         let call = CallError::new(ErrorKind::Internal, "done").with_source(Status::ok("done"));
         assert!(carried(&call).is_none());
-        assert_eq!(render_as_is(Box::new(call)).code(), Code::Internal);
+        assert_eq!(rendered(Box::new(call), |call| call).code(), Code::Internal);
     }
 
     /// An `OK` status returned bare as the error, by a handler or an error handler, is the same
     /// server bug.
     #[test]
     fn a_bare_ok_status_is_sent_as_internal() {
-        let sent = render_as_is(Box::new(Status::ok("done")));
+        let sent = rendered(Box::new(Status::ok("done")), |call| call);
         assert_eq!((sent.code(), sent.message()), (Code::Internal, OK_AS_ERROR));
-        assert_eq!(render_as_is(Box::new(Status::not_found("gone"))).code(), Code::NotFound, "any other status as it stands");
+        assert_eq!(rendered(Box::new(Status::not_found("gone")), |call| call).code(), Code::NotFound, "any other status as it stands");
     }
 
     /// A status `from_status` built is sent as the status itself, metadata included, while the
@@ -406,11 +418,11 @@ mod tests {
         };
         assert_eq!(call().grpc_code(), Some(Code::FailedPrecondition));
         assert_eq!(from_status(Status::not_found("gone")).grpc_code(), Some(Code::NotFound), "a code its kind sends too");
-        let sent = render_as_is(Box::new(call()));
+        let sent = rendered(Box::new(call()), |call| call);
         assert_eq!((sent.code(), sent.metadata().get("x-cursor").and_then(|value| value.to_str().ok())), (Code::FailedPrecondition, Some("7")));
         let renamed = call().with_grpc_code(Code::OutOfRange);
         assert!(carried(&renamed).is_none(), "an error naming another code is not the status");
-        assert_eq!(render_as_is(Box::new(renamed)).code(), Code::OutOfRange);
+        assert_eq!(rendered(Box::new(renamed), |call| call).code(), Code::OutOfRange);
     }
 
     /// A number outside 1 to 16 reaches the store only past `WithGrpcCode`, and is read as unset.

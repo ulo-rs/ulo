@@ -271,7 +271,7 @@ impl Dispatcher {
                 }
                 written
             }
-            Err(err) => status_response(status::render_as_is(err)),
+            Err(err) => status_response(status::render_as_is(err, cx.app())),
         }
     }
 
@@ -371,7 +371,7 @@ impl Dispatcher {
             let call = Arc::clone(&route.call);
             let reply = match ulo::dispatch(&route.handler, &exec, &cx, move |cx| (*call)(cx)).await {
                 Ok(reply) => screened(reply, Writer::Interceptor),
-                Err(err) => status_reply(status::render(err, &exec)),
+                Err(err) => status_reply(status::render(err, &exec, cx.app())),
             };
             reply.map(HttpBody::new)
         })
@@ -980,7 +980,7 @@ impl<S> LateItems<S> {
     /// The status that ends the stream for `error`, with the reply's trailers; its non-zero
     /// trailers report the stream cut off.
     fn failed(&mut self, error: BoxError) -> Status {
-        let status = status::render(error, self.cx.exec());
+        let status = status::render(error, self.cx.exec(), self.cx.app());
         match self.trailers.take() {
             Some(trailers) => with_trailers(status, trailers),
             None => status,

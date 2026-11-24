@@ -518,7 +518,7 @@ impl ServiceInner {
         };
         let response = match outcome {
             Ok(response) => response,
-            Err(err) => render::render_as_is(err, &self.config),
+            Err(err) => render::render_as_is(err, cx.app(), &self.config),
         };
         match completed(response, exec, grace.as_mut()).await {
             Ok(response) => merge_headers(&cx, response),
@@ -576,7 +576,7 @@ impl ServiceInner {
             let call = Arc::clone(&target.call);
             let response = match ulo::dispatch(&target.handler, &exec, &cx, move |cx| (*call)(cx)).await {
                 Ok(response) => response,
-                Err(err) => render::render_error(err, &exec, &this.config),
+                Err(err) => render::render_error(err, &exec, cx.app(), &this.config),
             };
             merge_headers(&cx, response)
         })
@@ -602,7 +602,7 @@ impl ServiceInner {
         let cx = self.context(exec, Arc::new(RequestHead { parts: head }), conn, None, Some(body));
         let response = match ulo::recover::<Http>(None, exec, &cx, err).await {
             Ok(response) => response,
-            Err(err) => render::render_error(err, exec, &self.config),
+            Err(err) => render::render_error(err, exec, cx.app(), &self.config),
         };
         merge_headers(&cx, response)
     }

@@ -11,7 +11,8 @@ use proc_macro::TokenStream;
 
 /// `impl Classify` from `#[classify(<kind>)]`, the kind a snake-case
 /// `ErrorKind` variant: `bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`,
-/// `unprocessable`, `too_many_requests`, `timeout`, `unavailable`, `unimplemented`, `internal`.
+/// `unprocessable`, `too_many_requests`, `timeout`, `unavailable`, `unimplemented`, `internal`,
+/// `cancelled`.
 ///
 /// On a struct, one `#[classify(..)]` on the type. On an enum, one on each variant, or one on the
 /// enum as the default for variants that carry none; a variant left with no kind is a span error

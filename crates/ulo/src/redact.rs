@@ -9,6 +9,7 @@
 //! strip is the only protection there, a backstop and not a guarantee.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
@@ -116,8 +117,9 @@ impl Error for Redacted {
     }
 }
 
-/// A value the redaction function replaces wherever it appears in an error this graph reports,
-/// once registered: by `m.secret(&self.url)`, by `#[module]` for each field of a configured module
+/// A value the redaction function replaces wherever it appears in an error this graph reports, and
+/// in the message and details of an error a transport sends to a caller
+/// ([`AppHandle::redact_text`](crate::AppHandle::redact_text)), once registered: by `m.secret(&self.url)`, by `#[module]` for each field of a configured module
 /// whose type is a `Secret<_>` or an `Option`, `Vec`, `BTreeMap` or `HashMap` of one, or by
 /// binding it with `m.value(..)`. A `Secret<_>` inside another type a `#[module]` field holds is
 /// not reached, and needs `m.secret(..)`.
@@ -481,44 +483,67 @@ mod serde_impl {
 #[derive(Clone, Default)]
 pub(crate) struct SecretRegistry {
     pub(crate) texts: Vec<String>,
+    /// The indices into `texts` of the secrets of at least [`MIN_MATCHED`] characters, bucketed
+    /// by their first byte and longest first within a bucket: a position in the text is tested
+    /// only against the secrets starting with its byte. Empty when no secret is that long.
+    by_first: Vec<Vec<usize>>,
 }
 
 impl SecretRegistry {
     /// An empty text is ignored: it would match between every two characters.
     pub(crate) fn register(&mut self, text: String) {
-        if !text.is_empty() && !self.texts.contains(&text) {
-            self.texts.push(text);
+        if text.is_empty() || self.texts.contains(&text) {
+            return;
         }
+        if text.chars().count() >= MIN_MATCHED {
+            if self.by_first.is_empty() {
+                self.by_first = vec![Vec::new(); 256];
+            }
+            let bucket = &mut self.by_first[usize::from(text.as_bytes()[0])];
+            bucket.push(self.texts.len());
+            let texts = &self.texts;
+            let len = |i: &usize| texts.get(*i).map_or(text.len(), String::len);
+            bucket.sort_by_key(|i| std::cmp::Reverse(len(i)));
+        }
+        self.texts.push(text);
     }
 
     /// Every registered text of at least [`MIN_MATCHED`] characters replaced by the marker,
     /// longest first, so a secret containing another is replaced whole. One pass over the text, so
-    /// a replacement is never matched again by a shorter secret.
-    fn replace(&self, text: &str) -> String {
-        let mut secrets: Vec<&str> =
-            self.texts.iter().map(String::as_str).filter(|s| s.chars().count() >= MIN_MATCHED).collect();
-        if secrets.is_empty() {
-            return text.to_owned();
+    /// a replacement is never matched again by a shorter secret. Borrowed when nothing matched,
+    /// and without a scan when no secret is long enough to be matched.
+    fn replace<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        if self.by_first.is_empty() {
+            return Cow::Borrowed(text);
         }
-        secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
-
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        'scan: while !rest.is_empty() {
-            for secret in &secrets {
-                if let Some(after) = rest.strip_prefix(*secret) {
+        let bytes = text.as_bytes();
+        let mut out: Option<String> = None;
+        let mut copied = 0;
+        let mut at = 0;
+        'scan: while at < bytes.len() {
+            for &index in &self.by_first[usize::from(bytes[at])] {
+                let secret = &self.texts[index];
+                if bytes[at..].starts_with(secret.as_bytes()) {
+                    let out = out.get_or_insert_with(|| String::with_capacity(text.len()));
+                    out.push_str(&text[copied..at]);
                     out.push_str(MARKER);
-                    rest = after;
+                    at += secret.len();
+                    copied = at;
                     continue 'scan;
                 }
             }
-            let mut chars = rest.chars();
-            if let Some(c) = chars.next() {
-                out.push(c);
+            at += 1;
+            while !text.is_char_boundary(at) {
+                at += 1;
             }
-            rest = chars.as_str();
         }
-        out
+        match out {
+            Some(mut out) => {
+                out.push_str(&text[copied..]);
+                Cow::Owned(out)
+            }
+            None => Cow::Borrowed(text),
+        }
     }
 }
 
@@ -781,7 +806,18 @@ fn port_of(host: &str) -> Option<&str> {
 }
 
 pub(crate) fn scrub(secrets: &SecretRegistry, text: &str) -> String {
-    strip_userinfo(&secrets.replace(text))
+    scrub_text(secrets, text).into_owned()
+}
+
+/// [`scrub`], borrowing `text` back when nothing in it is replaced: no registered secret is in it
+/// and it holds no `://`.
+pub(crate) fn scrub_text<'t>(secrets: &SecretRegistry, text: &'t str) -> Cow<'t, str> {
+    let replaced = secrets.replace(text);
+    if !replaced.contains("://") {
+        return replaced;
+    }
+    let stripped = strip_userinfo(&replaced);
+    if stripped == *replaced { replaced } else { Cow::Owned(stripped) }
 }
 
 /// Bounded, in case a `source()` chain loops back on itself.
@@ -818,6 +854,60 @@ impl fmt::Display for PanicMessage {
 }
 
 impl Error for PanicMessage {}
+
+#[cfg(test)]
+mod text {
+    use std::borrow::Cow;
+
+    use super::{SecretRegistry, scrub_text};
+
+    fn registry(secrets: &[&str]) -> SecretRegistry {
+        let mut registry = SecretRegistry::default();
+        for secret in secrets {
+            registry.register((*secret).to_owned());
+        }
+        registry
+    }
+
+    /// Planted break: `replace` testing every secret at every position from the first byte of
+    /// the text only, which leaves the second occurrence in place.
+    #[test]
+    fn every_occurrence_is_replaced_and_the_rest_kept_byte_for_byte() {
+        let secrets = registry(&["s3cr3t-token-xyz"]);
+        let text = "\u{e9}key s3cr3t-token-xyz refused; s3cr3t-token-xyz again \u{1F600}";
+        assert_eq!(scrub_text(&secrets, text), "\u{e9}key [redacted] refused; [redacted] again \u{1F600}");
+    }
+
+    /// The longer of two overlapping secrets is replaced whole, whichever was registered first.
+    #[test]
+    fn a_secret_holding_another_is_replaced_whole() {
+        for order in [["token", "token-xyz"], ["token-xyz", "token"]] {
+            assert_eq!(scrub_text(&registry(&order), "a token-xyz and a token"), "a [redacted] and a [redacted]", "{order:?}");
+        }
+    }
+
+    /// A secret under four characters is not matched, counted in `char`s: three multi-byte
+    /// characters are not matched either, and four ASCII ones are. Planted break: the floor
+    /// counted in bytes.
+    #[test]
+    fn a_secret_under_four_characters_is_not_matched() {
+        let secrets = registry(&["abc", "\u{e9}\u{e9}\u{e9}", "abcd"]);
+        assert_eq!(scrub_text(&secrets, "abc \u{e9}\u{e9}\u{e9} abcd"), "abc \u{e9}\u{e9}\u{e9} [redacted]");
+    }
+
+    /// Nothing replaced, nothing copied: a registry with no secret long enough to match, a text
+    /// holding none, and a URL whose authority carries no userinfo all come back borrowed.
+    #[test]
+    fn a_text_with_nothing_to_replace_comes_back_borrowed() {
+        let empty = SecretRegistry::default();
+        let short = registry(&["abc"]);
+        let long = registry(&["s3cr3t-token-xyz"]);
+        for (secrets, text) in [(&empty, "key abc"), (&short, "key abc"), (&long, "no secret here"), (&long, "see https://host/path")] {
+            assert!(matches!(scrub_text(secrets, text), Cow::Borrowed(_)), "{text}");
+        }
+        assert_eq!(scrub_text(&empty, "see https://user:pw@host/path"), "see https://[redacted]@host/path");
+    }
+}
 
 #[cfg(test)]
 mod tests {

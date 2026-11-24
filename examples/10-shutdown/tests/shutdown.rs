@@ -104,7 +104,7 @@ async fn a_server_whose_serve_loop_dies_starts_the_shutdown_and_the_report_names
     let error = advancing(&clock, DRAIN, serving).await.unwrap().expect_err("a dead server is a failed shutdown");
     assert_eq!(handle.phase(), Phase::Closed);
     assert_eq!((error.report.abandoned, error.report.terminal_skipped), (0, 0));
-    let [ShutdownFailure::Serve { transport, end: ServeEnd::Errored(reason) }] = &*error.failures else {
+    let [ShutdownFailure::Serve { transport, end: ServeEnd::Errored(reason), .. }] = &*error.failures else {
         panic!("expected the one `Serve` failure: {error}");
     };
     assert_eq!(*transport, TypeName::of::<Doomed>());

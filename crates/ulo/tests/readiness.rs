@@ -158,7 +158,7 @@ async fn an_attempt_that_outlives_its_bound_is_timed_out_and_retried() {
     let (key, attempts, reason) = readiness(connect_failing(builder).await);
     assert_eq!((key, attempts), (Key::of::<S1, ()>(), 3), "a timed-out attempt is retried like an error");
     assert_eq!(tries.get(), 3);
-    let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
+    let FailureReason::TimedOut { after, limit, .. } = reason else { panic!("expected a timeout, got: {reason}") };
     assert_eq!((after, limit), (Duration::from_secs(5), Limit::Attempt));
 }
 
@@ -175,7 +175,7 @@ async fn an_attempt_with_no_bound_of_its_own_takes_the_construct_timeout() {
 
     let (_, attempts, reason) = readiness(connect_failing(builder).await);
     assert_eq!(attempts, 1);
-    let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
+    let FailureReason::TimedOut { after, limit, .. } = reason else { panic!("expected a timeout, got: {reason}") };
     assert_eq!((after, limit), (Duration::from_secs(9), Limit::Default));
 }
 
@@ -194,7 +194,7 @@ async fn the_whole_check_bound_ends_the_check_whatever_the_attempt_was_doing() {
 
     let (_, attempts, reason) = readiness(connect_failing(builder).await);
     assert_eq!(attempts, 1, "the bound fired inside the first attempt, which writing `.timeout` alone left unbounded");
-    let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
+    let FailureReason::TimedOut { after, limit, .. } = reason else { panic!("expected a timeout, got: {reason}") };
     assert_eq!((after, limit), (Duration::from_secs(4), Limit::Item));
 }
 
@@ -483,7 +483,7 @@ async fn a_backoff_refused_after_the_whole_check_bound_passed_reports_the_expiry
     let (_, attempts, reason) = readiness(error);
     assert_eq!(attempts, 1);
     assert!(
-        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item } if after == whole),
+        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item, .. } if after == whole),
         "a backoff refused after the whole-check bound passed reported {reason:?}"
     );
     assert_eq!(clock.refused(backoff), 1, "the backoffs asked of a `Timer` refusing them");
@@ -552,7 +552,7 @@ async fn a_backoff_refused_at_the_whole_check_bound_reports_the_expiry() {
     assert!(!is_permanent(&error), "a check whose bound passed is permanent: {error}");
     let (_, _, reason) = readiness(error);
     assert!(
-        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item } if after == Duration::from_secs(5)),
+        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item, .. } if after == Duration::from_secs(5)),
         "a backoff refused at the whole-check bound reported {reason:?}"
     );
 }

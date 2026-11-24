@@ -831,7 +831,7 @@ impl StageCx {
         let handler = self.route.as_ref().map(|(target, _)| &target.handler);
         let response = match ulo::recover(handler, &self.exec, &cx, err).await {
             Ok(response) => response,
-            Err(err) => render::render_error(err, &self.exec, &self.service.config),
+            Err(err) => render::render_error(err, &self.exec, cx.app(), &self.service.config),
         };
         merge_headers(&cx, response)
     }

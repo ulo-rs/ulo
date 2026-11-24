@@ -403,7 +403,7 @@ async fn a_panic_is_caught_at_its_stage() {
     assert!(
         matches!(
             err.downcast_ref::<LookupError>(),
-            Some(LookupError::Construct { key, reason }) if matches!(**reason, FailureReason::Panicked(_)) && key.key() == Key::of::<PanicsOnBuild, ()>()
+            Some(LookupError::Construct { key, reason, .. }) if matches!(**reason, FailureReason::Panicked(_)) && key.key() == Key::of::<PanicsOnBuild, ()>()
         ),
         "{err}"
     );

@@ -61,6 +61,7 @@ pub fn bind_all(endpoints: &[Endpoint]) -> Result<Vec<BoundListener>, BindError>
 #[derive(Debug)]
 pub enum BindError {
     /// The OS refused the address: in use, not available, not permitted.
+    #[non_exhaustive]
     Io { endpoint: Endpoint, source: io::Error },
     Activation(ActivationError),
 }

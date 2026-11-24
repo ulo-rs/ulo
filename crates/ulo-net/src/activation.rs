@@ -394,8 +394,10 @@ mod unix {
 #[derive(Clone, Debug)]
 pub enum ActivationError {
     /// `LISTEN_PID` names another process: the variables were meant for a parent or a sibling.
+    #[non_exhaustive]
     PidMismatch { expected: u32, found: u32 },
     /// `LISTEN_PID`, `LISTEN_FDS` or `LISTEN_FDNAMES` is not what the protocol writes.
+    #[non_exhaustive]
     Malformed { variable: &'static str },
     /// No inherited socket answers to this name or index.
     Missing(ListenerName),

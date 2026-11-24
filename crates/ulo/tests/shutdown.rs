@@ -231,22 +231,22 @@ async fn a_shutdown_hook_that_panics_times_out_or_cannot_read_its_parameter_is_r
     let error = within("close", app.close(Signal::new("done"))).await.expect_err("shutdown reported no failure");
     let [first, second, third] = &*error.failures else { panic!("expected three failures, got: {error}") };
     match first {
-        ShutdownFailure::Hook { hook, key, reason } => {
+        ShutdownFailure::Hook { hook, key, reason, .. } => {
             assert_eq!((*hook, key.key()), (HookKind::BeforeApplicationShutdown, Key::of::<S1, ()>()));
             assert!(matches!(**reason, FailureReason::Panicked(_)), "got: {reason}");
         }
         other => panic!("expected a hook failure, got: {other}"),
     }
     match second {
-        ShutdownFailure::Hook { hook, key, reason } => {
-            let FailureReason::TimedOut { after, limit } = &**reason else { panic!("expected a hook timeout, got: {second}") };
+        ShutdownFailure::Hook { hook, key, reason, .. } => {
+            let FailureReason::TimedOut { after, limit, .. } = &**reason else { panic!("expected a hook timeout, got: {second}") };
             assert_eq!((*hook, key.key()), (HookKind::OnModuleDestroy, Key::of::<S2, ()>()));
             assert_eq!((*after, *limit), (Duration::from_secs(3), Limit::Item));
         }
         other => panic!("expected a hook timeout, got: {other}"),
     }
     match third {
-        ShutdownFailure::Hook { hook, key, reason } => {
+        ShutdownFailure::Hook { hook, key, reason, .. } => {
             let FailureReason::Errored(source) = &**reason else { panic!("expected a failed read, got: {third}") };
             assert_eq!((*hook, key.key()), (HookKind::OnApplicationShutdown, Key::of::<S3, ()>()));
             assert!(
@@ -295,7 +295,7 @@ async fn an_expired_cap_skips_every_hook_not_yet_run_and_closes_a_server_that_ca
         }
     }
     match close {
-        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
+        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit, .. }, .. } => {
             assert_eq!(*transport, TypeName::of::<TB>());
             assert_eq!((*after, *limit), (Duration::ZERO, Limit::ShutdownCap));
         }
@@ -350,7 +350,7 @@ async fn a_hook_still_running_when_the_cap_runs_out_is_dropped_with_the_caps_lim
     for (failure, kind) in error.failures.iter().zip([HookKind::BeforeApplicationShutdown, HookKind::OnModuleDestroy]) {
         match failure {
             ShutdownFailure::Hook { hook, reason, .. } => {
-                let FailureReason::TimedOut { after, limit } = &**reason else { panic!("expected a hook cut by the cap, got: {failure}") };
+                let FailureReason::TimedOut { after, limit, .. } = &**reason else { panic!("expected a hook cut by the cap, got: {failure}") };
                 assert_eq!(*hook, kind);
                 assert_eq!((*after, *limit), (Duration::from_secs(10), Limit::ShutdownCap), "the cap wins over the hook's own bound");
             }
@@ -380,19 +380,19 @@ async fn a_close_that_errs_panics_or_exceeds_its_bound_is_recorded_and_every_clo
     assert_eq!(closes, ["close d", "close c", "close b", "close a"], "every `close` started, last bound first");
     let [b, c, d] = &*error.failures else { panic!("expected three failures, got: {error}") };
     match d {
-        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
+        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit, .. }, .. } => {
             assert_eq!(*transport, TypeName::of::<TD>());
             assert_eq!((*after, *limit), (Duration::from_secs(4), Limit::Default), "with no cap, `hook_timeout` bounds a `close`");
         }
         other => panic!("expected a close timeout, got: {other}"),
     }
     assert!(
-        matches!(c, ShutdownFailure::Close { transport, reason: FailureReason::Panicked(_) } if *transport == TypeName::of::<TC>()),
+        matches!(c, ShutdownFailure::Close { transport, reason: FailureReason::Panicked(_), .. } if *transport == TypeName::of::<TC>()),
         "got: {c}"
     );
     assert!(ulo::is_panic(&ulo::BoxError::from(error.clone())), "`is_panic` answers true when one failure among several is a panicking `close`");
     match b {
-        ShutdownFailure::Close { transport, reason: FailureReason::Errored(source) } => {
+        ShutdownFailure::Close { transport, reason: FailureReason::Errored(source), .. } => {
             assert_eq!(*transport, TypeName::of::<TB>());
             assert!(source.downcast_ref::<Boom>().is_some(), "the transport's own error is reachable");
         }
@@ -417,7 +417,7 @@ async fn a_close_that_exceeds_the_cap_reports_the_cap_as_its_limit() {
         .collect();
     assert_eq!(transports, [TypeName::of::<TB>(), TypeName::of::<TC>(), TypeName::of::<TD>()], "the failures in bind order");
     match &error.failures[2] {
-        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
+        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit, .. }, .. } => {
             assert_eq!(*transport, TypeName::of::<TD>());
             assert_eq!((*after, *limit), (Duration::from_secs(8), Limit::ShutdownCap), "the cap, not `hook_timeout`, bounded the close");
         }
@@ -455,7 +455,7 @@ async fn the_closes_run_at_once_and_their_failures_are_reported_in_bind_order() 
         .failures
         .iter()
         .map(|failure| match failure {
-            ShutdownFailure::Close { transport, reason: FailureReason::Errored(source) } => (*transport, source.to_string()),
+            ShutdownFailure::Close { transport, reason: FailureReason::Errored(source), .. } => (*transport, source.to_string()),
             other => panic!("expected a close error, got: {other}"),
         })
         .collect();
@@ -856,7 +856,7 @@ async fn a_close_is_cut_where_the_cap_ends_whatever_ran_before_it() {
     let took = started.elapsed();
 
     match &error.failures[..] {
-        [ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } }] => {
+        [ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit, .. }, .. }] => {
             assert_eq!(*transport, TypeName::of::<TB>());
             assert_eq!((*after, *limit), (Duration::from_millis(700), Limit::ShutdownCap));
         }

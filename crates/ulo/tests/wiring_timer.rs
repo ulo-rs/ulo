@@ -24,7 +24,7 @@ fn check() -> impl Fn() -> std::future::Ready<Result<(), Boom>> + Send + Sync + 
 
 /// The `BoundWithoutTimer` entries as `(item, line)`.
 fn bounds(errors: &ulo::WiringErrors) -> Vec<(String, u32)> {
-    entries!(errors, WiringError::BoundWithoutTimer { item, at } => (item.clone(), at.line()))
+    entries!(errors, WiringError::BoundWithoutTimer { item, at, .. } => (item.clone(), at.line()))
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn backoff_reports_its_own_line() {
         handle.backoff(SECOND);
     }));
 
-    let (binding, line) = entry!(errors, WiringError::BackoffWithoutTimer { binding, at } => (binding.clone(), at.line()));
+    let (binding, line) = entry!(errors, WiringError::BackoffWithoutTimer { binding, at, .. } => (binding.clone(), at.line()));
     assert!(binding.contains("Svc"), "{binding}");
     assert_eq!(line, backoff, "the `.backoff(..)` line, not the `.ready(..)` line {ready}");
     assert!(bounds(&errors).is_empty(), "a backoff is not a bound: {errors}");
@@ -198,7 +198,7 @@ fn a_builder_knob_on_an_app_with_no_timer() {
     ];
     for (name, set) in knobs {
         let errors = wire_err_with(set(App::builder(Empty)));
-        let knob = entry!(errors, WiringError::KnobWithoutTimer { knob } => *knob);
+        let knob = entry!(errors, WiringError::KnobWithoutTimer { knob, .. } => *knob);
         assert_eq!(knob, name);
         assert_eq!(errors.len(), 1, "{errors}");
 
@@ -208,7 +208,7 @@ fn a_builder_knob_on_an_app_with_no_timer() {
     let all = App::builder(Empty).construct_timeout(SECOND).hook_timeout(SECOND).shutdown_timeout(SECOND).drain_timeout(SECOND);
     let errors = wire_err_with(all);
     assert_eq!(
-        entries!(errors, WiringError::KnobWithoutTimer { knob } => *knob),
+        entries!(errors, WiringError::KnobWithoutTimer { knob, .. } => *knob),
         ["drain_timeout", "shutdown_timeout", "hook_timeout", "construct_timeout"],
         "every knob set is reported, in one fixed order"
     );
@@ -250,7 +250,7 @@ const ZERO: Duration = Duration::ZERO;
 
 /// The `ZeroBound` entries as `(item, binding key, module, line)`.
 fn zeros(errors: &ulo::WiringErrors) -> Vec<(BoundItem, Option<Key>, String, u32)> {
-    entries!(errors, WiringError::ZeroBound { item, binding, module, at } => (*item, binding.as_ref().map(|b| b.key()), module.to_string(), at.line()))
+    entries!(errors, WiringError::ZeroBound { item, binding, module, at, .. } => (*item, binding.as_ref().map(|b| b.key()), module.to_string(), at.line()))
 }
 
 /// `root` wired with no clock and with one: the same zero bounds refused both times, and on the app
@@ -402,7 +402,7 @@ fn a_zero_construct_or_hook_default_is_refused_at_the_call_that_set_it() {
         .construct_timeout(ZERO)
         .hook_timeout(ZERO);
     let errors = wire_err_with(builder);
-    let found = entries!(errors, WiringError::ZeroDefault { knob, at } => (*knob, at.line()));
+    let found = entries!(errors, WiringError::ZeroDefault { knob, at, .. } => (*knob, at.line()));
     assert_eq!(found, [("hook_timeout", hook), ("construct_timeout", construct)], "each knob with the line that set it, in one fixed order");
     assert_eq!(errors.len(), 2, "{errors}");
     let text = errors.to_string();
@@ -411,7 +411,7 @@ fn a_zero_construct_or_hook_default_is_refused_at_the_call_that_set_it() {
     // Refused whatever the clock; with none, the missing `Timer` is reported beside it.
     let errors = wire_err_with(App::builder(Empty).hook_timeout(ZERO));
     assert_eq!(entries!(errors, WiringError::ZeroDefault { knob, .. } => *knob), ["hook_timeout"]);
-    assert_eq!(entries!(errors, WiringError::KnobWithoutTimer { knob } => *knob), ["hook_timeout"]);
+    assert_eq!(entries!(errors, WiringError::KnobWithoutTimer { knob, .. } => *knob), ["hook_timeout"]);
     assert_eq!(errors.len(), 2, "{errors}");
 }
 
@@ -427,6 +427,6 @@ fn a_zero_default_set_through_test_app_is_refused_at_the_tests_call() {
     let hook = line!() + 1;
     let app = app.hook_timeout(ZERO);
     let errors = wiring_errors(app.wire());
-    let found = entries!(errors, WiringError::ZeroDefault { knob, at } => (*knob, at.file(), at.line()));
+    let found = entries!(errors, WiringError::ZeroDefault { knob, at, .. } => (*knob, at.file(), at.line()));
     assert_eq!(found, [("hook_timeout", file!(), hook), ("construct_timeout", file!(), construct)], "the test's own lines, not `TestApp`'s");
 }

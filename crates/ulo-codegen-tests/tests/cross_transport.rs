@@ -718,7 +718,7 @@ async fn a_spent_cap_still_writes_each_held_calls_shutdown_answer() {
     let mut failures = error.failures.iter();
     for kind in [HookKind::BeforeApplicationShutdown, HookKind::OnModuleDestroy] {
         match failures.next() {
-            Some(ShutdownFailure::Hook { hook, key, reason }) if matches!(**reason, FailureReason::Skipped) => {
+            Some(ShutdownFailure::Hook { hook, key, reason, .. }) if matches!(**reason, FailureReason::Skipped) => {
                 assert_eq!(*hook, kind);
                 assert_eq!(key.key(), Key::of::<Root, ()>(), "the hook's owner");
             }
@@ -733,7 +733,7 @@ async fn a_spent_cap_still_writes_each_held_calls_shutdown_answer() {
     ];
     for expected in bind_order {
         match failures.next() {
-            Some(ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } }) => {
+            Some(ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit, .. }, .. }) => {
                 assert_eq!(*transport, expected, "the closes the cap cut, in bind order");
                 assert_eq!((*after, *limit), (Duration::ZERO, Limit::ShutdownCap), "{transport}'s close");
             }
@@ -741,7 +741,7 @@ async fn a_spent_cap_still_writes_each_held_calls_shutdown_answer() {
         }
     }
     match failures.next() {
-        Some(ShutdownFailure::Hook { hook: HookKind::OnApplicationShutdown, key, reason }) if matches!(**reason, FailureReason::Skipped) => {
+        Some(ShutdownFailure::Hook { hook: HookKind::OnApplicationShutdown, key, reason, .. }) if matches!(**reason, FailureReason::Skipped) => {
             assert_eq!(key.key(), Key::of::<Root, ()>(), "the hook's owner");
         }
         other => panic!("expected the cap to skip the on-shutdown hook, got: {other:?}"),

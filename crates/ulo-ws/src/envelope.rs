@@ -140,9 +140,9 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Ws> for Payload<T> {
         };
         match decoded {
             Ok(Some(value)) => Ok(Payload(value)),
-            Ok(None) => Err(ExtractError::Missing { param: "data" }),
-            Err((error, true)) => Err(ExtractError::Mismatched { param: "data", source: cx.app().redact(error) }),
-            Err((error, false)) => Err(ExtractError::Malformed { param: "data", source: cx.app().redact(error) }),
+            Ok(None) => Err(ExtractError::missing("data")),
+            Err((error, true)) => Err(ExtractError::mismatched("data", cx.app().redact(error))),
+            Err((error, false)) => Err(ExtractError::malformed("data", cx.app().redact(error))),
         }
     }
 }

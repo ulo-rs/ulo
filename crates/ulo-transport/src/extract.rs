@@ -93,7 +93,7 @@ where
                 Ok(value) => Ok(Injected(value)),
                 Err(source) => {
                     let param = std::any::type_name::<S>();
-                    if let LookupError::NotFound { key, kind: LookupKind::Extension } = &source {
+                    if let LookupError::NotFound { key, kind: LookupKind::Extension, .. } = &source {
                         unwritten_extension(exec, param, *key);
                     }
                     Err(ExtractError::Dependency { param, source })
@@ -149,35 +149,44 @@ fn unwritten_extension(exec: &ExecutionRef, param: &'static str, extension: KeyN
 #[derive(Debug)]
 pub enum ExtractError {
     /// A required header, query field or path segment.
+    #[non_exhaustive]
     Missing { param: &'static str },
     /// Could not decode: the syntax is wrong, or the input ended early. `source` is built through
     /// `AppHandle::redact`, so a decoder's error echoing a credential is redacted like any outside
     /// error.
+    #[non_exhaustive]
     Malformed { param: &'static str, source: Redacted },
     /// Decoded, and does not fit the type: a JSON body missing a field or holding a value of the
     /// wrong type, a form lacking a field. A body that parses as JSON and is refused for what it
     /// holds is this whatever category the decoder files it under: a number past `f64`, nesting
     /// past 128. `source`, redacted as `Malformed`'s is, names what did not fit.
+    #[non_exhaustive]
     Mismatched { param: &'static str, source: Redacted },
+    #[non_exhaustive]
     UnsupportedMediaType { param: &'static str, expected: &'static str },
     /// Larger than `limit` bytes, the transport's bound on one body or one item: an HTTP body, a
     /// gRPC message, an RPC streamed request's item over `max_queued_bytes` on its own.
+    #[non_exhaustive]
     TooLarge { param: &'static str, limit: u64 },
     /// Validation rules failed.
+    #[non_exhaustive]
     Invalid { param: &'static str, violations: Vec<FieldViolation> },
     /// A `FromContainer` parameter's read failed: `param` is the type's name, `source` the
     /// lookup error, which classifies as `CallError::from_boxed` maps it, so an execution-scoped
     /// constructor's "tenant not found" is a 404 here too. Recognised by `from_boxed`, it keeps
     /// the constructor's challenge and every transport's code as well.
+    #[non_exhaustive]
     Dependency { param: &'static str, source: LookupError },
     /// A value the server hosting the application was to supply, absent: a deployment fault
     /// rather than a bad request, so it classifies as `Internal` with its message withheld.
     /// `type_name` is the value's type.
+    #[non_exhaustive]
     HostMissing { param: &'static str, type_name: &'static str },
     /// The body was taken before the extractor ran, by a guard or an interceptor calling the
     /// transport's `take_body`: a fault in the server, not in the request, so it classifies as
     /// `Internal` with its message withheld, and `Option<P>` does not read it as an absent body.
     /// `extractor` is the extractor's type.
+    #[non_exhaustive]
     BodyTaken { param: &'static str, extractor: &'static str },
     /// A streamed body's items arrived faster than its reader took them: `limit` waited unread,
     /// the transport's bound, and the next one ended the call. The stream yields this as its last
@@ -185,20 +194,86 @@ pub enum ExtractError {
     /// complete one. It classifies as `Unavailable`. RPC's `Inbound<T>` yields it, and the RPC
     /// server answers the call `unavailable` with the reason `overflow` whatever the handler
     /// returns.
+    #[non_exhaustive]
     Overflowed { param: &'static str, limit: u64 },
     /// A streamed body's items arrived faster than its reader took them, and the next one would
     /// have taken the bytes waiting unread past `limit`, the transport's byte bound. It ends the
     /// stream and classifies as `Overflowed` does. An item past the bound on its own is
     /// `TooLarge`, which no read makes room for.
+    #[non_exhaustive]
     OverflowedBytes { param: &'static str, limit: u64 },
     /// A streamed body still being read when its call ended, before the caller's last item: a
     /// handler answered and left the body to a task of its own. The stream yields the items that
     /// had arrived, then this as its last item, so that task does not take the part it read for
     /// the whole. It classifies as `Unavailable`; the call has been answered already.
+    #[non_exhaustive]
     CallEnded { param: &'static str },
+    /// The caller went away while `param` was read: it reset the stream, closed the connection or
+    /// cancelled the call before the last byte arrived. Not a fault in what it sent, so it
+    /// classifies as `Cancelled`, which no counter of bad requests or of the server's own
+    /// unavailability reads. `source` is the transport's read error, redacted as `Malformed`'s is.
+    #[non_exhaustive]
+    Cancelled { param: &'static str, source: Redacted },
 }
 
 const _: () = assert!(size_of::<ExtractError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
+
+/// One constructor per variant, each variant being `#[non_exhaustive]`: an extractor outside this
+/// crate builds its failure here, and a pattern names the fields it reads beside `..`.
+impl ExtractError {
+    pub fn missing(param: &'static str) -> Self {
+        ExtractError::Missing { param }
+    }
+
+    /// `source` from `AppHandle::redact`, as every outside error the extractor stores.
+    pub fn malformed(param: &'static str, source: Redacted) -> Self {
+        ExtractError::Malformed { param, source }
+    }
+
+    pub fn mismatched(param: &'static str, source: Redacted) -> Self {
+        ExtractError::Mismatched { param, source }
+    }
+
+    pub fn unsupported_media_type(param: &'static str, expected: &'static str) -> Self {
+        ExtractError::UnsupportedMediaType { param, expected }
+    }
+
+    pub fn too_large(param: &'static str, limit: u64) -> Self {
+        ExtractError::TooLarge { param, limit }
+    }
+
+    pub fn invalid(param: &'static str, violations: Vec<FieldViolation>) -> Self {
+        ExtractError::Invalid { param, violations }
+    }
+
+    pub fn dependency(param: &'static str, source: LookupError) -> Self {
+        ExtractError::Dependency { param, source }
+    }
+
+    pub fn host_missing(param: &'static str, type_name: &'static str) -> Self {
+        ExtractError::HostMissing { param, type_name }
+    }
+
+    pub fn body_taken(param: &'static str, extractor: &'static str) -> Self {
+        ExtractError::BodyTaken { param, extractor }
+    }
+
+    pub fn overflowed(param: &'static str, limit: u64) -> Self {
+        ExtractError::Overflowed { param, limit }
+    }
+
+    pub fn overflowed_bytes(param: &'static str, limit: u64) -> Self {
+        ExtractError::OverflowedBytes { param, limit }
+    }
+
+    pub fn call_ended(param: &'static str) -> Self {
+        ExtractError::CallEnded { param }
+    }
+
+    pub fn cancelled(param: &'static str, source: Redacted) -> Self {
+        ExtractError::Cancelled { param, source }
+    }
+}
 
 impl ExtractError {
     pub fn param(&self) -> &'static str {
@@ -214,7 +289,8 @@ impl ExtractError {
             | ExtractError::BodyTaken { param, .. }
             | ExtractError::Overflowed { param, .. }
             | ExtractError::OverflowedBytes { param, .. }
-            | ExtractError::CallEnded { param } => param,
+            | ExtractError::CallEnded { param }
+            | ExtractError::Cancelled { param, .. } => param,
         }
     }
 }
@@ -244,6 +320,7 @@ impl fmt::Display for ExtractError {
                 write!(f, "`{param}`'s next item would have taken the bytes waiting to be read past {limit}, and it ended the call")
             }
             ExtractError::CallEnded { param } => write!(f, "`{param}` was cut short: its call ended before the caller's last item"),
+            ExtractError::Cancelled { param, source } => write!(f, "`{param}` was cut short: the caller went away: {source}"),
         }
     }
 }
@@ -264,7 +341,8 @@ impl Error for ExtractError {
 /// `HostMissing` and `BodyTaken` are `Internal` with the message withheld: the fault is the
 /// deployment's or the server's own, and the text names a type. `Overflowed` and `OverflowedBytes`
 /// are `Unavailable`: the request was well formed and the server did not keep up with it, and
-/// `CallEnded` is too: the server ended the call before the request did.
+/// `CallEnded` is too: the server ended the call before the request did. `Cancelled` is
+/// `Cancelled`: the caller ended it.
 impl Classify for ExtractError {
     fn classify(&self) -> ErrorKind {
         match self {
@@ -272,6 +350,7 @@ impl Classify for ExtractError {
             ExtractError::Dependency { source, .. } => from_lookup(source, 0).kind(),
             ExtractError::HostMissing { .. } | ExtractError::BodyTaken { .. } => ErrorKind::Internal,
             ExtractError::Overflowed { .. } | ExtractError::OverflowedBytes { .. } | ExtractError::CallEnded { .. } => ErrorKind::Unavailable,
+            ExtractError::Cancelled { .. } => ErrorKind::Cancelled,
             _ => ErrorKind::BadRequest,
         }
     }

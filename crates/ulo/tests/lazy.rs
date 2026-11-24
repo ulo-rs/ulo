@@ -177,7 +177,7 @@ async fn a_module_with_a_controller_is_refused_and_builds_nothing() {
         }),
     )
     .await;
-    assert!(matches!(&refusal, LoadRefusal::Controllers { module } if module.to_string() == mod_name::<L1>()), "{refusal:?}");
+    assert!(matches!(&refusal, LoadRefusal::Controllers { module, .. } if module.to_string() == mod_name::<L1>()), "{refusal:?}");
     assert_eq!(built.get(), 0, "the refusal comes before anything is built");
     close(app).await;
 }
@@ -189,7 +189,7 @@ async fn a_module_that_writes_module_metadata_is_refused() {
         m.meta::<Routes>();
     }))
     .await;
-    assert!(matches!(&refusal, LoadRefusal::Middleware { module } if module.to_string() == mod_name::<L1>()), "{refusal:?}");
+    assert!(matches!(&refusal, LoadRefusal::Middleware { module, .. } if module.to_string() == mod_name::<L1>()), "{refusal:?}");
     close(app).await;
 }
 
@@ -200,7 +200,7 @@ async fn a_module_that_declares_an_execution_input_is_refused() {
         m.input::<Addr>().seeded_by::<TA>();
     }))
     .await;
-    let LoadRefusal::Input { module, key } = &refusal else { panic!("expected an input refusal, got: {refusal:?}") };
+    let LoadRefusal::Input { module, key, .. } = &refusal else { panic!("expected an input refusal, got: {refusal:?}") };
     assert_eq!((module.to_string(), key.key()), (mod_name::<L1>(), Key::of::<Addr, ()>()));
     close(app).await;
 }
@@ -214,7 +214,7 @@ async fn a_global_module_that_exports_is_refused_and_one_that_exports_nothing_lo
         m.export::<Cfg>();
     }))
     .await;
-    let LoadRefusal::GlobalExport { module, key } = &refusal else { panic!("expected a global-export refusal, got: {refusal:?}") };
+    let LoadRefusal::GlobalExport { module, key, .. } = &refusal else { panic!("expected a global-export refusal, got: {refusal:?}") };
     assert_eq!((module.to_string(), key.key()), (mod_name::<L1>(), Key::of::<Cfg, ()>()));
 
     let loaded = handle
@@ -237,7 +237,7 @@ async fn a_contribution_to_a_collection_the_graph_has_is_refused_and_one_that_in
         m.contribute::<dyn Plug>().value(Arc::new(Plugin));
     }))
     .await;
-    let LoadRefusal::Contribution { module, key } = &refusal else { panic!("expected a contribution refusal, got: {refusal:?}") };
+    let LoadRefusal::Contribution { module, key, .. } = &refusal else { panic!("expected a contribution refusal, got: {refusal:?}") };
     assert_eq!((module.to_string(), key.key()), (mod_name::<L1>(), Key::of::<dyn Plug, ()>()));
 
     trait Fresh: Send + Sync {}
@@ -511,7 +511,7 @@ async fn loading_a_loaded_identity_again_with_other_settings_names_both_loads() 
     if let Err(LoadError::Wiring(errors)) = &outcome {
         let sites = entry!(errors, WiringError::DifferingSettings { first, second, .. } => (first.clone(), second.clone()));
         let at = |site: &ModuleSite| match site {
-            ModuleSite::Load { at } => (at.file().to_owned(), at.line()),
+            ModuleSite::Load { at, .. } => (at.file().to_owned(), at.line()),
             other => panic!("expected a load site, got {other:?}"),
         };
         assert_eq!(at(&sites.0), (file!().to_owned(), first_line), "the first `load` call");

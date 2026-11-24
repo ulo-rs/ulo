@@ -30,7 +30,7 @@ fn qualified_contribution_under_a_role_key() {
         m.contribute::<AnyGuard<TA>>().qualified::<Replica>().provide::<GuardA>(|a| a);
     }));
 
-    let (key, module, at) = entry!(errors, WiringError::QualifiedRoleContribution { key, module, at } => (*key, module.to_string(), **at));
+    let (key, module, at) = entry!(errors, WiringError::QualifiedRoleContribution { key, module, at, .. } => (*key, module.to_string(), **at));
     assert_eq!(key.key(), Key::of::<AnyGuard<TA>, Replica>());
     assert_eq!(key.kind(), BindingKind::Collection, "the qualified collection is named, not the role key");
     assert_eq!(module, mod_name::<A>());
@@ -58,7 +58,7 @@ fn a_qualified_contribution_under_a_key_that_is_not_a_role_is_accepted() {
 
 /// The refused key of the one `SingleRoleBinding` in the report, and the line it was written on.
 fn single_role_binding(errors: &ulo::WiringErrors) -> (Key, BindingKind, String, u32) {
-    let (key, module, at) = entry!(errors, WiringError::SingleRoleBinding { key, module, at } => (*key, module.to_string(), **at));
+    let (key, module, at) = entry!(errors, WiringError::SingleRoleBinding { key, module, at, .. } => (*key, module.to_string(), **at));
     (key.key(), key.kind(), module, at.line())
 }
 

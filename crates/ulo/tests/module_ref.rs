@@ -77,7 +77,7 @@ async fn a_module_ref_reports_a_key_its_module_sees_twice() {
     .await;
 
     let b = app.module::<Mod<B>>().unwrap();
-    let Err(LookupError::Ambiguous { key, sources }) = b.get::<Svc>().await else {
+    let Err(LookupError::Ambiguous { key, sources, .. }) = b.get::<Svc>().await else {
         panic!("`B` sees `Svc` from two imports");
     };
     assert_eq!(key.key(), ulo::Key::of::<Svc, ()>());
@@ -284,7 +284,7 @@ reads_back!(HandleReader, HandleBack, PerExecution, HANDLE_DEPTH, |r: &Resolver<
 /// a `Reentrant` refusal.
 fn reentrant_keys<T: ?Sized>(answer: Result<Dep<T>, LookupError>) -> (Key, Key) {
     match answer {
-        Err(LookupError::Reentrant { key, reader }) => (key.key(), reader.key()),
+        Err(LookupError::Reentrant { key, reader, .. }) => (key.key(), reader.key()),
         Err(other) => panic!("expected `Reentrant`, got: {other}"),
         Ok(_) => panic!("expected `Reentrant`, the read succeeded"),
     }

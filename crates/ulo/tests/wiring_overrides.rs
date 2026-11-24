@@ -87,7 +87,7 @@ fn stale_override() {
     let errors = errors_of(
         TestApp::of(Mod::<Root>::new(|m| m.import(exporting_cfg::<Other>(1)))).override_value::<u32>(Arc::new(7)),
     );
-    let (key, keyed, at) = entry!(errors, WiringError::OverrideUnmatched { key, keyed, at } => (key.key(), keyed.clone(), **at));
+    let (key, keyed, at) = entry!(errors, WiringError::OverrideUnmatched { key, keyed, at, .. } => (key.key(), keyed.clone(), **at));
     assert_eq!(key, Key::of::<u32, ()>());
     assert!(keyed.is_none());
     assert_eq!(at.line(), line, "the entry points at the override call");
@@ -185,7 +185,7 @@ fn override_value_over_a_collection() {
 fn overriding_the_timer_is_refused_at_wiring() {
     let line = line!() + 1;
     let errors = errors_of(TestApp::of(Empty).override_value::<dyn Timer>(Arc::new(Frozen::new())));
-    let at = entry!(errors, WiringError::TimerOverride { at } => **at);
+    let at = entry!(errors, WiringError::TimerOverride { at, .. } => **at);
     assert_eq!(at.line(), line);
     assert_eq!(errors.len(), 1, "{errors}");
 }
@@ -201,7 +201,7 @@ async fn overriding_the_runtime_is_refused_at_wiring() {
 fn replacement_exports_a_subset() {
     let root = Mod::<Root>::new(|m| m.import(exporting_cfg::<Orig>(1)));
     let errors = errors_of(TestApp::of(root).replace_module(exporting_cfg::<Orig>(1), Mod::<Fake>::bare()));
-    let (original, replacement, missing) = entry!(errors, WiringError::ReplacementMissingExports { original, replacement, missing }
+    let (original, replacement, missing) = entry!(errors, WiringError::ReplacementMissingExports { original, replacement, missing, .. }
         => (original.to_string(), replacement.to_string(), missing.iter().map(|k| k.key()).collect::<Vec<_>>()));
     assert_eq!((original, replacement), (mod_name::<Orig>(), mod_name::<Fake>()));
     assert_eq!(missing, [Key::of::<Cfg, ()>()]);
@@ -214,7 +214,7 @@ fn replace_a_module_nobody_imports() {
     let errors = errors_of(
         TestApp::of(Mod::<Root>::bare()).replace_module(Mod::<Other>::bare(), Mod::<Fake>::bare()),
     );
-    let (original, at) = entry!(errors, WiringError::ReplacementUnmatched { original, at } => (original.to_string(), **at));
+    let (original, at) = entry!(errors, WiringError::ReplacementUnmatched { original, at, .. } => (original.to_string(), **at));
     assert_eq!(original, mod_name::<Other>());
     assert_eq!(at.line(), line);
     assert_eq!(errors.len(), 1, "the first call is the sole entry: {errors}");
@@ -229,7 +229,7 @@ fn second_replace_module_of_one_original() {
             .replace_module(exporting_cfg::<Orig>(1), exporting_cfg::<Fake>(2))
             .replace_module(exporting_cfg::<Orig>(1), exporting_cfg::<FakeToo>(3)),
     );
-    let (original, first, second) = entry!(errors, WiringError::DuplicateReplacement { original, first, second }
+    let (original, first, second) = entry!(errors, WiringError::DuplicateReplacement { original, first, second, .. }
         => (original.to_string(), **first, **second));
     assert_eq!(original, mod_name::<Orig>());
     assert_eq!((first.line(), second.line()), (line + 3, line + 4), "`first` is the call wiring applies, `second` the one refused");
