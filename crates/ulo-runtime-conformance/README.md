@@ -4,11 +4,12 @@ The conformance suite every `ulo` runtime runs. A runtime is what `ulo` spawns t
 through: `ulo-runtime-tokio`, `ulo-runtime-smol`, or one written outside the `ulo` repository. One
 macro stamps the suite's scenarios as `#[test]`s against the runtime: what a task's handle answers
 after a return, an abort, a panic and a drop, what `spawn_with` and a `TaskSet` answer over it,
-blocking work running on threads that do not poll the runtime's tasks, an app binding the runtime as
-one object that redacts a spawned task's panic with the app's secrets, and a runtime that has shut
-down refusing to spawn, to run blocking work, to time and to run a future, without a panic. A
-runtime whose `tests/conformance.rs` passes keeps the same promises as the two `ulo` ships, each of
-which runs the suite in CI.
+blocking work running on threads that do not poll the runtime's tasks, the runtime's tasks polled
+on no more threads than the harness says poll them, an app binding the runtime as one object that
+redacts a spawned task's panic with the app's secrets, and a runtime that has shut down refusing to
+spawn, to run blocking work, to time and to run a future, without a panic. A runtime whose
+`tests/conformance.rs` passes keeps the same promises as the two `ulo` ships, each of which runs the
+suite in CI.
 
 ## Install
 
@@ -83,7 +84,9 @@ the harness answers no runtime that can shut down: declare `a_shut_down_runtime_
 
 Your runtime takes `Smol`'s place. `runtime` answers a value of it, called inside the future
 `block_on` runs. `block_on` runs a future to its end from a plain test thread, on an executor that
-runs the tasks the runtime spawns meanwhile. `workers` answers how many threads poll those tasks.
+runs the tasks the runtime spawns meanwhile. `workers` answers how many threads poll those tasks,
+the thread running `block_on` among them when it polls tasks too, as smol's does and tokio's
+multi-thread runtime's does not.
 `stoppable` answers a second runtime, running, with what shuts it down, for the scenarios on a
 runtime that has shut down: a `Stoppable` carries the runtime, the crate's other clocks on it,
 `run`, the runtime crate's own way to run a future as a task, and `stop`. [`ulo-runtime-tokio`'s harness](https://github.com/ulo-rs/ulo/blob/master/crates/ulo-runtime-tokio/tests/conformance.rs)
@@ -114,6 +117,18 @@ modules, each taking the runtime by value, so a runtime crate runs one alone to 
   runtime's tasks, and that needs the workers outnumbered, not a large pool: a runtime running
   blocking work on the threads that poll its tasks has every one of them held and fails, and one
   whose blocking pool runs that many pieces at once passes.
+- **Worker count:** the suite checks `workers` against the threads that poll the tasks it
+  spawns. One scenario spawns at least 64 tasks, four for each core or for each of `workers + 1`
+  threads, whichever is more, records the thread of every poll, has each task hold its thread for
+  a millisecond at its first poll so the runtime hands the rest to its other threads, and holds
+  every task pending until all have begun; it fails, naming both counts, when more distinct
+  threads polled them than `workers` answers. The count is of the distinct threads over the
+  whole scenario, so a harness answering its runtime's real count passes on a runtime that keeps
+  the same threads polling its tasks meanwhile, as tokio's and smol's do; a runtime that hands a
+  worker's place to a new thread, as tokio's `block_in_place` does, has each thread counted. The
+  count recorded is the number of threads the runtime spread those tasks over, which can be fewer
+  than it has, so a harness answering too few fails when the runtime spreads the tasks over more
+  threads than it answers.
 - **Output:** a scenario that observes a panic causes one inside a task, and the panic hook prints
   it to standard error while the scenario passes.
 - **Logging:** the two scenarios reading the core's `warn` install a recording `tracing`
