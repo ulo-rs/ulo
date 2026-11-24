@@ -167,7 +167,8 @@ pub enum ExtractError {
     Invalid { param: &'static str, violations: Vec<FieldViolation> },
     /// A `FromContainer` parameter's read failed: `param` is the type's name, `source` the
     /// lookup error, which classifies as `CallError::from_boxed` maps it, so an execution-scoped
-    /// constructor's "tenant not found" is a 404 here too.
+    /// constructor's "tenant not found" is a 404 here too. Recognised by `from_boxed`, it keeps
+    /// the constructor's challenge and every transport's code as well.
     Dependency { param: &'static str, source: LookupError },
     /// A value the server hosting the application was to supply, absent: a deployment fault
     /// rather than a bad request, so it classifies as `Internal` with its message withheld.

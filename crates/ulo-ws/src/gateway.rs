@@ -373,6 +373,16 @@ const _: () = assert!(size_of::<ConnectRefused>() < 128, "clippy's `result_large
 impl ConnectRefused {
     /// A refusal with the close code `code` and `reason`. Refused: a reason over 123 bytes of
     /// UTF-8 (RFC 6455 §5.5.1).
+    ///
+    /// The spelling of a refusal's own code where the refusal is the answer, the `Err` of
+    /// [`OnConnect::on_connect`] or [`Gateway::on_connect`], or a connect-phase interceptor's or
+    /// error handler's [`ConnectReply::Refused`](crate::ConnectReply::Refused). Where the refusal
+    /// is an error, a connect guard's or a connect-phase interceptor's or error handler's `Err`,
+    /// the `CallError` names the code with
+    /// [`WithCloseCode::with_close_code`](crate::WithCloseCode::with_close_code) and keeps its
+    /// kind; this refusal has none, and is answered 403 under `refuse = handshake`. Boxed into an
+    /// `Err`, this refusal is read as an error the connect phase does not recognise, and closes
+    /// with 1011 as `Internal`.
     pub fn code(code: CloseCode, reason: impl Into<String>) -> Result<Self, CloseCodeError> {
         let reason = reason.into();
         check_reason(&reason)?;

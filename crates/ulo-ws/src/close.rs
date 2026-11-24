@@ -166,20 +166,72 @@ impl Error for CloseCodeError {}
 /// refused, the reason being the error's message; a message handler's error answers the envelope,
 /// whose `kind` the kind still decides, as it decides every other transport's rendering.
 ///
+/// A refusal's own code has two spellings, one per place a refusal is written. Where the refusal
+/// is an error, a connect guard's `Err` or a connect-phase interceptor's or error handler's, it is
+/// a `CallError` naming the code with this trait: the error keeps its kind, which every error
+/// handler after it reads, and under `refuse = handshake` is answered with the status HTTP sends
+/// for it, the kind's or the one [`WithHttpStatus`](ulo_http::WithHttpStatus) names. Where the
+/// refusal is the answer, the `Err` of [`OnConnect::on_connect`](crate::OnConnect::on_connect) or
+/// [`Gateway::on_connect`](crate::Gateway::on_connect), or a connect-phase interceptor's or error
+/// handler's [`ConnectReply::Refused`](crate::ConnectReply::Refused), it is a
+/// [`ConnectRefused`](crate::ConnectRefused) built with
+/// [`ConnectRefused::code`](crate::ConnectRefused::code), a code and a reason with no kind,
+/// answered 403 under `refuse = handshake`; `ConnectRefused::from` turns a `CallError` carrying a
+/// code set here into one with that code and the error's kind. A `ConnectRefused` boxed into an
+/// `Err` is read as an error the connect phase does not recognise, and closes with 1011 as
+/// `Internal`.
+///
 /// ```
 /// use ulo_ws::{CallError, CloseCode, ErrorKind, WithCloseCode};
 ///
 /// let code = CloseCode::new(4403).expect("an application's code");
 /// let error = CallError::new(ErrorKind::Forbidden, "not a member").with_close_code(code);
 /// assert_eq!(error.kind(), ErrorKind::Forbidden);
+/// assert_eq!(error.close_code(), Some(code));
 /// ```
-pub trait WithCloseCode {
+///
+/// Sealed: [`CallError`] is the one implementor, the store the gateway reads, so the trait can
+/// gain a method without breaking a type outside this crate.
+///
+/// ```compile_fail,E0277
+/// use ulo_ws::{CloseCode, WithCloseCode};
+///
+/// struct Mine;
+///
+/// impl WithCloseCode for Mine {
+///     fn with_close_code(self, _code: CloseCode) -> Self {
+///         self
+///     }
+///
+///     fn close_code(&self) -> Option<CloseCode> {
+///         None
+///     }
+/// }
+/// ```
+pub trait WithCloseCode: sealed::Sealed {
     fn with_close_code(self, code: CloseCode) -> Self;
+
+    /// The code [`with_close_code`](Self::with_close_code) set, as it was set, so an error handler
+    /// rebuilding the error keeps it. `None` when none was set, and a refusal closes with the
+    /// kind's code ([`CloseCode::of_kind`]).
+    fn close_code(&self) -> Option<CloseCode>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for ulo_transport::CallError {}
 }
 
 impl WithCloseCode for CallError {
     fn with_close_code(self, code: CloseCode) -> Self {
         self.__with_close_code(code.get())
+    }
+
+    /// A stored number no [`CloseCode`] accepts, which only the doc-hidden store can write, reads
+    /// as unset, as the refusal reads it.
+    fn close_code(&self) -> Option<CloseCode> {
+        self.__close_code().and_then(|code| CloseCode::new(code).ok())
     }
 }
 
@@ -321,6 +373,22 @@ mod tests {
         let code = CloseCode::new(4013).expect("an application's code");
         let refused = crate::ConnectRefused::from(CallError::new(ErrorKind::Unavailable, "why").with_close_code(code));
         assert_eq!((refused.close_code(), refused.reason()), (code, "why"));
+    }
+
+    /// The code reads back as it was set, and a number no `CloseCode` accepts reads back unset,
+    /// as the refusal reads it.
+    #[test]
+    fn close_code_answers_the_code_as_set() {
+        assert_eq!(CallError::new(ErrorKind::Forbidden, "why").close_code(), None);
+        for number in [1000, 1003, 1014, 3000, 4403, 4999] {
+            let code = CloseCode::new(number).expect("a code a Close frame carries");
+            assert_eq!(CallError::new(ErrorKind::Forbidden, "why").with_close_code(code).close_code(), Some(code), "{number}");
+        }
+        for written in [0, 1005, 2000, 5000] {
+            let call = CallError::new(ErrorKind::Forbidden, "why").__with_close_code(written);
+            assert_eq!(call.close_code(), None, "{written}");
+            assert_eq!(crate::ConnectRefused::from(call).close_code(), CloseCode::FORBIDDEN, "{written}");
+        }
     }
 }
 
