@@ -428,7 +428,8 @@ impl From<&http::Uri> for OriginalPath {
 /// `Host` reaches the app on every host that admits one, where `ulo_http_hyper::Server` answers it
 /// 400 itself, and a test or an application handing the host's router a request it built is
 /// answered by the app. What the app refuses on every host is in the service's own checks: two
-/// `Host` lines, `Content-Length` beside `Transfer-Encoding`, a dot segment or a `\` in the path.
+/// `Host` lines, `Content-Length` beside `Transfer-Encoding`, a WebSocket handshake carrying
+/// `Transfer-Encoding`, a dot segment or a `\` in the path.
 ///
 /// Keep the `App`, or the future serving it, alive for as long as the app serves: a [`Handle`],
 /// and the [`Service`] it hands the host, are views, not owners. Once the `App` value drops, the

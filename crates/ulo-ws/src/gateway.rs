@@ -380,9 +380,9 @@ impl ConnectRefused {
     /// is an error, a connect guard's or a connect-phase interceptor's or error handler's `Err`,
     /// the `CallError` names the code with
     /// [`WithCloseCode::with_close_code`](crate::WithCloseCode::with_close_code) and keeps its
-    /// kind; this refusal has none, and is answered 403 under `refuse = handshake`. Boxed into an
-    /// `Err`, this refusal is read as an error the connect phase does not recognise, and closes
-    /// with 1011 as `Internal`.
+    /// kind; this refusal has none, and is answered 403 under `refuse = handshake`. Boxed into such
+    /// an `Err`, this refusal reaches the error handlers as the error, and one they leave unclaimed
+    /// closes with its own code and reason, 403 under `refuse = handshake`.
     pub fn code(code: CloseCode, reason: impl Into<String>) -> Result<Self, CloseCodeError> {
         let reason = reason.into();
         check_reason(&reason)?;
@@ -431,10 +431,13 @@ impl ConnectRefused {
         ConnectRefused { shed: true, ..ConnectRefused::kind(ErrorKind::Unavailable, "too many connections") }
     }
 
-    /// An error the connect phase's error handlers left unclaimed, refused as `From<CallError>`
-    /// refuses it.
+    /// An error the connect phase's error handlers left unclaimed: a `ConnectRefused` as itself,
+    /// anything else refused as `From<CallError>` refuses it.
     pub(crate) fn of_error(err: BoxError) -> Self {
-        ConnectRefused::from(CallError::from_boxed(err))
+        match err.downcast::<ConnectRefused>() {
+            Ok(refused) => *refused,
+            Err(err) => ConnectRefused::from(CallError::from_boxed(err)),
+        }
     }
 }
 

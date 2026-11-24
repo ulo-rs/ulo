@@ -96,9 +96,9 @@ pub trait WithGrpcCode: sealed::Sealed {
     fn with_grpc_code(self, code: Code) -> Self;
 
     /// The code [`with_grpc_code`](Self::with_grpc_code) set, as it was set, so an error handler
-    /// rebuilding the error keeps it. `None` when none was set, and the kind's code
-    /// ([`code_for`]) applies. `Code::Ok` is answered here too, though the renderer ignores it and
-    /// sends the kind's.
+    /// rebuilding the error keeps it; for an error [`from_status`] built, the status's code.
+    /// `None` when none was set, and the kind's code ([`code_for`]) applies. `Code::Ok` is answered
+    /// here too, though the renderer ignores it and sends the kind's.
     fn grpc_code(&self) -> Option<Code>;
 }
 
@@ -174,10 +174,13 @@ fn extraction_code(err: &CallError) -> Option<Code> {
 /// [`MetadataEntry`](crate::MetadataEntry) refuses it.
 ///
 /// The error handlers see a `CallError` whose kind is the code's, `NOT_FOUND` a `NotFound` and a
-/// code no kind names `Internal`, with `status` as its source, `source_as::<tonic::Status>()`.
+/// code no kind names `Internal`, with `status` as its source, `source_as::<tonic::Status>()`,
+/// and the status's code as its own, [`WithGrpcCode::grpc_code`], so the error reworded,
+/// summarised or rebuilt from its read-backs is still sent with that code: a FAILED_PRECONDITION
+/// stays FAILED_PRECONDITION where its kind, `BadRequest`, would send INVALID_ARGUMENT.
 /// An `OK` status is not an error: it is read as a server bug, a `CallError` of kind `Internal`
 /// whose message says an OK status was used as an error, sent as INTERNAL, with `status` still its
-/// source.
+/// source and no code of its own.
 /// A `CallError` that names a status as its cause with a kind, message, details or code of its
 /// own renders by those: `CallError::new(ErrorKind::Unavailable, "the upstream failed")
 /// .with_source(status)` is sent as UNAVAILABLE, so a status a handler received from another
@@ -198,22 +201,22 @@ pub fn from_status(status: Status) -> CallError {
     if status.code() == Code::Ok {
         return CallError::new(ErrorKind::Internal, OK_AS_ERROR).with_source(status);
     }
-    CallError::new(kind_for(status.code()), status.message().to_owned()).with_source(status)
+    CallError::new(kind_for(status.code()), status.message().to_owned()).with_grpc_code(status.code()).with_source(status)
 }
 
 /// The message of the `Internal` [`from_status`] answers for an `OK` status.
 const OK_AS_ERROR: &str = "an OK status was used as an error";
 
 /// The status `call` is sent as: its source, while `call` is as [`from_status`] built it, the kind
-/// the code reads as and the status's message, with no details, code or challenge of its own. An
-/// `OK` status is never sent as an error's.
+/// the code reads as, the status's message and its code, with no details or challenge of its own.
+/// An `OK` status is never sent as an error's.
 pub(crate) fn carried(call: &CallError) -> Option<&Status> {
     let status = call.source_as::<Status>()?;
     let as_built = status.code() != Code::Ok
         && call.kind() == kind_for(status.code())
         && call.message() == status.message()
         && call.details().is_empty()
-        && call.__grpc_code().is_none()
+        && call.grpc_code() == Some(status.code())
         && call.challenge().is_none();
     as_built.then_some(status)
 }
@@ -390,6 +393,24 @@ mod tests {
         let sent = render_as_is(Box::new(Status::ok("done")));
         assert_eq!((sent.code(), sent.message()), (Code::Internal, OK_AS_ERROR));
         assert_eq!(render_as_is(Box::new(Status::not_found("gone"))).code(), Code::NotFound, "any other status as it stands");
+    }
+
+    /// A status `from_status` built is sent as the status itself, metadata included, while the
+    /// error's code is the status's; a code of the error's own is sent in its place.
+    #[test]
+    fn a_status_is_carried_while_the_error_s_code_is_the_status_s() {
+        let call = || {
+            let mut status = Status::failed_precondition("stale");
+            status.metadata_mut().insert("x-cursor", tonic::metadata::MetadataValue::from_static("7"));
+            from_status(status)
+        };
+        assert_eq!(call().grpc_code(), Some(Code::FailedPrecondition));
+        assert_eq!(from_status(Status::not_found("gone")).grpc_code(), Some(Code::NotFound), "a code its kind sends too");
+        let sent = render_as_is(Box::new(call()));
+        assert_eq!((sent.code(), sent.metadata().get("x-cursor").and_then(|value| value.to_str().ok())), (Code::FailedPrecondition, Some("7")));
+        let renamed = call().with_grpc_code(Code::OutOfRange);
+        assert!(carried(&renamed).is_none(), "an error naming another code is not the status");
+        assert_eq!(render_as_is(Box::new(renamed)).code(), Code::OutOfRange);
     }
 
     /// A number outside 1 to 16 reaches the store only past `WithGrpcCode`, and is read as unset.

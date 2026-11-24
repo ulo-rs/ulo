@@ -1,11 +1,13 @@
-//! An HTTP/1.x request with two `Host` lines, or `Content-Length` beside `Transfer-Encoding`, is
-//! answered 400 with `Connection: close` before an execution opens (transports DESIGN decision
-//! 281). On the wire most hosts never hand the service the second case (hyper drops the
-//! `Content-Length`, actix refuses the request itself), so the service's own check is held here.
+//! An HTTP/1.x request with two `Host` lines, or `Content-Length` beside `Transfer-Encoding`, and a
+//! WebSocket handshake carrying `Transfer-Encoding` are answered 400 with `Connection: close`
+//! before an execution opens (transports DESIGN decisions 281 and 338). On the wire most hosts
+//! never hand the service the second case (hyper drops the `Content-Length`, actix refuses the
+//! request itself), so the service's own check is held here. `ulo-ws-hyper`'s
+//! `tests/transfer_encoding.rs` holds the third on the wire.
 
 mod o1_support;
 
-use http::{StatusCode, Version};
+use http::{Method, StatusCode, Version};
 use o1_support::{Call, read, start};
 use ulo::{ModuleDef, controller, handlers};
 use ulo_http::Routing;
@@ -19,6 +21,11 @@ impl Hit {
     fn hit(&self) -> &'static str {
         "hit"
     }
+
+    #[ulo_http::post("/hit")]
+    fn post_hit(&self) -> &'static str {
+        "hit"
+    }
 }
 
 /// A named request, its request builder and the detail its 400 carries.
@@ -29,14 +36,39 @@ fn register(m: &mut ModuleDef<'_>) {
 }
 
 #[tokio::test]
-async fn two_host_lines_or_both_length_headers_answer_400_and_close_on_http_1_alone() {
+async fn an_ambiguous_head_answers_400_and_close_on_http_1_alone() {
     let app = start(register).await;
-    let cases: [Case; 2] = [
+    let cases: [Case; 7] = [
         ("two `Host` lines", || Call::get("/hit").header("host", "a.example").header("host", "a.example"), "the request carries more than one `Host` line"),
         (
             "`Content-Length` beside `Transfer-Encoding`",
             || Call::get("/hit").header("host", "a.example").header("content-length", "0").header("transfer-encoding", "chunked"),
             "the request carries `Content-Length` beside `Transfer-Encoding`",
+        ),
+        (
+            "a handshake carrying `Transfer-Encoding`",
+            || Call::get("/hit").header("host", "a.example").header("upgrade", "websocket").header("transfer-encoding", "chunked"),
+            "a WebSocket handshake carries `Transfer-Encoding`",
+        ),
+        (
+            "`websocket` among the `Upgrade` tokens, in any case, beside `Transfer-Encoding`",
+            || Call::get("/hit").header("host", "a.example").header("upgrade", "h2c, WebSocket").header("transfer-encoding", "gzip, chunked"),
+            "a WebSocket handshake carries `Transfer-Encoding`",
+        ),
+        (
+            "`websocket` after a comma with no space",
+            || Call::get("/hit").header("host", "a.example").header("upgrade", "h2c,websocket").header("transfer-encoding", "chunked"),
+            "a WebSocket handshake carries `Transfer-Encoding`",
+        ),
+        (
+            "`websocket` on a second `Upgrade` line",
+            || Call::get("/hit").header("host", "a.example").header("upgrade", "h2c").header("upgrade", "websocket").header("transfer-encoding", "chunked"),
+            "a WebSocket handshake carries `Transfer-Encoding`",
+        ),
+        (
+            "a `POST` whose `Upgrade` lists `websocket`, the method not read",
+            || Call::new(Method::POST, "/hit").header("host", "a.example").header("upgrade", "websocket").header("transfer-encoding", "chunked"),
+            "a WebSocket handshake carries `Transfer-Encoding`",
         ),
     ];
     for (what, call, detail) in cases {
@@ -59,5 +91,13 @@ async fn two_host_lines_or_both_length_headers_answer_400_and_close_on_http_1_al
     }
     let one = app.send(Call::get("/hit").header("host", "a.example")).await;
     assert_eq!(one.status, StatusCode::OK, "one `Host` line");
+    let chunked = app.send(Call::get("/hit").header("host", "a.example").header("transfer-encoding", "chunked")).await;
+    assert_eq!(chunked.status, StatusCode::OK, "`Transfer-Encoding` on a request that is no handshake");
+    let other = app.send(Call::get("/hit").header("host", "a.example").header("upgrade", "h2c").header("transfer-encoding", "chunked")).await;
+    assert_eq!(other.status, StatusCode::OK, "`Transfer-Encoding` on an upgrade to another protocol");
+    for token in ["websocketx", "notwebsocket"] {
+        let near = app.send(Call::get("/hit").header("host", "a.example").header("upgrade", token).header("transfer-encoding", "chunked")).await;
+        assert_eq!(near.status, StatusCode::OK, "`Upgrade: {token}` is no `websocket` token");
+    }
     app.stop().await;
 }

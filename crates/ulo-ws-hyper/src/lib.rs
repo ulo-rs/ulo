@@ -59,7 +59,9 @@ pub type Server = ServerOn<ulo_listener_tokio::TokioListener>;
 /// all-or-nothing. A request off the gateway paths is answered 404. An HTTP/1.1 request with no
 /// `Host` field, which RFC 6455 §4.2.1 requires of a handshake, is answered 400 with
 /// `Connection: close` before any gateway sees it, the refusal `ulo_http_hyper::Server` answers on
-/// the HTTP server's port; a `Host` with an empty value passes.
+/// the HTTP server's port; a `Host` with an empty value passes. A request carrying two `Host`
+/// lines and a handshake carrying `Transfer-Encoding` are refused the same way, a handshake having
+/// no body.
 ///
 /// It serves the gateways declared `port = own`; the others are the HTTP server's, through the
 /// hand-off `WsModule` registers. Rooms and broadcasts are the application's `WsModule`'s; an
@@ -384,11 +386,11 @@ async fn connection<L: Listener>(accepted: Accepted<L>, table: GatewayTable, htt
 
 /// One request: the handshake decision written as hyper's response, and on a 101 the upgraded
 /// connection handed to the driver. An HTTP/1.1 request with no `Host`, and an HTTP/1.x request
-/// two readers could read differently, more than one `Host` line among them, are answered first,
-/// each with the HTTP server's own refusal, and reach no gateway: the checks belong to the server
-/// reading the wire, as on the HTTP server's port, and `GatewayTable::handshake` admits such a
-/// head, so a server of a host's own keeps its host's rule. HTTP/1.0 with no `Host` reaches the
-/// handshake, which refuses it for its version.
+/// two readers could read differently, more than one `Host` line or a handshake carrying
+/// `Transfer-Encoding` among them, are answered first, each with the HTTP server's own refusal,
+/// and reach no gateway: the checks belong to the server reading the wire, as on the HTTP server's
+/// port, and `GatewayTable::handshake` admits such a head, so a server of a host's own keeps its
+/// host's rule. HTTP/1.0 with no `Host` reaches the handshake, which refuses it for its version.
 async fn respond(table: &GatewayTable, mut req: http::Request<Incoming>, peer: Option<SocketAddr>) -> http::Response<HttpBody> {
     if let Some(refused) = ulo_http::__private::missing_host(req.version(), req.headers()) {
         return refused;
