@@ -72,6 +72,13 @@ pub mod details {
     pub use ulo_transport::Link;
 }
 
+/// The JSON a [`Detail::Json`] carries, `serde_json`'s own type, re-exported so code building one
+/// needs no `serde_json` dependency of its own.
+pub mod json {
+    #[doc(no_inline)]
+    pub use serde_json::Value;
+}
+
 #[doc(hidden)]
 pub mod __private;
 

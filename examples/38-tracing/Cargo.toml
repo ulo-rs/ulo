@@ -7,7 +7,6 @@ publish = false
 
 [dependencies]
 ulo = { path = "../../crates/ulo" }
-ulo-config = { path = "../../crates/ulo-config" }
 ulo-grpc = { path = "../../crates/ulo-grpc" }
 ulo-http = { path = "../../crates/ulo-http" }
 ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }

@@ -16,8 +16,12 @@ default = ["vendored-protoc"]
 vendored-protoc = ["dep:protoc-bin-vendored"]
 
 [dependencies]
+# What tonic-prost-build parses and prints its generated code with: the client code is parsed
+# again to bind `tonic` in its modules.
+prettyplease.workspace = true
 prost-build.workspace = true
 protoc-bin-vendored = { workspace = true, optional = true }
+syn = { workspace = true, features = ["full"] }
 tonic-prost-build.workspace = true
 
 [lints]

@@ -1,9 +1,8 @@
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use tonic_health::ServingStatus;
 use ulo::{Bound, Dep, Module, ModuleDef, ModuleIdentity, Runtime, Signal, TaskEnd, TaskHandle};
-use ulo_grpc::GrpcHealth;
+use ulo_grpc::{GrpcHealth, ServingStatus};
 use ulo_health::Readiness;
 
 use crate::interval;

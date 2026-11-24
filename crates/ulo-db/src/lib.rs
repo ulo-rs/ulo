@@ -39,3 +39,7 @@ pub use error::{LazyWithMigrations, LockTimedOut, MigrationFailed, UnsupportedRu
 pub use migrate::{MIGRATION_LOCK_KEY, MigrationLock, Migrations, MigratorIdentity};
 pub use module::StoreModule;
 pub use store::Store;
+/// What [`Store::validate`] fails with, `ulo-config`'s own type, re-exported so a driver crate
+/// implementing [`Store`] needs no `ulo-config` dependency of its own.
+#[doc(no_inline)]
+pub use ulo_config::Problems;

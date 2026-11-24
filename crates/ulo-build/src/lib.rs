@@ -20,9 +20,9 @@
 //! `ulo-grpc`'s re-exports, so the crate running the build step names none of them in its
 //! manifest. prost-build writes `::ulo_grpc::prost` and `::ulo_grpc::prost_types` paths, and the
 //! codec is `::ulo_grpc::__private::ProstCodec`. tonic-build writes bare `tonic::` paths with no
-//! setting for them, so each client module it writes gains `use ::ulo_grpc::tonic;` above its
-//! imports. No server trait is generated: handlers bind to the markers, and the dispatcher calls
-//! them by path.
+//! setting for them, so the client code it writes is parsed with `syn` and each module in it gains
+//! `use ::ulo_grpc::tonic;` as its first item, whatever lines tonic-build writes around it. No
+//! server trait is generated: handlers bind to the markers, and the dispatcher calls them by path.
 
 mod markers;
 
