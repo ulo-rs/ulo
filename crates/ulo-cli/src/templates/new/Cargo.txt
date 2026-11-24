@@ -7,3 +7,5 @@ rust-version = "@@rust_version@@"
 [dependencies]
 @@dependencies@@
 @@sections@@
+[dev-dependencies]
+@@dev_dependencies@@

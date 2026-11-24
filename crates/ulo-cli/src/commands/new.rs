@@ -16,6 +16,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// raises it in the project's manifest.
 const BASE_RUST_VERSION: &str = "1.88";
 
+/// The project's one dev-dependency: its tests are `#[tokio::test]`, and `main` reaches tokio
+/// through `ulo-runtime-tokio`.
+const DEV_DEPENDENCY: &str = r#"tokio = { version = "1", features = ["macros", "rt-multi-thread"] }"#;
+
 #[derive(clap::Args)]
 pub struct NewArgs {
     /// The project's name, which is also its directory
@@ -447,7 +451,6 @@ impl Plan {
 
         let mut dependencies: Vec<String> = lines(&[
             r#"serde = { version = "1", features = ["derive"] }"#,
-            r#"tokio = { version = "1", features = ["macros", "rt-multi-thread"] }"#,
             r#"tracing-subscriber = { version = "0.3", features = ["env-filter"] }"#,
             r#"ulo = "=@@version@@""#,
             r#"ulo-config = "=@@version@@""#,
@@ -460,6 +463,8 @@ impl Plan {
         dependencies.sort();
         let dependency_names: Vec<String> = dependencies
             .iter()
+            .map(String::as_str)
+            .chain([DEV_DEPENDENCY])
             .filter_map(|line| line.split_whitespace().next())
             .map(str::to_owned)
             .collect();
@@ -474,6 +479,7 @@ impl Plan {
                 ("rust_version", rust_version),
                 ("dependencies", dependencies.as_str()),
                 ("sections", sections.as_str()),
+                ("dev_dependencies", DEV_DEPENDENCY),
             ],
         )?;
 
@@ -676,6 +682,19 @@ mod tests {
         assert!(manifest.contains("name = \"demo\""), "{manifest}");
         let pin = format!("ulo = \"={}\"", env!("CARGO_PKG_VERSION"));
         assert!(manifest.contains(&pin), "{manifest}");
+    }
+
+    /// `main` reaches tokio through `ulo-runtime-tokio`; only the `#[tokio::test]` tests name it.
+    #[test]
+    fn tokio_is_a_dev_dependency_alone() {
+        for &transport in Transport::value_variants() {
+            let plan = Plan::build("demo", transport, None).expect("a plan");
+            let manifest = file(&plan, "Cargo.toml");
+            let (built, dev) = manifest.split_once("[dev-dependencies]").expect("a dev-dependencies table");
+            assert!(!built.lines().any(|line| line.starts_with("tokio ")), "{transport:?}: tokio outside [dev-dependencies]:\n{manifest}");
+            assert!(dev.lines().any(|line| line.starts_with("tokio ")), "{transport:?}: no tokio in [dev-dependencies]:\n{manifest}");
+            assert!(plan.dependencies.iter().any(|name| name == "tokio"), "{transport:?}: a project named `tokio` is not refused");
+        }
     }
 
     #[test]

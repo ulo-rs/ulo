@@ -2421,6 +2421,7 @@ version = "0.0.0"
 dependencies = [
  "ex-support",
  "tokio",
+ "tracing-subscriber",
  "ulo",
  "ulo-http",
  "ulo-http-hyper",
@@ -2681,6 +2682,7 @@ dependencies = [
  "async-net",
  "ex-support",
  "futures",
+ "tracing-subscriber",
  "ulo",
  "ulo-http",
  "ulo-http-hyper",

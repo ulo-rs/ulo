@@ -2,11 +2,12 @@
 //! set, and keeps all three however it is rebuilt: reworded, given details or a source,
 //! summarised, boxed and recognised again, built afresh by an error handler from the read-backs,
 //! and failed by an execution-scoped constructor behind a handler's parameter. gRPC sends its code
-//! and a refused connection closes with its own, and HTTP's status reads back for the renderer.
+//! and a refused connection closes with its own, and HTTP's status reads back for the renderer. An
+//! error built from a `tonic::Status` reads back the status's code and keeps it the same ways.
 
 use tonic::Code;
 use ulo::{App, ExecOptions, Execution, LookupError, Module, ModuleDef, ModuleIdentity};
-use ulo_grpc::{WithGrpcCode, to_status};
+use ulo_grpc::{WithGrpcCode, from_status, to_status};
 use ulo_http::{StatusCode, WithHttpStatus};
 use ulo_transport::{CallError, Detail, Details, ErrorKind, ExtractError};
 use ulo_ws::{CloseCode, ConnectRefused, WithCloseCode};
@@ -67,6 +68,24 @@ fn every_rebuild_of_an_error_keeps_its_three_codes() {
     assert_eq!(fresh.message(), "la commande existe");
     assert_eq!(fresh.source_as::<CallError>().map(CallError::message), Some("the order exists"), "the original is the source");
     assert_keeps_all_three(fresh, "an error handler's own error");
+}
+
+/// A status whose code its kind, `BadRequest`, does not send: the kind's is INVALID_ARGUMENT.
+#[test]
+fn an_error_from_a_status_reads_back_the_status_s_code_and_keeps_it_through_every_rebuild() {
+    let status = || from_status(tonic::Status::failed_precondition("the order is closed"));
+    assert_eq!(status().kind(), ErrorKind::BadRequest);
+    for (how, error) in [
+        ("as built", status()),
+        ("with_message", status().with_message("la commande est close")),
+        ("with_details", status().with_details(Details::new().with(Detail::Json(serde_json::json!({"id": 7}))))),
+        ("summary", status().summary()),
+        ("from_boxed", CallError::from_boxed(Box::new(status()))),
+        ("an error handler's own error", rebuilt(status())),
+    ] {
+        assert_eq!(error.grpc_code(), Some(Code::FailedPrecondition), "{how}: read back");
+        assert_eq!(to_status(&error).code(), Code::FailedPrecondition, "{how}: the gRPC status");
+    }
 }
 
 struct Tenant;

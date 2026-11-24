@@ -11,6 +11,7 @@ ulo-http = { path = "../../crates/ulo-http" }
 ulo-http-hyper = { path = "../../crates/ulo-http-hyper", default-features = false }
 ulo-listener-smol = { path = "../../crates/ulo-listener-smol" }
 ulo-runtime-smol = { path = "../../crates/ulo-runtime-smol" }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [dev-dependencies]
 ex-support = { path = "../support" }

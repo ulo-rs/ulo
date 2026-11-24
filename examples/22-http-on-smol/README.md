@@ -13,7 +13,8 @@ The server listens on `PORT` (default 3000); Ctrl-C closes it.
 Read first:
 
 - `src/main.rs`: `ulo_runtime_smol::run`, example 01's `main` with the runtime crate and the server
-  swapped. It builds an executor, starts the application and serves until Ctrl-C or SIGTERM.
+  swapped. It builds an executor, starts the application and serves until Ctrl-C or SIGTERM, and
+  installs the same `tracing` subscriber, which prints the `listening` line.
 - `src/lib.rs`: the controller is example 01's; `server` is `ServerOn<SmolListener>`.
 - `tests/hello.rs`: example 01's assertions, the phases written out on a `Smol` runtime with two
   worker threads, which `block_on` drives.

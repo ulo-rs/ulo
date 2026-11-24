@@ -728,14 +728,17 @@ fn carries_none(status: StatusCode) -> bool {
 
 /// 400 with `Connection: close` for an HTTP/1.x request two readers can read differently, answered
 /// before an execution opens, offered to no error handler and seen by no pre-dispatch entry, with
-/// `Routing::Unrouted`: one with more than one `Host` line, and one carrying `Content-Length`
-/// beside `Transfer-Encoding` (RFC 9112 §3.2, §6.3). The close is what §6.3 requires of the last:
+/// `Routing::Unrouted`: one with more than one `Host` line, one carrying `Content-Length` beside
+/// `Transfer-Encoding` (RFC 9112 §3.2, §6.3), and a WebSocket handshake, a request whose `Upgrade`
+/// lists `websocket`, carrying `Transfer-Encoding`. The close is what §6.3 requires of the second:
 /// whatever the backend read of the body, the connection is not read again. hyper drops the
-/// `Content-Length` of such a request as it parses the head and closes the connection after the
-/// answer, so on hyper and the hosts built on it the request arrives here with its
-/// `Transfer-Encoding` alone and is read by it. HTTP/2 carries the authority in `:authority`, and an h2 server
-/// refuses `Transfer-Encoding` before the service sees the request. `ulo-ws-hyper` answers a
-/// handshake on its own port through it as well (`__private::ambiguous_head`).
+/// `Content-Length` of such a request as it parses the head and closes the connection after
+/// answering it with anything but a 101, so on hyper and the hosts built on it the request arrives
+/// here with its `Transfer-Encoding` alone and is read by it. A handshake has no body, and a 101
+/// hands the connection over unread, so a handshake carrying `Transfer-Encoding` is refused
+/// whether or not it carried `Content-Length`, which hyper has dropped by then. HTTP/2 carries the authority in `:authority`, and an
+/// h2 server refuses `Transfer-Encoding` before the service sees the request. `ulo-ws-hyper`
+/// answers a handshake on its own port through it as well (`__private::ambiguous_head`).
 pub(crate) fn ambiguous(version: Version, headers: &HeaderMap, config: &HttpConfig) -> Option<Response> {
     if version > Version::HTTP_11 {
         return None;
@@ -744,6 +747,8 @@ pub(crate) fn ambiguous(version: Version, headers: &HeaderMap, config: &HttpConf
         "the request carries more than one `Host` line"
     } else if headers.contains_key(CONTENT_LENGTH) && headers.contains_key(TRANSFER_ENCODING) {
         "the request carries `Content-Length` beside `Transfer-Encoding`"
+    } else if headers.contains_key(TRANSFER_ENCODING) && lists_websocket(headers) {
+        "a WebSocket handshake carries `Transfer-Encoding`"
     } else {
         return None;
     };
@@ -755,6 +760,16 @@ pub(crate) fn ambiguous(version: Version, headers: &HeaderMap, config: &HttpConf
     *refused.version_mut() = version;
     refused.extensions_mut().insert(Routing::Unrouted);
     Some(refused)
+}
+
+/// Whether an `Upgrade` line lists `websocket`, ignoring case (RFC 9110 §7.8).
+fn lists_websocket(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(UPGRADE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|item| item.trim().eq_ignore_ascii_case("websocket"))
 }
 
 /// Reports `Completed` for a stream the backend never writes, on a `HEAD` answer or a status that

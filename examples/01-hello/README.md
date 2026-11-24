@@ -12,7 +12,9 @@ curl http://127.0.0.1:3000/
 Read first:
 
 - `src/main.rs`: `run` with the module and the server. It builds the tokio runtime, starts the
-  application and serves until Ctrl-C or SIGTERM, then shuts it down.
+  application and serves until Ctrl-C or SIGTERM, then shuts it down. The `tracing_subscriber` line
+  before it prints the address `run` logs as `listening`; without a subscriber, `run` writes
+  `listening on <address> (http)` to stderr itself.
 - `src/lib.rs`: the controller and the module that mounts it.
 - `tests/hello.rs`: the five phases `run` performs, written out on port 0 (`wire`, `connect`,
   `bind`, `listen`, `serve`), a request, then `close` and the `Shutdown` it returns. An

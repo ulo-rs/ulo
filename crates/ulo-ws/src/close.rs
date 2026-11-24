@@ -178,8 +178,8 @@ impl Error for CloseCodeError {}
 /// [`ConnectRefused::code`](crate::ConnectRefused::code), a code and a reason with no kind,
 /// answered 403 under `refuse = handshake`; `ConnectRefused::from` turns a `CallError` carrying a
 /// code set here into one with that code and the error's kind. A `ConnectRefused` boxed into an
-/// `Err` is read as an error the connect phase does not recognise, and closes with 1011 as
-/// `Internal`.
+/// `Err` reaches the error handlers as the error, and one they leave unclaimed closes with its own
+/// code and reason, 403 under `refuse = handshake`.
 ///
 /// ```
 /// use ulo_ws::{CallError, CloseCode, ErrorKind, WithCloseCode};
