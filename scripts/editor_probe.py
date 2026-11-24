@@ -6,8 +6,8 @@ usage: editor_probe.py <rust-analyzer> <project root> <file> [--target-dir DIR] 
 Without --point, every pathed attribute `#[a::b(..)]` in <file> yields two points, one on `a` and
 one on `b`, and a bare `#[handlers]`, `#[injectable]` or `#[controller]` one control point. A marker
 attribute, one that `#[handlers]`, `#[injectable]` or `#[controller]` reads and removes (`guards`,
-`interceptors`, `error_handlers`, `meta`, `construct`, and `injectable(default)` or
-`controller(default)` on a field), yields one point on its last segment,
+`interceptors`, `error_handlers`, `meta`, and `construct` on a constructor or, as
+`construct(default)`, on a field), yields one point on its last segment,
 bare, pathed or inside a `#[cfg_attr(..)]`, and one more on `ulo` when it is written `ulo::<name>`
 or `::ulo::<name>`, the one qualifier a marker accepts: the editor resolves each through the import
 the macro writes from the tokens as written. An attribute on a `//` comment line yields none, and neither does
@@ -44,7 +44,7 @@ BARE = re.compile(r"#\[\s*(handlers|injectable|controller)\s*\]")
 MARKERS = r"guards|interceptors|error_handlers|meta|construct"
 # A marker's last segment: after `#[` or, inside a `cfg_attr`, after a comma, with any path before it.
 MARKER = re.compile(
-    r"(?:#\[|,)\s*(?P<path>(?:::)?(?:[A-Za-z_]\w*::)*)(?:(" + MARKERS + r")\b(?!\s*::)|(injectable|controller)(?=\s*\(\s*default\s*\)))"
+    r"(?:#\[|,)\s*(?P<path>(?:::)?(?:[A-Za-z_]\w*::)*)(" + MARKERS + r")\b(?!\s*::)"
 )
 
 
@@ -71,9 +71,8 @@ def points_of(text):
         markers = set()
         if "#[" in src:
             for m in MARKER.finditer(src):
-                group = 2 if m.group(2) else 3
-                points.append((m.group(group), line, m.start(group)))
-                markers.add(m.start(group))
+                points.append((m.group(2), line, m.start(2)))
+                markers.add(m.start(2))
                 if m.group("path").strip(":") == "ulo":
                     points.append(("ulo", line, m.start("path") + m.group("path").index("ulo")))
         for m in ATTR.finditer(src):

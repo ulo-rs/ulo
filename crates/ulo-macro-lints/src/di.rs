@@ -14,7 +14,7 @@ pub struct Clock;
 #[injectable]
 pub struct Store {
     pub clock: Dep<Clock>,
-    #[injectable(default)]
+    #[construct(default)]
     pub hits: u64,
 }
 
@@ -69,16 +69,16 @@ pub struct GatedFields {
     #[cfg(not(any()))]
     pub clock: Dep<Clock>,
     #[cfg(any())]
-    #[injectable(default)]
+    #[construct(default)]
     pub absent_hits: u64,
     #[cfg(not(any()))]
-    #[injectable(default)]
+    #[construct(default)]
     pub hits: u64,
 }
 
 /// A tuple injectable whose gated field renumbers the fields after it.
 #[injectable]
-pub struct GatedTuple(#[cfg(any())] pub Dep<Clock>, pub Dep<Clock>, #[cfg(not(any()))] #[injectable(default)] pub u64);
+pub struct GatedTuple(#[cfg(any())] pub Dep<Clock>, pub Dep<Clock>, #[cfg(not(any()))] #[construct(default)] pub u64);
 
 impl OnModuleInit for Clock {
     async fn on_module_init(&self) -> Result<(), BoxError> {

@@ -10,9 +10,9 @@ use ulo_health::{Check, Health};
 /// `open` runs, which `main` does once the app listens.
 #[injectable]
 pub struct Store {
-    #[injectable(default)]
+    #[construct(default)]
     notes: Mutex<Vec<String>>,
-    #[injectable(default)]
+    #[construct(default)]
     open: AtomicBool,
 }
 

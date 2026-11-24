@@ -92,7 +92,7 @@ impl Factor for Triple {
 /// A generic controller: its hidden methods and the checks inside them sit in a generic impl.
 #[controller]
 struct Scaled<F: Factor> {
-    #[controller(default)]
+    #[construct(default)]
     _factor: PhantomData<F>,
 }
 

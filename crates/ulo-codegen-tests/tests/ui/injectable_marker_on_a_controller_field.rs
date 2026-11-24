@@ -1,5 +1,5 @@
-// A `#[controller]` struct whose field carries `#[injectable(default)]`. Decision 28.
-// Refused at: the field's marker, naming `#[controller(default)]`.
+// A `#[controller]` struct whose field carries `#[injectable(default)]`. Decision 69.
+// Refused at: the field's marker, naming `#[construct(default)]`.
 use ulo::controller;
 
 #[controller]

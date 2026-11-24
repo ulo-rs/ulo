@@ -17,7 +17,7 @@ mod fw {
 
 #[fw::controller]
 struct Orders {
-    #[controller(default)]
+    #[construct(default)]
     seen: u32,
 }
 
@@ -33,7 +33,7 @@ impl Orders {
 
 #[crate::injectable]
 struct Ledger {
-    #[injectable(default)]
+    #[construct(default)]
     _entries: u32,
 }
 

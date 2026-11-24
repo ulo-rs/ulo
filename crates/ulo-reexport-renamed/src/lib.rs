@@ -46,7 +46,7 @@ mod markers {
 
     #[controller]
     struct Orders {
-        #[controller(default)]
+        #[construct(default)]
         seen: u32,
     }
 
@@ -82,7 +82,7 @@ mod markers {
 
     #[framework::controller]
     struct Renamed {
-        #[controller(default)]
+        #[construct(default)]
         seen: u32,
     }
 

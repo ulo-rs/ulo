@@ -7,7 +7,7 @@ use ulo_http::{CallError, Cors, HeaderValue, Host, Method, Middleware, PreDispat
 /// Counts the requests the API-key entry saw.
 #[injectable]
 pub struct Hits {
-    #[injectable(default)]
+    #[construct(default)]
     pub count: AtomicUsize,
 }
 
