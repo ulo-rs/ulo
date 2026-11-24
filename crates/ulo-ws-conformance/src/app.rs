@@ -45,6 +45,8 @@ pub(crate) const AS_UNAVAILABLE: &str = "unavailable";
 pub(crate) const AS_UNIMPLEMENTED: &str = "unimplemented";
 /// `Conflict` sent over HTTP as 412 through `WithHttpStatus`.
 pub(crate) const AS_PRECONDITION: &str = "precondition";
+/// A `ConnectRefused` closing with [`OWN`], boxed into the guard's `Err`.
+pub(crate) const AS_REFUSED: &str = "refused-code";
 
 /// The `RetryAfter` detail [`AS_RATE_LIMITED`] and [`AS_UNAVAILABLE`] carry.
 pub(crate) const RETRY_AFTER: Duration = Duration::from_secs(30);
@@ -269,7 +271,7 @@ impl Guard<WsConnect> for NotRefusedByGuard {
 
 /// Fails an upgrade whose [`REFUSE`] header names one of the `AS_` values, with a `CallError` of
 /// that kind, or of kind `Forbidden` closing with [`ERROR_CODE`], or of kind `Conflict` sent over
-/// HTTP as 412.
+/// HTTP as 412, or with the `ConnectRefused` closing with [`OWN`].
 pub(crate) struct RefusedByError;
 
 impl Guard<WsConnect> for RefusedByError {
@@ -290,6 +292,9 @@ impl Guard<WsConnect> for RefusedByError {
             AS_OWN_CODE => {
                 let code = CloseCode::new(ERROR_CODE).unwrap_or_else(|error| panic!("{ERROR_CODE} is an application's code: {error}"));
                 CallError::new(ErrorKind::Forbidden, BY_ERROR).with_close_code(code)
+            }
+            AS_REFUSED => {
+                return Err(Box::new(ConnectRefused::code(OWN.0, OWN.1).unwrap_or_else(|error| panic!("{} fits a Close frame: {error}", OWN.1))));
             }
             _ => return Ok(true),
         };
