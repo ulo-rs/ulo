@@ -1,0 +1,5 @@
+error: `#[construct(default)]` is written once
+ --> tests/ui/construct_marker_twice.rs:8:5
+  |
+8 |     #[ulo::construct(default)]
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^

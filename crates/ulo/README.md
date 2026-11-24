@@ -115,7 +115,7 @@ pub struct Page {
 
 #[injectable]
 pub struct Notes {
-    #[injectable(default)]
+    #[construct(default)]
     all: Mutex<Vec<Note>>,
 }
 

@@ -1,0 +1,11 @@
+error: expected non-macro attribute, found attribute macro `construct`
+ --> tests/ui/construct_marker_on_a_plain_struct.rs:9:11
+  |
+9 |         #[construct(default)]
+  |           ^^^^^^^^^ not a non-macro attribute
+
+error: cannot find attribute `construct` in this scope
+  --> tests/ui/construct_marker_on_a_plain_struct.rs:15:7
+   |
+15 |     #[construct(default)]
+   |       ^^^^^^^^^

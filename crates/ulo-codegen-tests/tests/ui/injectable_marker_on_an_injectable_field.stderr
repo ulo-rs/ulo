@@ -1,0 +1,17 @@
+error: a field set from `Default` is marked `#[construct(default)]`, not `#[injectable(default)]`
+ --> tests/ui/injectable_marker_on_an_injectable_field.rs:8:5
+  |
+8 |     #[injectable(default)]
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+
+error: a field set from `Default` is marked `#[construct(default)]`, not `#[injectable(default)]`
+  --> tests/ui/injectable_marker_on_an_injectable_field.rs:14:5
+   |
+14 |     #[ulo::injectable(default)]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: a field set from `Default` is marked `#[construct(default)]`, not `#[injectable(..)]`
+  --> tests/ui/injectable_marker_on_an_injectable_field.rs:20:5
+   |
+20 |     #[injectable(singleton)]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^

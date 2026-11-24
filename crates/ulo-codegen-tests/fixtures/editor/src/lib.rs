@@ -10,9 +10,9 @@
 //! The markers `#[handlers]`, `#[injectable]` and `#[controller]` read and remove answer through
 //! the hidden import each macro writes for them: below, on an impl and on its methods before and
 //! after the transport attribute, bare, pathed, inside `cfg_attr` and repeated, in a fn body and on
-//! a generic impl, and as `#[construct]` and a field's `#[injectable(default)]` or
-//! `#[controller(default)]`, the `#[construct]` of a controller included where `#[controller]` and
-//! `#[handlers]` stack on one impl, in either order.
+//! a generic impl, and as `#[construct]` and as a field's `#[construct(default)]` on an
+//! `#[injectable]` and a `#[controller]` struct, the `#[construct]` of a controller included where
+//! `#[controller]` and `#[handlers]` stack on one impl, in either order.
 
 use std::marker::PhantomData;
 
@@ -105,9 +105,9 @@ pub struct Stamp(pub &'static str);
 
 #[controller]
 pub struct Marked {
-    #[controller(default)]
+    #[construct(default)]
     count: u32,
-    #[ulo::controller(default)]
+    #[ulo::construct(default)]
     total: u32,
 }
 
@@ -140,7 +140,7 @@ impl Marked {
 
 #[controller]
 pub struct Generic<T: Send + Sync + 'static> {
-    #[controller(default)]
+    #[construct(default)]
     of: PhantomData<fn() -> T>,
 }
 
@@ -172,9 +172,9 @@ pub fn in_a_body() {
 
 #[injectable]
 pub struct Defaults {
-    #[injectable(default)]
+    #[construct(default)]
     count: u32,
-    #[ulo::injectable(default)]
+    #[ulo::construct(default)]
     total: u32,
 }
 

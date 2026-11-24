@@ -2,7 +2,7 @@
 
 A provider is a type the container builds once and injects by `Dep<T>`. Both ways to declare one:
 
-- struct style, `Counter`: every field is injected unless marked `#[injectable(default)]`, which is
+- struct style, `Counter`: every field is injected unless marked `#[construct(default)]`, which is
   the type's own state;
 - constructor style, `Greeter`: the parameters of `new` are injected, and `new` may be `async` and
   return a `Result`.

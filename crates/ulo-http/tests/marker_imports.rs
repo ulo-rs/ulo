@@ -101,7 +101,7 @@ impl Gated {
 
 #[controller]
 struct Generic<T: Send + Sync + 'static> {
-    #[controller(default)]
+    #[construct(default)]
     _of: PhantomData<T>,
 }
 

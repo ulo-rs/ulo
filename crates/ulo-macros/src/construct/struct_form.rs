@@ -1,8 +1,9 @@
 //! The struct form: every field is an injection point, read in declaration order, except a field
-//! marked `#[injectable(default)]`, set from `Default::default()`; on a `#[controller]` struct the
-//! marker is `#[controller(default)]`, and the other attribute's marker is refused, pointing at
-//! it. Tuple and unit structs are accepted; a tuple field is labelled by its index. A field behind
-//! a `#[cfg]` that is off is neither declared, read nor set, whichever its role.
+//! marked `#[construct(default)]`, set from `Default::default()`, under `#[injectable]` and
+//! `#[controller]` alike. A field carrying `#[injectable(..)]` or `#[controller(..)]` is refused,
+//! naming `#[construct(default)]`. Tuple and unit structs are accepted; a tuple field is labelled by
+//! its index. A field behind a `#[cfg]` that is off is neither declared, read nor set, whichever its
+//! role.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -17,14 +18,12 @@ use crate::shared::attrs;
 use crate::shared::dependencies::{self, DependencyLabel, DependencySpec};
 use crate::shared::{ConstructImpl, combine, editor, ulo};
 
-/// The struct as written, minus its `#[injectable(default)]` or `#[controller(default)]` field
-/// markers, followed by its `Construct` impl, the controller mark for `#[controller]`, and the
-/// hidden import of each marker removed (`crate::shared::editor`).
+/// The struct as written, minus its `#[construct(default)]` field markers, followed by its
+/// `Construct` impl, the controller mark for `#[controller]`, and the hidden import of each marker
+/// removed (`crate::shared::editor`).
 pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, original: &TokenStream) -> syn::Result<TokenStream> {
     let ulo = ulo();
-    let markers = item.fields.iter().flat_map(|field| &field.attrs).filter(|attr| {
-        attrs::is(attr, Kind::Injectable.name()) || attrs::is(attr, Kind::Controller.name())
-    });
+    let markers = item.fields.iter().flat_map(|field| &field.attrs).filter(|attr| attrs::is(attr, MARKER));
     if let Some(e) = combine(markers.filter_map(|attr| attrs::check_marker(attr.path()).err()).collect()) {
         return Err(e);
     }
@@ -32,7 +31,7 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
         .fields
         .iter()
         .flat_map(|field| &field.attrs)
-        .filter(|attr| attrs::is(attr, kind.name()))
+        .filter(|attr| attrs::is(attr, MARKER))
         .map(|attr| attr.path().clone())
         .collect();
     let imports = editor::marker_imports(&written);
@@ -48,7 +47,7 @@ pub(crate) fn expand(kind: Kind, args: ConstructArgs, mut item: ItemStruct, orig
             Some(ident) => Member::Named(ident.clone()),
             None => Member::Unnamed(Index { index: index as u32, span: field.ty.span() }),
         };
-        match classify(kind, field, index) {
+        match classify(field, index) {
             Ok(FieldRole::Dependency(spec)) => {
                 gated |= !spec.gates.is_empty();
                 positional.push(Positional::Dependency(dependency_specs.len()));
@@ -136,32 +135,35 @@ pub(crate) enum FieldRole {
     Default(Vec<syn::Attribute>),
 }
 
-/// Reads and strips the field's `#[injectable(default)]`, or `#[controller(default)]` under
-/// `#[controller]`; any other argument there, or the other attribute's marker, is a span error on
-/// it.
-pub(crate) fn classify(kind: Kind, field: &mut Field, index: usize) -> syn::Result<FieldRole> {
-    let other = match kind {
-        Kind::Injectable => Kind::Controller,
-        Kind::Controller => Kind::Injectable,
-    };
-    if let Some(foreign) = field.attrs.iter().find(|attr| attrs::is(attr, other.name())) {
-        return Err(syn::Error::new_spanned(
-            foreign,
-            format!(
-                "this struct is #[{kind}]: a field set from `Default` is marked `#[{kind}(default)]`",
-                kind = kind.name()
-            ),
-        ));
+/// The field marker, `#[construct(default)]`: the name of the constructor's marker, so the one
+/// hidden import serves both.
+const MARKER: &str = "construct";
+
+/// Reads and strips the field's `#[construct(default)]`. Any other argument there, or a field
+/// attribute named after the container, `#[injectable(..)]` or `#[controller(..)]`, is a span error
+/// on it.
+pub(crate) fn classify(field: &mut Field, index: usize) -> syn::Result<FieldRole> {
+    for container in [Kind::Injectable, Kind::Controller] {
+        if let Some(foreign) = field.attrs.iter().find(|attr| attrs::is(attr, container.name())) {
+            let written = match foreign.parse_args::<syn::Ident>() {
+                Ok(arg) if arg == "default" => format!("#[{}(default)]", container.name()),
+                _ => format!("#[{}(..)]", container.name()),
+            };
+            return Err(syn::Error::new_spanned(
+                foreign,
+                format!("a field set from `Default` is marked `#[construct(default)]`, not `{written}`"),
+            ));
+        }
     }
-    let markers = attrs::take_all(&mut field.attrs, kind.name());
+    let markers = attrs::take_all(&mut field.attrs, MARKER);
     let mut default = false;
     for marker in &markers {
-        let arg: syn::Ident = marker.parse_args().map_err(|_| marker_error(kind, marker))?;
+        let arg: syn::Ident = marker.parse_args().map_err(|_| marker_error(marker))?;
         if arg != "default" {
-            return Err(marker_error(kind, marker));
+            return Err(marker_error(marker));
         }
         if default {
-            return Err(syn::Error::new_spanned(marker, format!("`#[{}(default)]` is written once", kind.name())));
+            return Err(syn::Error::new_spanned(marker, "`#[construct(default)]` is written once"));
         }
         default = true;
     }
@@ -176,12 +178,9 @@ pub(crate) fn classify(kind: Kind, field: &mut Field, index: usize) -> syn::Resu
     Ok(FieldRole::Dependency(Box::new(DependencySpec { label, ty: field.ty.clone(), span: field.ty.span(), gates })))
 }
 
-fn marker_error(kind: Kind, marker: &syn::Attribute) -> syn::Error {
+fn marker_error(marker: &syn::Attribute) -> syn::Error {
     syn::Error::new_spanned(
         marker,
-        format!(
-            "a field takes `#[{}(default)]` alone, which sets it from `Default`; every other field is injected",
-            kind.name()
-        ),
+        "a field takes `#[construct(default)]` alone, which sets it from `Default`; every other field is injected",
     )
 }

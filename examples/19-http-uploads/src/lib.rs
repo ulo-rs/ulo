@@ -17,7 +17,7 @@ pub fn server(endpoint: &str) -> Server {
 
 #[injectable]
 pub struct Files {
-    #[injectable(default)]
+    #[construct(default)]
     stored: Mutex<HashMap<String, Bytes>>,
 }
 

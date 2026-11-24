@@ -8,7 +8,7 @@ pub mod order;
 /// What the pipeline did, in order, so a test can read it back.
 #[injectable]
 pub struct Trace {
-    #[injectable(default)]
+    #[construct(default)]
     lines: Mutex<Vec<String>>,
 }
 

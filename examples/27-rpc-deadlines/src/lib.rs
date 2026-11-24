@@ -22,7 +22,7 @@ pub struct Relayed {
 /// How many times the callee's handler has run.
 #[injectable]
 pub struct Runs {
-    #[injectable(default)]
+    #[construct(default)]
     pub count: AtomicUsize,
 }
 

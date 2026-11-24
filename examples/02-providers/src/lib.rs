@@ -11,7 +11,7 @@ pub struct Settings {
 /// Struct style: every field is injected unless marked `default`, which owns its state.
 #[injectable]
 pub struct Counter {
-    #[injectable(default)]
+    #[construct(default)]
     hits: AtomicU64,
 }
 

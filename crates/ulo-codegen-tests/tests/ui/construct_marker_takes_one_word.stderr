@@ -1,0 +1,11 @@
+error: a field takes `#[construct(default)]` alone, which sets it from `Default`; every other field is injected
+ --> tests/ui/construct_marker_takes_one_word.rs:7:5
+  |
+7 |     #[construct]
+  |     ^^^^^^^^^^^^
+
+error: a field takes `#[construct(default)]` alone, which sets it from `Default`; every other field is injected
+  --> tests/ui/construct_marker_takes_one_word.rs:13:5
+   |
+13 |     #[construct(default = 3)]
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^

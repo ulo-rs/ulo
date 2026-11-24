@@ -44,7 +44,7 @@ pub type Found = Result<Json<Note>, NoteNotFound>;
 
 #[injectable]
 pub struct Notes {
-    #[injectable(default)]
+    #[construct(default)]
     all: Mutex<Vec<Note>>,
 }
 
