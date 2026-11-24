@@ -38,10 +38,7 @@ impl ServiceGenerator for Markers {
         let appended = markers(&service, self.build_client);
         let mut client = String::new();
         self.tonic.generate(service, &mut client);
-        if self.build_client {
-            client = scope_tonic(&client);
-        }
-        buf.push_str(&client);
+        buf.push_str(&scope_tonic(&client));
         buf.push_str(&appended);
     }
 
@@ -62,30 +59,41 @@ impl ServiceGenerator for Markers {
     }
 }
 
-/// tonic's client module with `tonic` bound to `ulo_grpc`'s re-export, so the crate running the
+/// tonic's client code with `tonic` bound to `ulo_grpc`'s re-export, so the crate running the
 /// build step needs no `tonic` of its own.
 ///
 /// tonic-build writes bare `tonic::` paths, with no setting to change them, inside a module of its
-/// own, which a `use` outside the module does not reach. One `use ::ulo_grpc::tonic;` above the
-/// module's first import binds the name for every path in the module, and an item in the module
-/// shadows a `tonic` the crate depends on directly, whichever version that is.
+/// own, which a `use` outside the module does not reach. The code is parsed, and every inline
+/// module in it, at any depth, gains `#[allow(unused_imports)] use ::ulo_grpc::tonic;` as its
+/// first item, which binds the name for every path in that module whatever tonic-build writes
+/// around it; an item in the module shadows a `tonic` the crate depends on directly, whichever
+/// version that is. The file is printed again by `prettyplease`, which tonic-prost-build prints it
+/// with, so doc comments and attributes come through as tonic wrote them.
 ///
-/// # Panics
-///
-/// When the client has no `use tonic::codegen::*;` line, which a tonic-build writing its client
-/// differently would cause: the build script stops there, naming the line and the two ways past
-/// it, rather than leaving every `tonic::` path in the client unresolved.
-fn scope_tonic(client: &str) -> String {
-    const ANCHOR: &str = "use tonic::codegen::*;";
-    let Some((head, tail)) = client.split_once(ANCHOR) else {
-        panic!(
-            "ulo-build: the client module tonic-build wrote has no `{ANCHOR}` line, above which ulo-build binds `tonic` to \
-             `ulo_grpc::tonic`; this tonic-build release writes its clients differently from the ones ulo-build supports. \
-             Hold tonic-build at an earlier release with `cargo update -p tonic-build --precise <version>`, or generate no \
-             clients with `ulo_build::configure().build_client(false)`"
-        );
+/// Code that does not parse as a Rust file comes back as it was. tonic-prost-build prints its
+/// client from a parsed `syn` file, and prost-build parses each whole generated file again to
+/// format it, so such code stops the build there, with `syn`'s error, whatever this step does.
+fn scope_tonic(generated: &str) -> String {
+    let Ok(mut file) = syn::parse_file(generated) else {
+        return generated.to_owned();
     };
-    format!("{head}use ::ulo_grpc::tonic;\n    {ANCHOR}{tail}")
+    let binding: syn::Item = syn::parse_quote!(#[allow(unused_imports)] use ::ulo_grpc::tonic;);
+    for item in &mut file.items {
+        bind_in_modules(item, &binding);
+    }
+    prettyplease::unparse(&file)
+}
+
+/// `binding` as the first item of `item`, when it is an inline module, and of every inline module
+/// inside it. The file's own top level is left alone: it is `include!`d into the user's module,
+/// where a `tonic` of the user's own may already be in scope.
+fn bind_in_modules(item: &mut syn::Item, binding: &syn::Item) {
+    if let syn::Item::Mod(syn::ItemMod { content: Some((_, items)), .. }) = item {
+        for inner in items.iter_mut() {
+            bind_in_modules(inner, binding);
+        }
+        items.insert(0, binding.clone());
+    }
 }
 
 /// The marker module of `service`, and the client's `GrpcClient` impl when tonic writes a client.
@@ -182,4 +190,56 @@ fn upper_camel(name: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scope_tonic;
+
+    const BINDING: &str = "#[allow(unused_imports)]\n    use ::ulo_grpc::tonic;";
+
+    #[test]
+    fn a_client_module_without_tonics_glob_import_still_gains_the_binding() {
+        let generated = "pub mod greeter_client {\n    pub struct GreeterClient<T> {\n        inner: tonic::client::Grpc<T>,\n    }\n}\n";
+
+        let scoped = scope_tonic(generated);
+
+        assert!(scoped.contains(&format!("pub mod greeter_client {{\n    {BINDING}\n")), "{scoped}");
+    }
+
+    #[test]
+    fn doc_comments_and_inner_attributes_come_through() {
+        let generated = "/// Generated client implementations.\npub mod greeter_client {\n    #![allow(dead_code)]\n    use tonic::codegen::*;\n    /// Says hello.\n    #[derive(Debug, Clone)]\n    pub struct GreeterClient;\n}\n";
+
+        let scoped = scope_tonic(generated);
+
+        for kept in ["/// Generated client implementations.", "#![allow(dead_code)]", "/// Says hello.", "#[derive(Debug, Clone)]", "use tonic::codegen::*;"] {
+            assert!(scoped.contains(kept), "`{kept}` is missing from:\n{scoped}");
+        }
+        assert!(scoped.find(BINDING) < scoped.find("use tonic::codegen::*;"), "{scoped}");
+    }
+
+    #[test]
+    fn a_module_nested_in_the_client_module_gains_its_own_binding() {
+        let generated = "pub mod outer {\n    pub mod inner {\n        pub type Channel = tonic::transport::Channel;\n    }\n}\n";
+
+        let scoped = scope_tonic(generated);
+
+        assert_eq!(scoped.matches("use ::ulo_grpc::tonic;").count(), 2, "{scoped}");
+        assert!(scoped.contains("pub mod inner {\n        #[allow(unused_imports)]\n        use ::ulo_grpc::tonic;"), "{scoped}");
+    }
+
+    #[test]
+    fn the_top_level_and_an_outlined_module_are_left_alone() {
+        let generated = "pub mod declared;\npub struct Top;\n";
+
+        assert_eq!(scope_tonic(generated), generated);
+    }
+
+    #[test]
+    fn text_that_is_not_rust_comes_back_as_it_was() {
+        let generated = "pub mod greeter_client { this is not rust";
+
+        assert_eq!(scope_tonic(generated), generated);
+    }
 }

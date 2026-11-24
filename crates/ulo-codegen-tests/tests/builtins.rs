@@ -10,13 +10,12 @@ mod support;
 use futures_util::{StreamExt, stream};
 use prost::Message as _;
 use tonic::Code;
-use tonic_health::ServingStatus;
 use tonic_health::pb::health_check_response::ServingStatus as Wire;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::{HealthCheckRequest, HealthCheckResponse};
 use ulo::{Module, ModuleDef, ModuleIdentity, controller, handlers};
 use ulo_codegen_tests::probe::{self, Tick, Ticks};
-use ulo_grpc::{GrpcHealth, Message};
+use ulo_grpc::{GrpcHealth, Message, ServingStatus};
 
 use support::{Running, within};
 

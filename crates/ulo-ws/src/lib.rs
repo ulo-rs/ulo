@@ -62,6 +62,14 @@ pub mod details {
     pub use ulo_transport::Link;
 }
 
+/// `serde_json`'s types this crate's API names: the JSON a [`Detail::Json`] carries and the error
+/// [`Frame::json`] fails with. Each is `serde_json`'s own type, re-exported so code naming one needs
+/// no `serde_json` dependency of its own.
+pub mod json {
+    #[doc(no_inline)]
+    pub use serde_json::{Error, Value};
+}
+
 #[doc(hidden)]
 pub mod __private;
 

@@ -14,7 +14,6 @@ categories = ["network-programming"]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.3" }
 ulo-grpc = { path = "../ulo-grpc", version = "=0.1.0-alpha.3" }
 ulo-health = { path = "../ulo-health", version = "=0.1.0-alpha.3" }
-tonic-health.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
@@ -23,6 +22,8 @@ ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 ulo-conformance-support = { path = "../ulo-conformance-support" }
 futures-util.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time", "sync"] }
+# The tests' own `grpc.health.v1` client.
+tonic-health.workspace = true
 tonic = { workspace = true, features = ["channel"] }
 
 [lints]
