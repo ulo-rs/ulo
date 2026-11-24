@@ -13,7 +13,7 @@ pub const LAG: Duration = Duration::from_secs(2);
 /// Cold until `warm_up` is called; the check below reports it.
 #[injectable]
 pub struct Cache {
-    #[injectable(default)]
+    #[construct(default)]
     warm: AtomicBool,
 }
 

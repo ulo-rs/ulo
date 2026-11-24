@@ -2,8 +2,8 @@
 //!
 //! `#[handlers]` reads and removes `#[guards]`, `#[interceptors]`, `#[error_handlers]` and
 //! `#[meta]`, and `#[injectable]` and `#[controller]` read and remove `#[construct]` and a field's
-//! `#[injectable(default)]` or `#[controller(default)]`, so rustc never resolves those paths; a
-//! field could not carry an attribute macro anyway. An editor finds what a written token means by following it into the
+//! `#[construct(default)]`, so rustc never resolves those paths; a field could not carry an
+//! attribute macro anyway. An editor finds what a written token means by following it into the
 //! expansion by its span, and a removed attribute's tokens are nowhere in it. Beside the item, the
 //! macro therefore writes
 //!
@@ -170,8 +170,8 @@ mod tests {
         let construct = |kind, item| crate::construct::expand(kind, TokenStream::new(), item).map(|_| ()).unwrap_err().to_string();
         let ctor = construct(crate::construct::Kind::Injectable, quote!(impl X { #[framework::construct] fn build() -> Self { X } }));
         assert!(ctor.starts_with("write the marker bare, or as `ulo::construct`"), "{ctor}");
-        let field = construct(crate::construct::Kind::Controller, quote!(struct X { #[wrong::controller(default)] a: u8 }));
-        assert!(field.starts_with("write the marker bare, or as `ulo::controller`"), "{field}");
+        let field = construct(crate::construct::Kind::Controller, quote!(struct X { #[wrong::construct(default)] a: u8 }));
+        assert!(field.starts_with("write the marker bare, or as `ulo::construct`"), "{field}");
     }
 
     #[test]
@@ -179,9 +179,9 @@ mod tests {
         let impl_form = quote!(impl X { #[construct] fn build() -> Self { X } });
         let out = hidden(&crate::construct::expand(crate::construct::Kind::Injectable, TokenStream::new(), impl_form).unwrap());
         assert!(out.contains("use :: ulo :: construct as _"), "{out}");
-        let struct_form = quote!(struct X { #[injectable(default)] a: u8, #[ulo::injectable(default)] b: u8, c: Dep });
+        let struct_form = quote!(struct X { #[construct(default)] a: u8, #[ulo::construct(default)] b: u8, c: Dep });
         let out = hidden(&crate::construct::expand(crate::construct::Kind::Injectable, TokenStream::new(), struct_form).unwrap());
-        assert_eq!(out.matches("use :: ulo :: injectable as _").count(), 2, "{out}");
+        assert_eq!(out.matches("use :: ulo :: construct as _").count(), 2, "{out}");
     }
 
     #[test]
@@ -189,8 +189,8 @@ mod tests {
         let controller = |item| crate::construct::expand(crate::construct::Kind::Controller, TokenStream::new(), item);
         let out = hidden(&controller(quote!(impl X { #[construct] fn build() -> Self { X } })).unwrap());
         assert!(out.contains("use :: ulo :: construct as _"), "{out}");
-        let out = hidden(&controller(quote!(struct X { #[controller(default)] a: u8, #[ulo::controller(default)] b: u8, c: Dep })).unwrap());
-        assert_eq!(out.matches("use :: ulo :: controller as _").count(), 2, "{out}");
+        let out = hidden(&controller(quote!(struct X { #[construct(default)] a: u8, #[ulo::construct(default)] b: u8, c: Dep })).unwrap());
+        assert_eq!(out.matches("use :: ulo :: construct as _").count(), 2, "{out}");
     }
 
     #[test]

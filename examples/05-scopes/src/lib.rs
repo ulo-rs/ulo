@@ -5,7 +5,7 @@ use ulo::{App, AppBuilder, Dep, controller, handlers, injectable, module};
 /// Numbers every instance below, so a response shows which instance each read reached.
 #[injectable]
 pub struct Ids {
-    #[injectable(default)]
+    #[construct(default)]
     next: AtomicU64,
 }
 

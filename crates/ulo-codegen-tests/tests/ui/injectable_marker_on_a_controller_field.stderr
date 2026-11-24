@@ -1,4 +1,4 @@
-error: this struct is #[controller]: a field set from `Default` is marked `#[controller(default)]`
+error: a field set from `Default` is marked `#[construct(default)]`, not `#[injectable(default)]`
  --> tests/ui/injectable_marker_on_a_controller_field.rs:7:5
   |
 7 |     #[injectable(default)]

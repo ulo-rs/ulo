@@ -635,7 +635,7 @@ async fn a_call_its_own_handler_cancels_is_not_answered_as_the_drain() {
 /// calls it has taken is its own state, so both transports reading one count shows one instance.
 #[controller]
 struct Both {
-    #[controller(default)]
+    #[construct(default)]
     calls: AtomicUsize,
 }
 

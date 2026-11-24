@@ -103,7 +103,7 @@ impl Pages {
 /// A generic controller.
 #[controller]
 pub struct Generic<T: Send + Sync + 'static> {
-    #[controller(default)]
+    #[construct(default)]
     pub marker: PhantomData<fn() -> T>,
 }
 
@@ -120,9 +120,9 @@ impl<T: Send + Sync + 'static> Generic<T> {
 pub fn local() {
     #[controller]
     struct Local {
-        #[controller(default)]
+        #[construct(default)]
         a: u8,
-        #[ulo::controller(default)]
+        #[ulo::construct(default)]
         b: u8,
     }
 

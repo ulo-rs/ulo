@@ -15,8 +15,8 @@ pub(crate) use args::ConstructArgs;
 
 use crate::shared::ulo;
 
-/// Which attribute is expanding. The two write the same `Construct` impl and differ in the mark,
-/// in the name of the field marker their struct form reads, and in their wording.
+/// Which attribute is expanding. The two write the same `Construct` impl and differ in the mark
+/// and in their wording.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Injectable,
@@ -24,8 +24,7 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
-    /// The attribute's name, which is also the name of the struct form's field marker,
-    /// `#[injectable(default)]` or `#[controller(default)]`.
+    /// The attribute's name.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Kind::Injectable => "injectable",

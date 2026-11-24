@@ -2,10 +2,10 @@
 //! alone, for `#[injectable]` and `#[controller]` in both forms: its type is declared under the same
 //! `cfg`, so a read, a declaration or a passing of it fails to compile, and the app wires without
 //! the dependency. A `cfg` reached through `cfg_attr` gates as a bare one does, a field marked
-//! `#[injectable(default)]` or `#[controller(default)]` is set only where it is compiled, and a
-//! tuple struct whose gated field renumbers the fields after it is built by position. A parameter
-//! or field whose `cfg` is on, `cfg(test)` in this file's build, is declared, read and passed, so a
-//! gate written as always off leaves the call an argument short and the struct a field short.
+//! `#[construct(default)]` is set only where it is compiled, and a tuple struct whose gated field
+//! renumbers the fields after it is built by position. A parameter or field whose `cfg` is on,
+//! `cfg(test)` in this file's build, is declared, read and passed, so a gate written as always off
+//! leaves the call an argument short and the struct a field short.
 
 use ulo::{App, Dep, Module, ModuleDef, ModuleIdentity, controller, handlers, injectable};
 
@@ -45,12 +45,12 @@ struct ByFields {
     #[cfg_attr(test, cfg(any()))]
     through: Dep<Absent>,
     #[cfg(any())]
-    #[injectable(default)]
+    #[construct(default)]
     defaulted_absent: Absent,
     #[cfg(test)]
     on: Dep<On>,
     #[cfg(test)]
-    #[injectable(default)]
+    #[construct(default)]
     count: u32,
 }
 
@@ -61,9 +61,9 @@ struct ByPosition(
     #[cfg(any())] Dep<Absent>,
     Dep<Present>,
     #[cfg(any())]
-    #[injectable(default)]
+    #[construct(default)]
     Absent,
-    #[injectable(default)] u32,
+    #[construct(default)] u32,
     #[cfg(test)] Dep<On>,
 );
 
@@ -72,10 +72,10 @@ struct ByPosition(
 #[injectable]
 struct ByDefaultPosition(
     #[cfg(any())]
-    #[injectable(default)]
+    #[construct(default)]
     Absent,
     Dep<Present>,
-    #[injectable(default)] u32,
+    #[construct(default)] u32,
 );
 
 struct CtrlByCtor {
@@ -97,7 +97,7 @@ struct CtrlByFields {
     #[cfg(any())]
     absent: Dep<Absent>,
     #[cfg(any())]
-    #[controller(default)]
+    #[construct(default)]
     defaulted_absent: Absent,
     #[cfg(test)]
     on: Dep<On>,

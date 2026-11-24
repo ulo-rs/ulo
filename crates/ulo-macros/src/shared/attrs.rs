@@ -8,8 +8,8 @@
 //! `extern crate framework as ulo;`, for the expansion to compile at all.
 //!
 //! The markers are `guards`, `interceptors`, `error_handlers` and `meta`, which `#[handlers]`
-//! reads, `construct`, which `#[injectable]` and `#[controller]` read, and a field's
-//! `injectable(default)` or `controller(default)`. Rust resolves the attributes `#[controller]`,
+//! reads, and `construct`, which `#[injectable]` and `#[controller]` read on a constructor and as a
+//! field's `construct(default)`. Rust resolves the attributes `#[controller]`,
 //! `#[handlers]` and `#[injectable]` themselves, so a wrong path to one fails to resolve and any
 //! path that reaches one is accepted; none of them checks its own.
 

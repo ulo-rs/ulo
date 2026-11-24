@@ -10,9 +10,9 @@ use ulo_graphql_http::{GraphqlConfig, GraphqlModule};
 /// Where notes live, and the counter that numbers executions.
 #[injectable]
 pub struct Notes {
-    #[injectable(default)]
+    #[construct(default)]
     texts: Mutex<Vec<String>>,
-    #[injectable(default)]
+    #[construct(default)]
     executions: AtomicU64,
 }
 

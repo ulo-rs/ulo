@@ -193,7 +193,7 @@ impl Word for Hi {
 /// generic impl.
 #[controller]
 struct Echo<W: Word> {
-    #[controller(default)]
+    #[construct(default)]
     _word: PhantomData<W>,
 }
 

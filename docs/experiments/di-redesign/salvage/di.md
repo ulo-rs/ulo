@@ -119,7 +119,7 @@ report's wording (I.V-a) and the `Result`-bound factory with no hint (D.D9), are
 | F155 | Two 163-line resolvers differ in two substitutions | dropped | No generated resolvers; `FromContainer::from_container` per type | The measurement rule stays useful: count differing lines after substituting the noun, with an extractor asserted to return whole bodies. It refused the fix it was run to support (the controller's resolver was 95% different). |
 | F156 | `#[injectable]` and `#[controller]` disagree on `init`; the refusal says they agree | dropped | No `init`, no `#[controller]` | — |
 | F157 | `#[new]` and `init` read dependencies from different places | superseded | The impl form reads the constructor's parameters, the struct form every field, `injectable/impl_form.rs`, `struct_form.rs` | — |
-| F158 | `#[default(expr)]` is inert beside `#[new]` | superseded | The struct form has `#[injectable(default)]` only (`struct_form.rs:79-102`); the impl form's constructor sets every field; one placement per type | — |
+| F158 | `#[default(expr)]` is inert beside `#[new]` | superseded | The struct form has `#[construct(default)]` only (`struct_form.rs`, `classify`); the impl form's constructor sets every field; one placement per type | — |
 | F159 | Four construction mistakes report against macro internals | built | Span errors naming the user's items, `impl_form.rs:74-124` ("a second #[construct] fn", "no constructor: name it `new`, or mark the fn…") | — |
 | F160 | `ExtensionFactory<T>` and `ExtensionsFactory` differ by one letter | dropped | Both gone; `Ext<T>` needs no registration | — |
 | F161 | Two declaration vocabularies over ten code paths | superseded | One value API (`ModuleDef`, `Contribute`) and one macro DSL that lowers to it, DESIGN §0.2, §4 | — |
@@ -417,7 +417,7 @@ collection's item.
 | G.4 | Lifecycle end to end | built (differently) | DESIGN §2, §9 (wire, connect, bind, serve, close) | — |
 | G.5 | The refusal table | built (mostly) | DESIGN §12 | — |
 | G.6 / F287 | Type-level wiring: each module carries `type Exports`/`type Imports`, each injectable `type Deps`, `Visible<T, Idx>` with an inferred index | dropped (declined) | DESIGN principle 1: one runtime container validated whole; the compiler checks what is local to one type | See below. |
-| G.7-1 | Field helper naming | built | `#[injectable(default)]` (`struct_form.rs:79-102`); a qualifier is a type parameter, so no `#[inject(K)]` | — |
+| G.7-1 | Field helper naming | built | `#[construct(default)]` (`struct_form.rs`, `classify`); a qualifier is a type parameter, so no `#[inject(K)]` | — |
 | G.7-2 | Collection spelling `Vec<Dep<T>>`; a `Deps<T>` newtype rejected as a second noun | built (differently) | `Many<T, Q>`, DESIGN §3.2, §14.1 ("they read differently and fail differently") | The rebuild took the alternative the model rejected, with a reason. `Dep<[T]>` stays impossible (unsized items). |
 | G.7-3 | A transient answers a fresh `Dep<T>` | built | D14 row | — |
 | G.7-4 | Halt 9's lookup half | built | G.2.4 | — |
@@ -554,7 +554,7 @@ Nest-community answer and costs a module per cycle.
 | O1-both | Both placements on one type is a compile error through conflicting impls, clarified by a diagnostic or a doc | UNVERIFIED | Relies on E0119 between the two forms' `Construct` impls; the message is rustc's own unless a doc says otherwise | Needs a compile to see the message. |
 | O1-construct | `#[construct]`, not `#[ctor]`/`#[constructor]` | built | `lib.rs:32-37` | F288 row. |
 | O2 | `Dep<T>` over `Inject<T>`: types are nouns (axum's `State`, actix's `Data`, Bevy's `Res`); `Inject<T>` beside `#[inject]` gives one word two meanings | built | `Dep<T>`; DESIGN §0.3 makes "types are nouns" a principle | — |
-| O3-conv | Attribute conventions: an attribute describes its item (`#[injectable]`), a role attribute marks a role (`#[construct]`), a helper is namespaced under the crate or the main macro (`#[serde(..)]`) | built | `#[injectable(default)]` | The verb argument: `#[inject(default)]` reads "inject the default" and means "do not inject; use `Default`". |
+| O3-conv | Attribute conventions: an attribute describes its item (`#[injectable]`), a role attribute marks a role (`#[construct]`), a helper is namespaced under the crate or the main macro (`#[serde(..)]`) | built | `#[construct(default)]` (DESIGN item 69) | The verb argument: `#[inject(default)]` reads "inject the default" and means "do not inject; use `Default`". |
 | O3-dyn | Trait objects in `Dep<dyn T>`; push `Send + Sync` onto the trait; the trait must be dyn-compatible, and native `async fn` in traits is not | built | DESIGN §5; role traits use `impl Future` with dyn-compatible erased twins as role keys, §3.7 | — |
 | O3-types | Modules as distinct types: dedup, errors naming modules, configurable modules | built | DESIGN §3.6, §8.3 | — |
 | O3-pushback | User: modules can and should be distinct types; `#[inject(default)]` blur is moot once `default` retires; the double wrap on a pool does not matter under the modelled core | built | Modules are types; the double wrap is accepted (DESIGN §3.2 `Dep::from_arc`; the core model's "cost accepted: a handle already an `Arc` inside sits behind one more pointer") | — |

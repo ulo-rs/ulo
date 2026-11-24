@@ -457,7 +457,7 @@ impl Titled for Books {
 /// Generic over any `T`, with handlers only for a `T: Titled`.
 #[controller]
 struct Shelf<T: Send + Sync + 'static> {
-    #[controller(default)]
+    #[construct(default)]
     _of: std::marker::PhantomData<fn() -> T>,
 }
 

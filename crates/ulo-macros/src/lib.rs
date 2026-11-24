@@ -17,7 +17,7 @@ use proc_macro::TokenStream;
 /// A type the container builds and injects into others: a provider, listed under a module's
 /// `providers`.
 ///
-/// On a struct, every field is an injection point except one marked `#[injectable(default)]`,
+/// On a struct, every field is an injection point except one marked `#[construct(default)]`,
 /// which is set from `Default`. On an impl block, the constructor is the fn named `new`, or the
 /// one marked `#[construct]`; its parameters are injection points, it may be `async`, and it may
 /// return `Self` or a `Result<Self, E>`. Both marks are read and removed, and a hidden import of
@@ -42,7 +42,7 @@ pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// its `#[handlers]` impl. Only another controller injects one; `wire()` refuses a read of a
 /// controller by any other binding.
 ///
-/// It writes what `#[injectable]` writes, from a struct (`#[controller(default)]` marks a field
+/// It writes what `#[injectable]` writes, from a struct (`#[construct(default)]` marks a field
 /// set from `Default`) or from an impl block's `new` or `#[construct]` fn, and takes the same
 /// arguments: a scope and `timeout = <Duration expr>`. With no scope it is `Auto`: a singleton if
 /// nothing below it needs an execution, and built per call otherwise. It takes no route prefix;
@@ -72,7 +72,9 @@ pub fn controller(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// Marks the constructor inside an `#[injectable]` or `#[controller]` impl when it is not named
-/// `new`; the attribute on the impl reads and removes it. Anywhere else it is an error.
+/// `new`, and, written `#[construct(default)]` on a field of an `#[injectable]` or `#[controller]`
+/// struct, sets that field from `Default` instead of injecting it. The attribute on the impl or
+/// the struct reads and removes it. Anywhere else it is an error.
 #[proc_macro_attribute]
 pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
     construct_attr::expand(attr.into(), item.into()).unwrap_or_else(syn::Error::into_compile_error).into()

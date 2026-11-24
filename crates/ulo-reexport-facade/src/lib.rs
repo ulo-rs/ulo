@@ -24,7 +24,7 @@ mod markers {
 
     #[controller]
     struct Orders {
-        #[controller(default)]
+        #[construct(default)]
         seen: u32,
     }
 
@@ -60,7 +60,7 @@ mod markers {
 
     #[ulo_reexport_renamed::controller]
     struct Facade {
-        #[controller(default)]
+        #[construct(default)]
         seen: u32,
     }
 
