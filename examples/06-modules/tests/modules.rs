@@ -33,7 +33,7 @@ fn reading_a_private_binding_fails_wiring_with_the_key_and_the_reader() {
     let report = errors.to_string();
     assert!(report.contains("missing dependency `PasswordHasher`"), "{report}");
     assert!(report.contains("needed by Snooper (field `_hasher`) in SnoopingModule"), "{report}");
-    let [WiringError::Missing { key, consumer, module, near }] = errors.iter().collect::<Vec<_>>()[..] else {
+    let [WiringError::Missing { key, consumer, module, near, .. }] = errors.iter().collect::<Vec<_>>()[..] else {
         panic!("expected one missing dependency, got {errors}");
     };
     assert_eq!(key.to_string(), "PasswordHasher");

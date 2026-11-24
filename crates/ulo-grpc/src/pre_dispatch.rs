@@ -85,7 +85,7 @@ impl StageHost for StageCx {
             );
             let reply = match ulo::recover(self.handler.as_ref(), &self.exec, &cx, err).await {
                 Ok(reply) => reply,
-                Err(err) => status_reply(status::render(err, &self.exec)),
+                Err(err) => status_reply(status::render(err, &self.exec, cx.app())),
             };
             reply.map(HttpBody::new)
         })

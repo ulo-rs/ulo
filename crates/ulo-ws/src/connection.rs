@@ -700,7 +700,7 @@ fn refusal(refused: ConnectRefused, answers: &HandshakeAnswers) -> Refusal {
     if refused.shed && !refused.headers.contains_key(RETRY_AFTER) {
         headers.push((RETRY_AFTER, answers.retry_after()));
     }
-    Refusal { status: refused.status, reason: refused.reason, headers }
+    Refusal { status: refused.status, reason: refused.reason().to_owned(), headers }
 }
 
 /// The connection after its 101: the connection phase unless the handshake ran it, the read
@@ -996,7 +996,7 @@ async fn connect(accept: &Accept, head: Arc<Parts>, peer: Option<SocketAddr>, pr
     };
     accept.hub.unregister(id);
     trace::record_refusal(&call_span, &refused);
-    Connected::Refused(refused)
+    Connected::Refused(refused.redacted(&accept.app))
 }
 
 /// A Close frame with `code` and `reason`, then a wait for the client's, bounded by
@@ -1623,7 +1623,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
         Err(err) => {
             let error = CallError::from_boxed(err);
             trace::record_failure(&call_span, error.kind());
-            let _ = outbound.push(envelope::error(codec, id.as_ref(), &error));
+            let _ = outbound.push(envelope::error(codec, id.as_ref(), &error.__into_sent(&conn.inner.app)));
         }
         Ok(Reply::None) => {
             if id.is_some() {
@@ -1740,14 +1740,14 @@ async fn late(
     let original = CallError::from_boxed(err);
     let Some(handler) = handler else {
         trace::record_failure(&call_span, original.kind());
-        return envelope::error(codec, id, &original);
+        return envelope::error(codec, id, &original.__into_sent(cx.app()));
     };
     let summary = original.summary();
     match ulo::dispatch_late(handler, exec, cx, Box::new(original)).await {
         LateOutcome::Render(reshaped) => {
             let reshaped = CallError::from_boxed(reshaped);
             trace::record_failure(&call_span, reshaped.kind());
-            envelope::error(codec, id, &reshaped)
+            envelope::error(codec, id, &reshaped.__into_sent(cx.app()))
         }
         LateOutcome::End => envelope::complete(codec, id),
         _ => {
@@ -1756,7 +1756,7 @@ async fn late(
                  since a late answer cannot replace it"
             );
             trace::record_failure(&call_span, summary.kind());
-            envelope::error(codec, id, &summary)
+            envelope::error(codec, id, &summary.__into_sent(cx.app()))
         }
     }
 }

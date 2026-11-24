@@ -263,7 +263,7 @@ async fn a_spent_shutdown_cap_and_no_interval_still_turn_the_overall_status_not_
         .failures
         .iter()
         .filter_map(|failure| match failure {
-            ShutdownFailure::Hook { hook, key, reason } if matches!(**reason, FailureReason::Skipped) => Some((*hook, format!("{:#}", key.key().type_name()))),
+            ShutdownFailure::Hook { hook, key, reason, .. } if matches!(**reason, FailureReason::Skipped) => Some((*hook, format!("{:#}", key.key().type_name()))),
             _ => None,
         })
         .collect();

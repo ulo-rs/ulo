@@ -42,7 +42,8 @@ pub struct CloseCode(u16);
 impl CloseCode {
     /// 1000: the purpose the connection was opened for is fulfilled.
     pub const NORMAL: CloseCode = CloseCode(1000);
-    /// 1001: the server is going away, as at the drain.
+    /// 1001: an endpoint is going away. The server's, at the drain, its reason alone; and the
+    /// connect refusal of `Cancelled`, a caller that went away, its reason starting with the kind.
     pub const GOING_AWAY: CloseCode = CloseCode(1001);
     /// 1003: a frame of a kind the endpoint does not accept, as a binary frame on a text-only
     /// gateway.
@@ -86,8 +87,8 @@ impl CloseCode {
     /// The code a connect refusal of `kind` closes with: 3000, 3003 and 3008 for `Unauthorized`,
     /// `Forbidden` and `Timeout`, the registry's codes for them; 1008 for the client's other
     /// mistakes, `BadRequest`, `NotFound`, `Conflict` and `Unprocessable`, which the registry has
-    /// no code for; 1013 for `TooManyRequests` and `Unavailable`; and 1011 for `Internal`,
-    /// `Unimplemented` and any kind added later.
+    /// no code for; 1013 for `TooManyRequests` and `Unavailable`; 1001 for `Cancelled`, the caller
+    /// having gone; and 1011 for `Internal`, `Unimplemented` and any kind added later.
     pub const fn of_kind(kind: ErrorKind) -> CloseCode {
         match kind {
             ErrorKind::Unauthorized => CloseCode::UNAUTHORIZED,
@@ -97,6 +98,7 @@ impl CloseCode {
                 CloseCode::POLICY_VIOLATION
             }
             ErrorKind::TooManyRequests | ErrorKind::Unavailable => CloseCode::TRY_AGAIN_LATER,
+            ErrorKind::Cancelled => CloseCode::GOING_AWAY,
             _ => CloseCode::INTERNAL_ERROR,
         }
     }
@@ -106,7 +108,7 @@ impl CloseCode {
 /// Every kind [`CloseCode::of_kind`] names. A kind added later closes with 1011, which
 /// `Internal` and `Unimplemented` already share.
 #[cfg(test)]
-const KINDS: [ErrorKind; 11] = [
+const KINDS: [ErrorKind; 12] = [
     ErrorKind::BadRequest,
     ErrorKind::Unauthorized,
     ErrorKind::Forbidden,
@@ -118,6 +120,7 @@ const KINDS: [ErrorKind; 11] = [
     ErrorKind::Unavailable,
     ErrorKind::Unimplemented,
     ErrorKind::Internal,
+    ErrorKind::Cancelled,
 ];
 
 impl fmt::Display for CloseCode {
@@ -132,12 +135,16 @@ impl fmt::Display for CloseCode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CloseCodeError {
     /// The reason is over 123 bytes of UTF-8.
+    #[non_exhaustive]
     ReasonTooLong { len: usize },
     /// 1004, 1005, 1006 or 1015.
+    #[non_exhaustive]
     Reserved { code: u16 },
     /// Outside 1000 to 4999.
+    #[non_exhaustive]
     OutOfRange { code: u16 },
     /// 1016 to 2999.
+    #[non_exhaustive]
     Unassigned { code: u16 },
 }
 
@@ -252,18 +259,34 @@ pub(crate) fn check_reason(reason: &str) -> Result<(), CloseCodeError> {
 /// kind and `: `, or is the kind alone, is the reason as it stands, and an empty one leaves the
 /// kind alone. The message is cut to fit 123 bytes, the kind kept whole.
 pub(crate) fn by_kind(kind: ErrorKind, message: &str) -> (CloseCode, String) {
+    let (code, reason) = by_kind_whole(kind, message);
+    (code, truncated(reason))
+}
+
+/// [`by_kind`] before the cut, for a refusal whose reason is redacted before it is cut: a secret
+/// the cut split would no longer match. The kind's name is ASCII and under 123 bytes, so cutting
+/// this reason keeps the kind whole, as `by_kind` does.
+pub(crate) fn by_kind_whole(kind: ErrorKind, message: &str) -> (CloseCode, String) {
     let code = CloseCode::of_kind(kind);
     let name = kind.to_string();
     let prefix = format!("{name}: ");
     let reason = if message.is_empty() {
         name
     } else if message == name || message.starts_with(&prefix) {
-        truncated(message.to_owned())
+        message.to_owned()
     } else {
-        let room = REASON_LIMIT - prefix.len();
-        prefix + &truncated_to(message.to_owned(), room)
+        prefix + message
     };
     (code, reason)
+}
+
+/// `reason` cut to at most 123 bytes at a character boundary, borrowed.
+pub(crate) fn cut(reason: &str) -> &str {
+    let mut end = reason.len().min(REASON_LIMIT);
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    &reason[..end]
 }
 
 /// `reason` cut to at most 123 bytes at a character boundary.
@@ -343,6 +366,7 @@ mod tests {
             (ErrorKind::Unauthorized, 3000, "unauthorized: why"),
             (ErrorKind::Forbidden, 3003, "forbidden: why"),
             (ErrorKind::Timeout, 3008, "timeout: why"),
+            (ErrorKind::Cancelled, 1001, "cancelled: why"),
         ];
         assert_eq!(cases.len(), KINDS.len(), "a case per kind");
         for (kind, code, reason) in cases {

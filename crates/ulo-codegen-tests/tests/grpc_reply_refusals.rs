@@ -33,16 +33,25 @@ fn one_reply(count: u32) -> Response<Tick> {
     }
 }
 
-/// The refusal `one_reply(count)` fails with.
-fn refusal(count: u32) -> MetadataError {
-    let key = |key: &str| key.to_owned();
+/// The refusal `one_reply(count)` fails with, as its variant's name and its key.
+fn refusal(count: u32) -> (&'static str, &'static str) {
     match count {
-        0 => MetadataError::Reserved { key: key("grpc-x") },
-        1 => MetadataError::Reserved { key: key("connection") },
-        2 => MetadataError::AsciiUnderBinaryKey { key: key("x-bad-bin") },
-        3 => MetadataError::InvalidAscii { key: key("x-a") },
-        4 => MetadataError::Reserved { key: key("te") },
+        0 => ("Reserved", "grpc-x"),
+        1 => ("Reserved", "connection"),
+        2 => ("AsciiUnderBinaryKey", "x-bad-bin"),
+        3 => ("InvalidAscii", "x-a"),
+        4 => ("Reserved", "te"),
         _ => unreachable!("count {count} builds no refused entry"),
+    }
+}
+
+/// `error` as its variant's name and its key, as [`refusal`] names one.
+fn named(error: &MetadataError) -> (&'static str, &str) {
+    match error {
+        MetadataError::Reserved { key, .. } => ("Reserved", key),
+        MetadataError::AsciiUnderBinaryKey { key, .. } => ("AsciiUnderBinaryKey", key),
+        MetadataError::InvalidAscii { key, .. } => ("InvalidAscii", key),
+        other => unreachable!("{other:?}"),
     }
 }
 
@@ -140,14 +149,11 @@ async fn the_error_handlers_see_the_first_refusal_naming_the_key_and_the_reason(
     }
     let seen = seen.0.at_least(5, "the refusals").await;
     for (count, (kind, refused, text)) in (0..).zip(seen) {
-        let expected = refusal(count);
+        let (variant, key) = refusal(count);
         assert_eq!(kind, ErrorKind::Internal, "count {count}");
-        assert_eq!(refused.as_ref(), Some(&expected), "count {count}");
-        let key = match &expected {
-            MetadataError::Reserved { key } | MetadataError::AsciiUnderBinaryKey { key } | MetadataError::InvalidAscii { key } => key,
-            other => unreachable!("{other:?}"),
-        };
-        assert!(text.contains(key.as_str()) && text.contains(&expected.to_string()), "count {count}: {text}");
+        let refused = refused.unwrap_or_else(|| panic!("count {count}: no refusal"));
+        assert_eq!(named(&refused), (variant, key), "count {count}");
+        assert!(text.contains(key) && text.contains(&refused.to_string()), "count {count}: {text}");
     }
     app.stop().await;
 }

@@ -38,7 +38,7 @@ fn missing_dependency() {
     }));
 
     let (key, consumer, module, near) =
-        entry!(errors, WiringError::Missing { key, consumer, module, near } => (key.key(), consumer.clone(), module.to_string(), near.is_some()));
+        entry!(errors, WiringError::Missing { key, consumer, module, near, .. } => (key.key(), consumer.clone(), module.to_string(), near.is_some()));
     assert_eq!(key, Key::of::<Svc, ()>());
     assert!(consumer.contains("Head"), "the consumer is named: {consumer}");
     assert_eq!(module, mod_name::<A>());

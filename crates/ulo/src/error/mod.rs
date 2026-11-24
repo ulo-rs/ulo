@@ -201,6 +201,7 @@ pub enum FailureReason {
     /// The payload, converted to a message.
     Panicked(Redacted),
     /// `after` is the configured duration of the limit that fired.
+    #[non_exhaustive]
     TimedOut { after: Duration, limit: Limit },
     /// Never started: `shutdown_timeout` had expired (§9.5); shutdown hooks only.
     Skipped,
@@ -311,12 +312,14 @@ impl Error for ShutdownError {}
 pub enum ShutdownFailure {
     /// `Errored` only for a closure hook whose dependency read failed: the shutdown hook traits and
     /// closures return `()`.
+    #[non_exhaustive]
     Hook { hook: HookKind, key: KeyName, reason: Box<FailureReason> },
     /// `Errored` for the transport's own error, `Panicked` for a panic in its `close`, and
     /// `TimedOut` for a `close` exceeding its bound (§9.5): `limit: ShutdownCap` with the cap's
     /// duration when the cap bounded it, `limit: Default` with `hook_timeout` otherwise. A bound
     /// the `Timer` refused is `Errored` holding a `Permanent` `RuntimeShutDown`. Never `Skipped`:
     /// every `close` starts.
+    #[non_exhaustive]
     Close { transport: TypeName, reason: FailureReason },
     /// The `App` value dropped before its shutdown's close step ended, with no `close` holding a
     /// claim on the servers, and the drop released them without their `close`. The `close`
@@ -325,6 +328,7 @@ pub enum ShutdownFailure {
     Dropped,
     /// The transport's `serve` ended before any other trigger arrived, and that end started this
     /// shutdown (§9.5). It is the first failure listed; the steps that follow add theirs.
+    #[non_exhaustive]
     Serve { transport: TypeName, end: ServeEnd },
 }
 
@@ -452,12 +456,17 @@ impl Error for LoadError {
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum LoadRefusal {
+    #[non_exhaustive]
     Controllers { module: ModuleName },
+    #[non_exhaustive]
     Middleware { module: ModuleName },
     /// To a collection the module does not introduce.
+    #[non_exhaustive]
     Contribution { module: ModuleName, key: KeyName },
+    #[non_exhaustive]
     GlobalExport { module: ModuleName, key: KeyName },
     /// Inputs belong to transports; the per-handler check ran at wiring time (§6.4).
+    #[non_exhaustive]
     Input { module: ModuleName, key: KeyName },
 }
 
@@ -492,27 +501,37 @@ impl fmt::Display for LoadRefusal {
 #[derive(Debug)]
 pub enum LookupError {
     /// A binding, an extension, an input or a module.
+    #[non_exhaustive]
     NotFound { key: KeyName, kind: LookupKind },
     /// A singleton the connect walk has not built yet (§8.5).
+    #[non_exhaustive]
     NotReady { key: KeyName },
     /// An erased `Key` asked for a `T` it does not hold.
+    #[non_exhaustive]
     WrongType { key: KeyName, requested: &'static str },
     /// Single read as collection, or the reverse.
+    #[non_exhaustive]
     WrongKind { key: KeyName, expected: BindingKind, found: BindingKind },
+    #[non_exhaustive]
     ExecutionRequired { key: KeyName },
     /// A read through an execution that has ended, its `Execution` dropped (§3.8): from a
     /// subtask's `ExecutionRef`, or from a build that began before the end.
+    #[non_exhaustive]
     ExecutionEnded { key: KeyName },
     /// A runtime lookup of a key two visible exports answer (§8.2): `ModuleRef::get`, `get` in
     /// an execution opened on a module other than the root, or `by_key`. `sources` are the
     /// exporting modules. `Option<S>` propagates it.
+    #[non_exhaustive]
     Ambiguous { key: KeyName, sources: Vec<ModuleName> },
     /// `app.module::<M>()` over several instances of `M` (§8.5); `module` is `M`'s type name.
+    #[non_exhaustive]
     AmbiguousModule { module: &'static str, candidates: Vec<ModuleName> },
     /// A build inside a call failed, panicked or timed out (§3.4). A pattern binds `reason` and
     /// matches `*reason`: stable Rust has no pattern through a `Box`.
+    #[non_exhaustive]
     Construct { key: KeyName, reason: Box<FailureReason> },
     /// A singleton lookup from Destroying on (§9.5).
+    #[non_exhaustive]
     Closed { key: KeyName },
     /// A read of the execution-scoped or transient binding `key` while `key` is itself being built
     /// further up the same reads, reached through a `ModuleRef` or an `ExecutionRef` read at
@@ -520,6 +539,7 @@ pub enum LookupError {
     /// boxed so a lookup's error stays the size of its other variants. Without the refusal an
     /// execution-scoped `key` would wait on its own build and a transient one would recurse until
     /// the stack ran out.
+    #[non_exhaustive]
     Reentrant { key: KeyName, reader: Box<KeyName> },
 }
 
@@ -993,9 +1013,10 @@ fn reason_permanent(reason: &FailureReason, depth: usize) -> bool {
 /// connect task panicked.
 ///
 /// The panic is found under a constructor or a `try_` factory that returned a dependency's
-/// `LookupError` as its own `Err`, and down any error's `source()` chain. Inside a [`Redacted`]
-/// only the core's error types are recognized, each by type: a panic wrapped in another error
-/// type before it was redacted is not found.
+/// `LookupError` as its own `Err`, and down any error's `source()` chain, to 32 levels. Inside a
+/// [`Redacted`] the walk continues from [`Redacted::original`] down the original's own chain, as
+/// [`is_permanent`] reads a `Permanent`, so a panic a user's error type wrapped before it was
+/// redacted is found. The answer is a boolean: no text of the original reaches the caller.
 pub fn is_panic(error: &BoxError) -> bool {
     panic_in(&**error, 0)
 }
@@ -1013,45 +1034,48 @@ fn panic_in(error: &(dyn Error + 'static), depth: usize) -> bool {
     }
 }
 
+/// A `Redacted` answers `None` for `source()`, so its original is walked instead, as
+/// [`redacted_permanent`] walks it: the core's own types by their structure, and any other error
+/// down its own chain.
 fn redacted_panicked(redacted: &Redacted, depth: usize) -> bool {
-    depth < MAX_DEPTH && recognized(redacted, depth).unwrap_or(false)
+    depth < MAX_DEPTH && panic_in(redacted.original(), depth)
 }
 
 /// `Some` when `error` is one of the core's types that can carry a panic, holding whether it
 /// does; `None` for any other type.
-fn recognized<'e>(error: impl ByType<'e>, depth: usize) -> Option<bool> {
-    if error.get::<PanicRecovered>().is_some() || error.get::<PreparePanicked>().is_some() || error.get::<PanicMessage>().is_some() {
+fn recognized(error: &(dyn Error + 'static), depth: usize) -> Option<bool> {
+    if error.is::<PanicRecovered>() || error.is::<PreparePanicked>() || error.is::<PanicMessage>() {
         return Some(true);
     }
-    if let Some(lookup) = error.get::<LookupError>() {
+    if let Some(lookup) = error.downcast_ref::<LookupError>() {
         return Some(lookup_panicked(lookup, depth));
     }
-    if let Some(construct) = error.get::<ConstructError>() {
+    if let Some(construct) = error.downcast_ref::<ConstructError>() {
         return Some(match construct {
             ConstructError::Dependency(lookup) => lookup_panicked(lookup, depth),
             ConstructError::Failed(inner) => panic_in(&**inner, depth + 1),
         });
     }
-    if let Some(connect) = error.get::<ConnectError>() {
+    if let Some(connect) = error.downcast_ref::<ConnectError>() {
         return Some(connect_panicked(connect, depth));
     }
-    if let Some(load) = error.get::<LoadError>() {
+    if let Some(load) = error.downcast_ref::<LoadError>() {
         return Some(matches!(load, LoadError::Connect { error, .. } if connect_panicked(error, depth)));
     }
-    if let Some(startup) = error.get::<StartupError>() {
+    if let Some(startup) = error.downcast_ref::<StartupError>() {
         return Some(match startup {
             StartupError::Connect { error, .. } => connect_panicked(error, depth),
             StartupError::Configure(errors) => configure_panicked(errors, depth),
             StartupError::Wiring(_) | StartupError::Bind { .. } => false,
         });
     }
-    if let Some(errors) = error.get::<ConfigureErrors>() {
+    if let Some(errors) = error.downcast_ref::<ConfigureErrors>() {
         return Some(configure_panicked(errors, depth));
     }
-    if let Some(redacted) = error.get::<Redacted>() {
+    if let Some(redacted) = error.downcast_ref::<Redacted>() {
         return Some(redacted_panicked(redacted, depth + 1));
     }
-    if let Some(shutdown) = error.get::<ShutdownError>() {
+    if let Some(shutdown) = error.downcast_ref::<ShutdownError>() {
         return Some(shutdown.failures.iter().any(|failure| shutdown_failure_panicked(failure, depth)));
     }
     None
@@ -1100,25 +1124,6 @@ fn reason_panicked(reason: &FailureReason, depth: usize) -> bool {
     }
 }
 
-/// The original by its type, which `dyn Error` and `Redacted` both answer.
-trait ByType<'e> {
-    fn get<E: Error + 'static>(&self) -> Option<&'e E>;
-}
-
-impl<'e> ByType<'e> for &'e (dyn Error + 'static) {
-    fn get<E: Error + 'static>(&self) -> Option<&'e E> {
-        let error: &'e (dyn Error + 'static) = *self;
-        error.downcast_ref::<E>()
-    }
-}
-
-impl<'e> ByType<'e> for &'e Redacted {
-    fn get<E: Error + 'static>(&self) -> Option<&'e E> {
-        let redacted: &'e Redacted = self;
-        redacted.downcast_ref::<E>()
-    }
-}
-
 #[cfg(test)]
 mod shutdown_panics {
     use super::*;
@@ -1142,6 +1147,65 @@ mod shutdown_panics {
         let close = ShutdownFailure::Close { transport: TypeName::of::<()>(), reason: FailureReason::Errored(errored_with_a_panic()) };
         let serve = ShutdownFailure::Serve { transport: TypeName::of::<()>(), end: ServeEnd::Errored(errored_with_a_panic()) };
         assert_eq!((holds_a_panic(close), holds_a_panic(serve)), (true, true));
+    }
+}
+
+#[cfg(test)]
+mod wrapped_before_redaction {
+    use super::*;
+    use crate::key::Key;
+
+    /// A user's error keeping `0` as its `source()`, redacted after it wrapped the core's error.
+    #[derive(Debug)]
+    struct Wrapping(BoxError);
+
+    impl fmt::Display for Wrapping {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("the pool refused")
+        }
+    }
+
+    impl Error for Wrapping {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&*self.0)
+        }
+    }
+
+    fn panic() -> BoxError {
+        Box::new(PanicRecovered { stage: DispatchStage::Handler, message: Redacted::from_parts(Box::new(fmt::Error), "boom".into()) })
+    }
+
+    /// `inner` under `levels` user wrappers, redacted, as a hook's `Errored` reason of a failed start.
+    fn start(inner: BoxError, levels: usize) -> StartupError {
+        let wrapped = (0..levels).fold(inner, |inner, _| Box::new(Wrapping(inner)) as BoxError);
+        let reason = FailureReason::Errored(Redacted::from_parts(wrapped, "the pool refused".into()));
+        let key = Key::of::<u8, ()>().name(BindingKind::Single);
+        StartupError::Connect { error: Box::new(ConnectError::Hook { hook: HookKind::OnModuleInit, key, reason }), teardown: Vec::new() }
+    }
+
+    fn is_panic_of(error: StartupError) -> bool {
+        crate::is_panic(&(Box::new(error) as BoxError))
+    }
+
+    /// A panic and a `Permanent` a user's error wrapped before redaction are both found, through
+    /// one wrapper and through thirty; a wrapper holding neither answers `false` to both.
+    /// Planted break: `redacted_panicked` reading the original by type alone, which misses the
+    /// wrapped panic while `is_permanent` still finds the wrapped `Permanent`.
+    #[test]
+    fn a_panic_wrapped_before_redaction_is_found_as_a_permanent_is() {
+        for levels in [1, 30] {
+            assert!(is_panic_of(start(panic(), levels)), "a panic under {levels} wrappers");
+            assert!(is_permanent(&start(Box::new(Permanent::new(fmt::Error)), levels)), "a `Permanent` under {levels} wrappers");
+            assert!(!is_panic_of(start(Box::new(fmt::Error), levels)), "no panic under {levels} wrappers");
+            assert!(!is_permanent(&start(Box::new(fmt::Error), levels)), "no `Permanent` under {levels} wrappers");
+        }
+    }
+
+    /// The two predicates share the depth bound: past it neither finds what it looks for.
+    #[test]
+    fn past_the_depth_bound_neither_predicate_finds_its_error() {
+        assert!(!is_panic_of(start(panic(), MAX_DEPTH)));
+        assert!(!is_permanent(&start(Box::new(Permanent::new(fmt::Error)), MAX_DEPTH)));
     }
 }
 

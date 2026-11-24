@@ -179,12 +179,12 @@ fn a_second_import_with_another_connect_within_is_refused_naming_both_sites() {
     let errors = refused(root);
     assert_eq!(differing(&errors), ["connect_within"]);
 
-    let Some(WiringError::DifferingSettings { module, first, second, settings }) = errors.iter().next() else {
+    let Some(WiringError::DifferingSettings { module, first, second, settings, .. }) = errors.iter().next() else {
         panic!("{errors}");
     };
     assert_eq!(module.to_string(), "StoreModule<Fake>");
     let site = |site: &ModuleSite| match site {
-        ModuleSite::Import { importer, at } => (importer.to_string(), at.line()),
+        ModuleSite::Import { importer, at, .. } => (importer.to_string(), at.line()),
         other => panic!("expected an import site, got {other:?}"),
     };
     assert_eq!(site(first), ("Root".to_owned(), FIRST.load(Ordering::SeqCst)), "the import that claimed the identity");

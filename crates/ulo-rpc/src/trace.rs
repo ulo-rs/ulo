@@ -72,6 +72,7 @@ pub(crate) fn record_failure(call_span: &Span, kind: ErrorKind) {
             | ErrorKind::Conflict
             | ErrorKind::Unprocessable
             | ErrorKind::TooManyRequests
+            | ErrorKind::Cancelled
     ) {
         call_span.record(span::OTEL_STATUS_CODE, span::STATUS_ERROR);
     }

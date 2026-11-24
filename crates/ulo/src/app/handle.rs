@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::future::Future;
 use std::panic::Location;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use crate::lifecycle::phase::Phase as Stage;
 use crate::lifecycle::shutdown;
 use crate::module::Module;
 use crate::module::handle::ModuleRef;
-use crate::redact::{Redacted, redact};
+use crate::redact::{Redacted, redact, scrub_text};
 use crate::runtime::Runtime;
 use crate::signal::Signal;
 use crate::timer::{BoxError, Timer};
@@ -178,6 +179,18 @@ impl AppHandle {
     /// `ExtractError::Malformed`'s decoder error.
     pub fn redact(&self, err: BoxError) -> Redacted {
         redact(&self.shared.graph().secrets, err)
+    }
+
+    /// The same redaction over a text: every registered `Secret` replaced by `[redacted]`, and the
+    /// userinfo of anything shaped like a URL. For text that leaves the app as written, such as the
+    /// message of an error a transport sends to the caller. A secret is matched when it is at
+    /// least four characters long, counted in `char`s; a shorter one is never matched, since it
+    /// would replace ordinary words. The text comes back borrowed when nothing in it was replaced.
+    ///
+    /// The scan is one pass over the text, testing at each position only the secrets that start
+    /// with its byte, longest first, so a secret holding another is replaced whole.
+    pub fn redact_text<'t>(&self, text: &'t str) -> Cow<'t, str> {
+        scrub_text(&self.shared.graph().secrets, text)
     }
 
     /// Every mounted handler, of every transport, with its transport key, route or pattern and

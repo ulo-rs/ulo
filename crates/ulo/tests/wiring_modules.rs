@@ -28,7 +28,7 @@ trait Repo: Send + Sync {}
 #[test]
 fn a_module_importing_itself_is_refused_naming_it_twice() {
     let errors = wire_err(Mod::<A>::new(|m| m.import(Mod::<A>::bare())));
-    let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+    let path = entry!(errors, WiringError::ImportCycle { path, .. } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
     assert_eq!(path, [mod_name::<A>(), mod_name::<A>()]);
     assert_eq!(errors.len(), 1, "the self-import and nothing else:\n{errors}");
     assert!(errors.to_string().contains(&format!("{} imports itself", mod_name::<A>())), "{errors}");
@@ -210,7 +210,7 @@ fn a_keyed_module_keyed_again_is_refused_naming_both_qualifiers() {
         .keyed::<Outer>());
     }));
     let (module, outer, inner) =
-        entry!(errors, WiringError::NestedKeyed { module, outer, inner } => (module.to_string(), *outer, *inner));
+        entry!(errors, WiringError::NestedKeyed { module, outer, inner, .. } => (module.to_string(), *outer, *inner));
     assert_eq!(outer, TypeName::of::<Outer>(), "the qualifier the identity carries");
     assert_eq!(inner, TypeName::of::<Primary>(), "the qualifier the exports leave under");
     assert_eq!(module, keyed_mod_name::<B, Outer>(), "the module as its identity names it");
@@ -227,7 +227,7 @@ fn a_keyed_module_keyed_again_is_refused_naming_both_qualifiers() {
         .keyed::<Middle>()
         .keyed::<Outer>());
     }));
-    let found = entry!(errors, WiringError::NestedKeyed { module, outer, inner } => (module.to_string(), *outer, *inner));
+    let found = entry!(errors, WiringError::NestedKeyed { module, outer, inner, .. } => (module.to_string(), *outer, *inner));
     assert_eq!(found, (keyed_mod_name::<B, Outer>(), TypeName::of::<Outer>(), TypeName::of::<Primary>()));
     assert_eq!(errors.len(), 1, "{errors}");
 }
@@ -290,11 +290,11 @@ fn a_second_import_of_one_identity_with_other_settings_is_refused_naming_both_si
         }));
     });
     let errors = wire_err(root);
-    let (module, first, second, settings) = entry!(errors, WiringError::DifferingSettings { module, first, second, settings } =>
+    let (module, first, second, settings) = entry!(errors, WiringError::DifferingSettings { module, first, second, settings, .. } =>
         (module.to_string(), first.clone(), second.clone(), settings.clone()));
     assert_eq!(module, "Pool");
     let site = |site: &ModuleSite| match site {
-        ModuleSite::Import { importer, at } => (importer.to_string(), at.file().to_owned(), at.line()),
+        ModuleSite::Import { importer, at, .. } => (importer.to_string(), at.file().to_owned(), at.line()),
         other => panic!("expected an import site, got {other:?}"),
     };
     assert_eq!(site(&first), (mod_name::<A>(), file!().to_owned(), FIRST.load(Ordering::SeqCst)), "the import that claimed the identity");
@@ -385,7 +385,7 @@ fn a_setting_name_a_module_writes_twice_is_refused_with_both_lines() {
         m.import(DynamicModule::new::<Owner, _>("cfg", |_| {}).with_settings(settings.clone()));
     }));
 
-    let (setting, module, first, second) = entry!(errors, WiringError::DuplicateSetting { setting, module, first, second } =>
+    let (setting, module, first, second) = entry!(errors, WiringError::DuplicateSetting { setting, module, first, second, .. } =>
         (*setting, module.to_string(), (first.file(), first.line()), (second.file(), second.line())));
     assert_eq!(setting, "knob");
     assert_eq!(module, "Owner");
@@ -548,7 +548,7 @@ impl Module for SelfImporting {
 #[test]
 fn a_self_import_with_other_settings_is_reported_as_the_cycle_alone() {
     let errors = wire_err(SelfImporting { knob: 1, next: Some(2), through: false });
-    let path = entry!(errors, WiringError::ImportCycle { path } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+    let path = entry!(errors, WiringError::ImportCycle { path, .. } => path.iter().map(|n| n.to_string()).collect::<Vec<_>>());
     assert_eq!(path, ["SelfImporting", "SelfImporting"]);
     assert_eq!(errors.len(), 1, "the cycle and nothing else:\n{errors}");
 }
@@ -559,7 +559,7 @@ fn a_self_import_with_other_settings_is_reported_as_the_cycle_alone() {
 #[test]
 fn an_import_closing_a_cycle_with_other_settings_is_refused_as_differing_settings() {
     let errors = wire_err(SelfImporting { knob: 1, next: Some(2), through: true });
-    let (module, first, second, settings) = entry!(errors, WiringError::DifferingSettings { module, first, second, settings } =>
+    let (module, first, second, settings) = entry!(errors, WiringError::DifferingSettings { module, first, second, settings, .. } =>
         (module.to_string(), first.clone(), second.clone(), sides(settings)));
     assert_eq!(module, "SelfImporting");
     assert!(matches!(first, ModuleSite::Root), "the first registration is the root: {first:?}");

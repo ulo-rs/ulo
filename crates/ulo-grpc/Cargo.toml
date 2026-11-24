@@ -24,6 +24,9 @@ bytes.workspace = true
 flate2.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
+# `Reason::CANCEL` and the I/O error under a reset or a dropped connection, which tell a caller that
+# went away mid-message from a broken body.
+h2.workspace = true
 http.workspace = true
 http-body.workspace = true
 hyper = { workspace = true, features = ["server", "http2"] }

@@ -185,7 +185,7 @@ fn a_backoff_refused_after_connect_within_passed_reports_the_expiry() {
         panic!("the loop did not fail the construction: {failed:?}");
     };
     assert!(
-        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item } if *after == CONNECT_WITHIN),
+        matches!(reason, FailureReason::TimedOut { after, limit: Limit::Item, .. } if *after == CONNECT_WITHIN),
         "a backoff refused after `connect_within` passed reported {reason:?}"
     );
 }

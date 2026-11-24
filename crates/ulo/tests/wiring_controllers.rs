@@ -57,7 +57,7 @@ fn at_prefix_on_a_controller_no_transport_reads() {
     let errors = wire_err(Mod::<A>::new(|m| {
         m.controller::<OnIgnores>().at("/api");
     }));
-    let (controller, module, prefix, transports, at) = entry!(errors, WiringError::UnreadPrefix { controller, module, prefix, transports, at }
+    let (controller, module, prefix, transports, at) = entry!(errors, WiringError::UnreadPrefix { controller, module, prefix, transports, at, .. }
         => (controller.key(), module.to_string(), prefix.clone(), transports.clone(), **at));
     assert_eq!(controller, Key::of::<OnIgnores, ()>());
     assert_eq!(module, mod_name::<A>());
@@ -98,7 +98,7 @@ fn a_prefix_one_handler_reads_is_accepted_and_so_is_no_prefix() {
 
 /// Each `ControllerRead` as `(controller, consumer, module, controller's module)`.
 fn controller_reads(errors: &ulo::WiringErrors) -> Vec<(Key, String, String, String)> {
-    entries!(errors, WiringError::ControllerRead { controller, consumer, module, controller_module }
+    entries!(errors, WiringError::ControllerRead { controller, consumer, module, controller_module, .. }
         => (controller.key(), consumer.clone(), module.to_string(), controller_module.to_string()))
 }
 

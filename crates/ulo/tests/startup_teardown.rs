@@ -332,7 +332,7 @@ async fn a_destroy_hook_that_fails_is_reported_beside_the_failure_and_the_rest_s
         panic!("the failure is the init hook's, got: {error}");
     };
     assert_eq!((*hook, key.key()), (HookKind::OnModuleInit, Key::of::<S4, ()>()));
-    let [ShutdownFailure::Hook { hook, key, reason }] = teardown.as_slice() else {
+    let [ShutdownFailure::Hook { hook, key, reason, .. }] = teardown.as_slice() else {
         panic!("one destroy hook failed, got: {teardown:?}");
     };
     assert_eq!((*hook, key.key()), (HookKind::OnModuleDestroy, Key::of::<S2, ()>()));
@@ -401,7 +401,7 @@ async fn a_destroy_hook_past_its_bound_is_cut_at_the_bound() {
     let [ShutdownFailure::Hook { key, reason, .. }] = teardown.as_slice() else {
         panic!("the destroy hook timed out, got: {teardown:?}");
     };
-    let FailureReason::TimedOut { after, limit } = &**reason else {
+    let FailureReason::TimedOut { after, limit, .. } = &**reason else {
         panic!("the destroy hook timed out, got: {teardown:?}");
     };
     assert_eq!(key.key(), Key::of::<S2, ()>());

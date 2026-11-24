@@ -1170,6 +1170,7 @@ pub enum ConnectError {
 #[non_exhaustive]
 pub enum FailureReason {
     Panicked(Redacted),                            // the payload, converted to a message
+    #[non_exhaustive]
     TimedOut { after: Duration, limit: Limit },    // `after` is the configured duration of the limit that fired
     Skipped,                                       // never started: `shutdown_timeout` had expired (§9.5); shutdown only
     Errored(Redacted),                             // returned `Err`: a construction, an init or bootstrap hook, the last attempt of a readiness check,
@@ -1217,9 +1218,12 @@ pub struct ShutdownError { pub report: Shutdown, pub failures: Arc<[ShutdownFail
 
 #[non_exhaustive]
 pub enum ShutdownFailure {
+    #[non_exhaustive]
     Hook { hook: HookKind, key: KeyName, reason: Box<FailureReason> },   // `Errored` only for a closure hook whose parameter read failed: the hook traits return `()`
+    #[non_exhaustive]
     Close { transport: TypeName, reason: FailureReason },          // `Errored` holding the transport's own error, `Panicked` for a `close` that panics, `TimedOut` for one exceeding its bound, `Errored` holding a `Permanent` `RuntimeShutDown` for a bound the `Timer` refused; never `Skipped` (§9.5)
     Dropped,                                                        // a `close` called once a drop had released the servers before the close step ended; it runs no step (§9.5)
+    #[non_exhaustive]
     Serve { transport: TypeName, end: ServeEnd },                   // the transport's `serve` ended while the app ran and started this shutdown; listed first (§9.5)
 }
 
@@ -1247,6 +1251,7 @@ pub enum LoadError {
 /// What a lazily loaded module may not bring, because the graph has been handed out (§8.6).
 #[non_exhaustive]
 pub enum LoadRefusal {
+    #[non_exhaustive]
     Controllers { module: ModuleName },
     Middleware { module: ModuleName },
     Contribution { module: ModuleName, key: KeyName },   // to a collection the module does not introduce
@@ -1263,24 +1268,31 @@ pub enum WiringError {
     /// `closure` names it without its transport, as in ``method-level guard #2 of UsersController::get``, and the report
     /// writes `transport` after it, as in `(Http)`; `role` is `guard`, `interceptor` or `error handler`; `path` runs from
     /// the injection point to the read of execution data.
+    #[non_exhaustive]
     ClosureScopeViolation { closure: String, transport: TypeName, role: &'static str, path: Vec<String>, at: &'static Location<'static> },
     /// Step 5: a non-optional input read on a path from a handler whose transport does not seed it. `steps` holds the steps
     /// after the handler, each binding between it and the read and then the injection point; the report writes
     /// `{handler} ({transport})` ahead of them, the transport from the value, and names `seeder` in the headline.
+    #[non_exhaustive]
     InputNotSeeded { handler: String, transport: TypeName, input: KeyName, seeder: TypeName, steps: Vec<String> },
     /// Step 1: a keyed module keyed again; the identity carries `outer` and the exports `inner`.
+    #[non_exhaustive]
     NestedKeyed { module: ModuleName, outer: TypeName, inner: TypeName },
     /// Step 1: a second registration of an identity whose `Module::settings` differ from the first's; `first` holds the
     /// identity. `settings` lists each setting that differs, in the first's order. `load` answers it too (§8.6).
+    #[non_exhaustive]
     DifferingSettings { module: ModuleName, first: ModuleSite, second: ModuleSite, settings: Vec<DifferingSetting> },
     /// Step 1: a setting name written twice in one module's `Module::settings`; `first` is the `ModuleSettings::with`
     /// call that recorded it, `second` the repeat. Hint: write each name once.
+    #[non_exhaustive]
     DuplicateSetting { setting: &'static str, module: ModuleName, first: &'static Location<'static>, second: &'static Location<'static> },
     /// Step 3: a binding that is not a controller reads a controller's key. `consumer` names the reader as `Missing` does.
+    #[non_exhaustive]
     ControllerRead { controller: KeyName, consumer: String, module: ModuleName, controller_module: ModuleName },
     /// Step 3: a read declared with `Requirement::dep_imported` of a key the reading module cannot see; `import` is the module
     /// whose import binds it, as the application writes it. Hint: add `import` to a module's `imports`. A WebSocket gateway on
     /// the HTTP server's port declares one naming `ulo_ws::WsModule::for_root()` (transports decision 182).
+    #[non_exhaustive]
     NotImported { key: KeyName, consumer: String, module: ModuleName, import: &'static str },
     /// Step 2: a controller registered as a provider, where its handlers would never mount. Known when the graph also
     /// registers the type with `ModuleDef::controller`, in any module, whatever binds it as a provider (`controller_at`
@@ -1289,6 +1301,7 @@ pub enum WiringError {
     /// `Contribute::provide` (`controller_at` is `None`); one entry per provider registration (§14, item 28). `key` is a
     /// contribution's collection. Hint: remove the provider registration, or, with no controller registration,
     /// `m.controller::<C>()`.
+    #[non_exhaustive]
     ControllerProvided {
         key: KeyName,
         controller: TypeName,
@@ -1298,8 +1311,10 @@ pub enum WiringError {
     },
     /// Step 6: `After(ZERO)` on a construction, a readiness check, one of its attempts or a hook. `binding` is `None` for a
     /// module's own hook; `at` is the call that wrote the bound, or the registration for a trait const. Hint: `.unbounded()`.
+    #[non_exhaustive]
     ZeroBound { item: BoundItem, binding: Option<KeyName>, module: ModuleName, at: &'static Location<'static> },
     /// Step 6: `construct_timeout` or `hook_timeout` set to zero; `at` is the builder call that set it. Hint: `.unbounded()` on the items.
+    #[non_exhaustive]
     ZeroDefault { knob: &'static str, at: &'static Location<'static> },
     ..
 }
@@ -1307,7 +1322,7 @@ pub enum WiringError {
 /// Where a module was registered: the app's root, `ModuleDef::import` in `importer` at `at`, or the `AppHandle::load` call at
 /// `at`.
 #[non_exhaustive]
-pub enum ModuleSite { Root, Import { importer: ModuleName, at: &'static Location<'static> }, Load { at: &'static Location<'static> } }
+pub enum ModuleSite { Root, #[non_exhaustive] Import { importer: ModuleName, at: &'static Location<'static> }, #[non_exhaustive] Load { at: &'static Location<'static> } }
 
 /// One setting two registrations disagree on, each value as `ModuleSettings` wrote it, `None` where that side lacks it. The fields
 /// hold the values unredacted; its `Debug`, and the entry's `Display` and `Debug`, print them after the graph's redaction function.
@@ -1323,22 +1338,35 @@ pub enum BoundItem { Construction, ReadinessWhole, ReadinessAttempt, Hook(HookKi
 /// `Display` writes the line the report prints, the transports short unless two different ones on the line print alike.
 #[non_exhaustive]
 pub enum InputOrigin {
+    #[non_exhaustive]
     Transport { name: TypeName, at: &'static Location<'static> },                             // `Transport::inputs`; `name` is the marker type
+    #[non_exhaustive]
     Module { module: ModuleName, seeders: Vec<TypeName>, at: &'static Location<'static> },    // `m.input::<T>().seeded_by::<Tr>()`, each `Tr`
+    #[non_exhaustive]
     Binding { module: ModuleName, at: &'static Location<'static> },                           // a single binding under the key
 }
 
 #[non_exhaustive]
 pub enum LookupError {                                           // [47]
+    #[non_exhaustive]
     NotFound { key: KeyName, kind: LookupKind },                  // binding, extension, input
+    #[non_exhaustive]
     NotReady { key: KeyName },                                    // a singleton the connect walk has not built yet (§8.5)
+    #[non_exhaustive]
     WrongType { key: KeyName, requested: &'static str },          // an erased `Key` asked for a `T` it does not hold
+    #[non_exhaustive]
     WrongKind { key: KeyName, expected: BindingKind, found: BindingKind },   // single read as collection, or the reverse
+    #[non_exhaustive]
     ExecutionRequired { key: KeyName },
+    #[non_exhaustive]
     Ambiguous { key: KeyName, sources: Vec<ModuleName> },         // a runtime lookup of a key two visible exports answer (§8.2)
+    #[non_exhaustive]
     AmbiguousModule { module: &'static str, candidates: Vec<ModuleName> },   // `app.module::<M>()` over several instances of `M` (§8.5)
+    #[non_exhaustive]
     Construct { key: KeyName, reason: Box<FailureReason> },       // a build inside a call failed, panicked or timed out (§3.4)
+    #[non_exhaustive]
     Closed { key: KeyName },                                      // a singleton lookup from Destroying on (§9.5)
+    #[non_exhaustive]
     Reentrant { key: KeyName, reader: Box<KeyName> },                  // `key`, execution-scoped or transient, read through a `ModuleRef` or `ExecutionRef` while it is being built further up the reads; `reader` read it back (§8.5)
 }
 
@@ -1378,20 +1406,20 @@ pub struct PreparePanicked { pub message: Redacted }
 /// the two shapes a panic during a call takes (§7), a `PreparePanicked`, bare or in an entry of `StartupError::Configure` or of the
 /// `ConfigureErrors` it holds, and a `ConnectError` whose reason is `Panicked`, bare or as the
 /// `error` of `LoadError::Connect` or `StartupError::Connect`, their `teardown` not read, which a handler propagating a `load` inside a call hands over (§8.6).
-/// It follows a wrapper's chain to 32 levels: `Errored`'s `Redacted`, `ConstructError::Failed` and every `source()`.
-/// Inside a `Redacted` only the core's own types are looked through (below).
+/// It follows a wrapper's chain to 32 levels: `Errored`'s `Redacted`, `ConstructError::Failed` and every `source()`, a
+/// `Redacted`'s through its original's chain, as `is_permanent` follows it to a `Permanent` (§14, item 70).
 pub fn is_panic(error: &BoxError) -> bool;
 ```
 
-`is_panic` takes `&BoxError` because that is what a caller holds: an error handler receives `err: BoxError`, an interceptor gets one from `next.run()`, and `is_panic(&err)` compiles against both. Against a `dyn` parameter, `&(dyn Error + 'static)` or `&(dyn Error + Send + Sync + 'static)` alike, `is_panic(&err)` is E0277: the coercion commits to unsizing the `Box` itself, and `Box<dyn Error>` does not implement `Error`; the caller would have to write `&*err`. The cost is that a caller holding a bare `&dyn Error`, a `source()` link, cannot pass it; `is_panic` walks `source()` itself. Nesting is rare: a dependency's `LookupError` passes up unchanged through `ConstructError::Dependency`, so a panic any depth down a dependency chain arrives as the top-level `LookupError::Construct { reason: Panicked(..) }` naming the deepest key. The nesting that does occur is a constructor or a `try_` factory returning a dependency's `LookupError` as its own `Err`, which arrives as `Construct { reason: Errored(Redacted(LookupError::Construct { reason: Panicked(..) })) }`, and `is_panic` reaches it. Its limit: inside a `Redacted` it reads the original by type, through `downcast_ref`, and only `PanicRecovered`, `PreparePanicked`, `LookupError`, `ConstructError`, `ConnectError`, `LoadError`, `StartupError`, `ConfigureErrors`, `ShutdownError`, `Redacted` and a panic's own message, the `Redacted` a `TaskEnd::Panicked` holds, are recognised, the last so that an error keeping a task's panic as its `source()`, as a link answers a call whose connect task panicked (transports §5.2), is found, and a user's error type wrapping a panicked `LookupError`, returned as a constructor's `Err` and redacted, is not looked through, the original's `source()` chain not being walked through `original`.
+`is_panic` takes `&BoxError` because that is what a caller holds: an error handler receives `err: BoxError`, an interceptor gets one from `next.run()`, and `is_panic(&err)` compiles against both. Against a `dyn` parameter, `&(dyn Error + 'static)` or `&(dyn Error + Send + Sync + 'static)` alike, `is_panic(&err)` is E0277: the coercion commits to unsizing the `Box` itself, and `Box<dyn Error>` does not implement `Error`; the caller would have to write `&*err`. The cost is that a caller holding a bare `&dyn Error`, a `source()` link, cannot pass it; `is_panic` walks `source()` itself. Nesting is rare: a dependency's `LookupError` passes up unchanged through `ConstructError::Dependency`, so a panic any depth down a dependency chain arrives as the top-level `LookupError::Construct { reason: Panicked(..) }` naming the deepest key. The nesting that does occur is a constructor or a `try_` factory returning a dependency's `LookupError` as its own `Err`, which arrives as `Construct { reason: Errored(Redacted(LookupError::Construct { reason: Panicked(..) })) }`, and `is_panic` reaches it. Inside a `Redacted` it walks the original through `original`, as `is_permanent` does: the core's own types by their structure, `PanicRecovered`, `PreparePanicked`, `LookupError`, `ConstructError`, `ConnectError`, `LoadError`, `StartupError`, `ConfigureErrors`, `ShutdownError`, `Redacted` and a panic's own message, the `Redacted` a `TaskEnd::Panicked` holds, and any other error down its own `source()` chain. So an error keeping a task's panic as its `source()`, as a link answers a call whose connect task panicked (transports §5.2), is found, and so is a user's error type wrapping a panicked `LookupError`, returned as a constructor's `Err` and redacted. The answer is a boolean, which leaks none of the original's text.
 
 `StartupError::Configure` is the startup report, one `ConfigureError` per server whose `prepare` failed (transports §2.7). A server whose failure names types answers a `PrepareError`, boxed, as its `prepare` error: the names, and a closure writing the text given the set of names to write in full. `listen()` holds every server's error before it builds the report. It downcasts each to `PrepareError`, runs `TypeName::colliding` once over every failing transport together with the names of every `PrepareError`, and writes each `PrepareError`'s text against that set. The text is then redacted against the graph's secrets and stored as the entry's `source`, which is why the pass runs when the report is built and not in `Display`, where no registry exists. A server answering any other error keeps its text, which contributes no names, and its transport still enters the pass. Each `ConfigureError` records whether the pass wrote its transport in full, and an entry displayed alone prints as the report does; `source.downcast_ref::<PrepareError>()` reaches the original, whose own `Display` collides its own names. `ShutdownError` holds no text written ahead of time, and its reasons are redacted when recorded, so its pass runs in `Display`.
 
 `WiringErrors` carries one entry per failure from §10.1, the `Err` a `try_value` recorded among them, held as a `Redacted` (§9.3). `WrongType` is the one failure a caller reaches deliberately, through `Resolver::by_key::<T>(key)` (§3.1), where an erased key does not fix `T`. A typed read answers it too, `dep`, `many`, an entry's `resolve` or an input read, when the stored instance does not hold the key's type after the recorded coercion; with consistent records that cannot happen, and the alternative to the variant is a panic.
 
-Every public error type is `#[non_exhaustive]`, the seven structs included, and so is every struct variant of `StartupError`, `LoadError` and `ConnectError`: a variant added to an enum breaks no caller that matches on it, a field added to `Shutdown`, `ShutdownError`, `ConfigureError`, `GuardRejected`, `PanicRecovered` or `RuntimeMissing`, or to a variant such as `StartupError::Bind` or `ConnectError::Readiness`, breaks no caller that destructures one, and `Closed` is constructed by the core alone. `Redacted`, `ConfigureErrors` and `PrepareError` carry no attribute: their fields are private, which closes them the same way. Code outside the core reads these types and builds none of them but `ConstructError`, which a constructor returns, and `PrepareError`, which a server's `prepare` returns. `ConnectError` is its own type because `StartupError` and `LoadError` share only the connect phase. `load` reports wiring errors through its own `Wiring` and binds no transport; a `LoadError` wrapping a whole `StartupError` would carry two cases that can be constructed and never occur. Composed from exact parts, every variant of both is reachable, and code handling a construction failure handles it once for startup and load alike.
+Every public error type is `#[non_exhaustive]`, the seven structs included, and so is every struct variant of every public error enum, in every crate, and of every enum an error holds or hands out, `FailureReason`, `ShutdownFailure`, `LoadRefusal`, `WiringError`, `InputOrigin` and `ModuleSite` among them, the transport crates' `ExtractError`, `MetadataError`, `TlsError` and `CloseCodeError` too (§14, item 71): a variant added to an enum breaks no caller that matches on it, a field added to `Shutdown`, `ShutdownError`, `ConfigureError`, `GuardRejected`, `PanicRecovered` or `RuntimeMissing`, or to a variant such as `StartupError::Bind` or `ConnectError::Readiness`, breaks no caller that destructures one, and `Closed` is constructed by the core alone. `Redacted`, `ConfigureErrors` and `PrepareError` carry no attribute: their fields are private, which closes them the same way. Code outside the core reads these types and builds none of them but `ConstructError`, which a constructor returns, and `PrepareError`, which a server's `prepare` returns. `ConnectError` is its own type because `StartupError` and `LoadError` share only the connect phase. `load` reports wiring errors through its own `Wiring` and binds no transport; a `LoadError` wrapping a whole `StartupError` would carry two cases that can be constructed and never occur. Composed from exact parts, every variant of both is reachable, and code handling a construction failure handles it once for startup and load alike.
 
-Every public error type is under 128 bytes, the size at which clippy's `result_large_err` fires on a `Result` holding it as its `Err`, so a caller's `fn start() -> Result<(), StartupError>` passes the lint without an `allow`; `ConnectError` is the exception, held only behind a `Box`. A `const` assertion beside each type's definition fails the build when a field takes it over the line (§14, item 67). The payload that would cross it is boxed: the whole `ConnectError` in both `Connect` variants, which leaves `StartupError` at 48 bytes and `LoadError` at 112, the `FailureReason` in `LookupError::Construct` and `ShutdownFailure::Hook`, and a `Redacted`'s original and text in one allocation, so an error carrying one holds a pointer. Stable Rust has no pattern through a `Box`: a caller binds the field and matches its contents, `Connect { error, .. }` and then `match *error`.
+Every public error type is under 128 bytes, the size at which clippy's `result_large_err` fires on a `Result` holding it as its `Err`, so a caller's `fn start() -> Result<(), StartupError>` passes the lint without an `allow`. Three types are never an `Err` unboxed and carry no size pin. `ConnectError`, 136 bytes, is boxed in `StartupError::Connect` and `LoadError::Connect` and returned boxed by the core's own functions. The GraphQL bindings' `GqlResponse`, 176 bytes under `--all-features`, where `bson` turns on `serde_json/preserve_order` and a `Value` takes 72 bytes, is boxed at each private function that fails with it; `GqlError`, 144 bytes there, is an entry of a `GqlResponse`'s error list and no function's `Err`. A feature another crate in the build enables grows a type past what the workspace measures without it, so a pin on either would hold one feature set and not the user's. A `const` assertion beside each type's definition fails the build when a field takes it over the line (§14, item 67). The payload that would cross it is boxed: the whole `ConnectError` in both `Connect` variants, which leaves `StartupError` at 48 bytes and `LoadError` at 112, the `FailureReason` in `LookupError::Construct` and `ShutdownFailure::Hook`, and a `Redacted`'s original and text in one allocation, so an error carrying one holds a pointer. Stable Rust has no pattern through a `Box`: a caller binds the field and matches its contents, `Connect { error, .. }` and then `match *error`.
 
 Neither the core nor the macros panic or exit [45]. Panics inside user constructors, factories, readiness checks and hooks are caught at the poll boundary and reported as `FailureReason::Panicked` on `ConnectError::Construct`, `ConnectError::Readiness`, `ConnectError::Hook` or `ShutdownFailure::Hook`; a transport's `close` is caught the same way and reported on `ShutdownFailure::Close` (§9.5). A panic inside a call's pipeline, in a guard, an interceptor, the handler or an error handler, is caught at that stage and travels as `PanicRecovered`, through the interceptors around a handler and then to the error handlers (§7); one while the container builds an enhancer or the controller inside a call is `LookupError::Construct { reason: Panicked(..) }`, and `is_panic` recognises both, and a `ConnectError` carrying one. That holds unless the binary is built with `panic = "abort"`, where nothing can be caught. `FailureReason` is one enum for every place a hook, a construction, a readiness check or a transport's `close` can fail, so a timeout reads the same on an init hook, a destroy hook, a constructor, a check and a `close`; `Skipped` is reachable at shutdown alone, on `Hook` alone, nothing capping startup as a whole and every `close` starting. It is a field everywhere it appears, boxed on `LookupError::Construct` and `ShutdownFailure::Hook` (§14, item 67), and implements no `Error`: `BoxError::from(reason)` does not compile. `TimedOut` names the limit that fired and carries that limit's configured duration: an item's own bound and the cap are often the same round number, and the duration alone would not tell them apart. A hook or a `close` still running when the cap expires reports `ShutdownCap`, whatever its own bound was.
 
@@ -1671,3 +1699,7 @@ The transport layer extends this surface, and `transports/DESIGN.md` §11 states
 68. **A metadata type needs no `Default`** (§13, Q37-16). `Meta` is `Send + Sync + 'static`: a type such as a module's owning team has no sensible empty value, and a `Default` written to satisfy the bound would be a value no module meant. The module's first write builds the value, `m.meta::<T>()` from `Default` for a type that has one and `m.meta_with(init)` from `init` for any type, and every later write configures it in place; `meta` lowers to `meta_with(T::default)` (§0, item 8). A reader, `ModuleRef::meta` and `Mounted::module_meta`, answers `None` or nothing for a module that wrote none, and builds no default. Tests: `tests/module_ref.rs`, a metadata type with no `Default` built by its first write and configured by the second.
 
 69. **A field set from `Default` is marked `#[construct(default)]`, on an `#[injectable]` and a `#[controller]` struct alike** (§4, item 28, Q38-15). The marker says what the container does with the field: it constructs it from `Default` instead of injecting it. A marker named after the container attribute, `#[injectable(default)]`, repeats that attribute on the one field it does not inject, and splits into a second spelling, `#[controller(default)]`, under the other attribute; one spelling serves both. `construct` is also the constructor's mark, so the hidden import the macro writes for a removed marker is `use ::ulo::construct as _` for either use, and an editor's hover on the field marker shows the `construct` attribute's documentation, which describes both. A bare `#[default]` is the helper attribute of `#[derive(Default)]`, which an editor resolves to std's. The impl form reads `#[construct]` on a fn and the struct form reads it on a field, and each removes what it reads before rustc sees the item, so neither form meets the other's use. The marker takes the one argument `default`; a field set from a computed value is written in the constructor style, and `#[construct(with = expr)]` is the spelling left for a field marker taking a value. Refused at the attribute, each naming `#[construct(default)]`: `#[injectable(..)]` or `#[controller(..)]` on a field of either container, "a field set from `Default` is marked `#[construct(default)]`, not `#[injectable(default)]`"; a field's `#[construct]` with no argument or another one, "a field takes `#[construct(default)]` alone"; the marker written twice on one field. On a field of a struct that carries neither attribute nothing reads the marker, and rustc refuses it as an attribute macro on a field, or as an unknown attribute where `construct` is not imported. Tests: `ulo-codegen-tests`' `ui/injectable_marker_on_an_injectable_field.rs`, `ui/controller_marker_on_a_controller_field.rs`, `ui/injectable_marker_on_a_controller_field.rs`, `ui/controller_marker_on_an_injectable_field.rs`, `ui/bad_field_attribute.rs`, `ui/construct_marker_takes_one_word.rs`, `ui/construct_marker_twice.rs`, `ui/construct_marker_on_a_plain_struct.rs` and `ui/marker_qualifier_on_a_field.rs`; `tests/cfg_construct.rs` and the examples, the marker accepted on both containers; the editor fixture's `Marked` and `Defaults`, hover and go-to-definition on the marker bare and under `ulo`.
+
+70. **`is_panic` walks a `Redacted`'s original as `is_permanent` does** (§10.2, Q38-12). Inside a `Redacted` both predicates continue from `original()`: the core's own types by their structure, and any other error down its own `source()` chain, to the one bound of 32 levels. A panic a user's error type wrapped before it was redacted, a constructor returning `Err(MyError { source: lookup })` over a panicked dependency, is found the way a `Permanent` wrapped the same way is, so the two answers agree on one error. The walk reads types and returns a boolean, so the original's text reaches no caller. Tests: `error::wrapped_before_redaction`, a panic and a `Permanent` each under one and under thirty user wrappers found by their predicate, a wrapper holding neither answering `false` to both, and past the bound neither found.
+
+71. **Every struct variant of a public error enum is `#[non_exhaustive]`, in every crate, and a check holds it** (§10.2, Q38-11). The rule items 66 and 67 apply to `StartupError`, `LoadError` and `ConnectError` holds for every public error: a field added to a variant breaks no caller that destructures it. It covers the enums that implement `std::error::Error` and the enums an error holds or hands out: the type of a public field or a variant's payload, and the return type of an error type's public inherent method, followed through generic arguments. In the core that is `LookupError`, `WiringError`, `ShutdownFailure`, `FailureReason`, `LoadRefusal`, `InputOrigin` and `ModuleSite`; in the transport crates `ExtractError`, `MetadataError`, `TlsError`, `CertificateCause`, `KeyCause`, `BindError`, `ActivationError` and `CloseCodeError`. An enum reached only through a value struct, `Unreached` through `PrepareEntry::reason`, a `Detail` through `Details`, `ulo-config`'s `Origin` through `Problem::origin`, is a value, not an error's own shape, and is left out. A variant other crates build gets a constructor: `ExtractError` has one per variant, `ExtractError::malformed(param, source)`, since every transport and every user's extractor builds one. `scripts/error_variants.py` reads each publishable library crate's rustdoc JSON and fails on an unmarked struct variant of a covered enum; CI runs it in the `public reach` job, and it self-tests on a planted unmarked variant, one an error holds and one reached only through a value struct first.

@@ -1207,7 +1207,7 @@ async fn serve_that_ends(
     assert_eq!(drains, ["drain a", "drain dying"], "not every server drained: {events:?}");
     assert_eq!(&steps[3..], ["close dying", "close a"], "not every server closed, in reverse bind order: {events:?}");
     assert_eq!(handle.phase(), Phase::Closed, "the shutdown did not run to its end");
-    let [ShutdownFailure::Serve { transport, end }] = &*error.failures else {
+    let [ShutdownFailure::Serve { transport, end, .. }] = &*error.failures else {
         panic!("`serve` did not answer the one `Serve` failure: {error}");
     };
     assert_eq!(*transport, TypeName::of::<Doomed>(), "the failure names another transport");
@@ -1319,7 +1319,7 @@ async fn two_serves_ending_on_one_poll_record_the_first_bound_once() {
         gate.open();
         let outcome = tokio::time::timeout(PATIENCE, serving).await.expect("`serve` did not end").expect("the serving task panicked");
         let error = outcome.expect_err("`serve` answered `Ok` after two transports' `serve` failed");
-        let [ShutdownFailure::Serve { transport, end: ServeEnd::Errored(_) }] = &*error.failures else {
+        let [ShutdownFailure::Serve { transport, end: ServeEnd::Errored(_), .. }] = &*error.failures else {
             panic!("run {run}: `serve` did not answer one `Serve` failure: {:?}", error.failures);
         };
         assert_eq!(*transport, TypeName::of::<Doomed>(), "run {run}: the cause is not the first server bound");

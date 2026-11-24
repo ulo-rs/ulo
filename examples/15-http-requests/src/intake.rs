@@ -27,10 +27,10 @@ impl std::error::Error for NotBearer {}
 impl FromCall<Http> for Caller {
     async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
         let param = "authorization";
-        let value = cx.headers().get(param).ok_or(ExtractError::Missing { param })?;
+        let value = cx.headers().get(param).ok_or(ExtractError::missing(param))?;
         match value.to_str().ok().and_then(|text| text.strip_prefix("Bearer ")) {
             Some(name) => Ok(Caller(name.to_owned())),
-            None => Err(ExtractError::Malformed { param, source: cx.app().redact(Box::new(NotBearer)) }),
+            None => Err(ExtractError::malformed(param, cx.app().redact(Box::new(NotBearer)))),
         }
     }
 }

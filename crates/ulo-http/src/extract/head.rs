@@ -28,9 +28,9 @@ impl<H: headers::Header + Send + 'static> FromCall<Http> for Header<H> {
         let param = name.as_str();
         let mut values = cx.headers().get_all(name).iter().peekable();
         if values.peek().is_none() {
-            return Err(ExtractError::Missing { param });
+            return Err(ExtractError::missing(param));
         }
-        H::decode(&mut values).map(Header).map_err(|error| ExtractError::Malformed { param, source: cx.app().redact(Box::new(error)) })
+        H::decode(&mut values).map(Header).map_err(|error| ExtractError::malformed(param, cx.app().redact(Box::new(error))))
     }
 }
 
@@ -54,7 +54,7 @@ impl FromCall<Http> for LastEventId {
         };
         match std::str::from_utf8(value.as_bytes()) {
             Ok(id) => Ok(LastEventId(Some(id.to_owned()))),
-            Err(error) => Err(ExtractError::Malformed { param: LAST_EVENT_ID, source: cx.app().redact(Box::new(error)) }),
+            Err(error) => Err(ExtractError::malformed(LAST_EVENT_ID, cx.app().redact(Box::new(error)))),
         }
     }
 }

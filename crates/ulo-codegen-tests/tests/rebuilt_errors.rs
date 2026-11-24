@@ -120,12 +120,12 @@ async fn a_constructor_s_error_behind_a_dependency_keeps_its_three_codes() {
     assert_eq!((direct.kind(), direct.message()), (ErrorKind::Conflict, "the order exists"));
     assert_keeps_all_three(direct, "a lookup error");
 
-    let dependency = CallError::from_boxed(Box::new(ExtractError::Dependency { param: "Tenant", source: lookup().await }));
+    let dependency = CallError::from_boxed(Box::new(ExtractError::dependency("Tenant", lookup().await)));
     assert_eq!((dependency.kind(), dependency.message()), (ErrorKind::Conflict, "the order exists"));
     assert!(dependency.source_as::<ExtractError>().is_some(), "the extraction failure is the source");
     assert_keeps_all_three(dependency, "a dependency parameter's failure");
 
-    let redacted = app.handle().redact(Box::new(ExtractError::Dependency { param: "Tenant", source: lookup().await }));
+    let redacted = app.handle().redact(Box::new(ExtractError::dependency("Tenant", lookup().await)));
     assert_keeps_all_three(CallError::from_boxed(Box::new(redacted)), "a redacted dependency parameter's failure");
 
     drop(exec);

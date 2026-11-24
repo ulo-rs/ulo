@@ -346,6 +346,7 @@ pub(crate) fn kind_from_wire(kind: &str) -> ErrorKind {
         "timeout" => ErrorKind::Timeout,
         "unavailable" => ErrorKind::Unavailable,
         "unimplemented" => ErrorKind::Unimplemented,
+        "cancelled" => ErrorKind::Cancelled,
         _ => ErrorKind::Internal,
     }
 }
@@ -386,6 +387,30 @@ fn detail_from(entry: serde_json::Value) -> Detail {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every kind's wire name reads back as that kind, `cancelled` included, and a name this
+    /// version does not know as `internal`. Planted break: `cancelled` left out of the table.
+    #[test]
+    fn every_kind_reads_back_from_its_wire_name() {
+        let kinds = [
+            ErrorKind::BadRequest,
+            ErrorKind::Unauthorized,
+            ErrorKind::Forbidden,
+            ErrorKind::NotFound,
+            ErrorKind::Conflict,
+            ErrorKind::Unprocessable,
+            ErrorKind::TooManyRequests,
+            ErrorKind::Timeout,
+            ErrorKind::Unavailable,
+            ErrorKind::Unimplemented,
+            ErrorKind::Internal,
+            ErrorKind::Cancelled,
+        ];
+        for kind in kinds {
+            assert_eq!(kind_from_wire(kind.as_str()), kind, "{kind:?}");
+        }
+        assert_eq!(kind_from_wire("caller_left"), ErrorKind::Internal);
+    }
 
     /// One frame of every kind, each carrying every field its kind has, headers on the three that
     /// carry them and a payload on the five that carry one.

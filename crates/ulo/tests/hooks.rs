@@ -321,7 +321,7 @@ async fn a_hook_that_outlives_its_own_bound_is_timed_out_with_the_item_limit() {
         panic!("expected a hook failure, got: {connect_error}");
     };
     assert_eq!((hook, key.key()), (HookKind::OnModuleInit, Key::of::<S1, ()>()));
-    let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
+    let FailureReason::TimedOut { after, limit, .. } = reason else { panic!("expected a timeout, got: {reason}") };
     assert_eq!((after, limit), (Duration::from_secs(3), Limit::Item));
 }
 
@@ -343,7 +343,7 @@ async fn a_hook_with_no_bound_of_its_own_takes_the_apps_hook_timeout() {
     let StartupError::Connect { error: connect_error, .. } = error else {
         panic!("expected a hook timeout, got: {error}");
     };
-    let ConnectError::Hook { reason: FailureReason::TimedOut { after, limit }, .. } = *connect_error else {
+    let ConnectError::Hook { reason: FailureReason::TimedOut { after, limit, .. }, .. } = *connect_error else {
         panic!("expected a hook timeout, got: {connect_error}");
     };
     assert_eq!((after, limit), (Duration::from_secs(7), Limit::Default));

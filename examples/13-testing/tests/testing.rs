@@ -67,7 +67,7 @@ async fn an_override_of_a_key_nothing_binds_fails_wiring_as_matching_no_binding(
     let Err(StartupError::Wiring(errors)) = test_app().override_value::<Unbound>(Arc::new(Unbound)).wire() else {
         panic!("a stale override should fail wiring");
     };
-    let [WiringError::OverrideUnmatched { key, keyed, at }] = errors.iter().collect::<Vec<_>>()[..] else {
+    let [WiringError::OverrideUnmatched { key, keyed, at, .. }] = errors.iter().collect::<Vec<_>>()[..] else {
         panic!("expected one unmatched override, got {errors}");
     };
     assert_eq!(key.to_string(), "Unbound");

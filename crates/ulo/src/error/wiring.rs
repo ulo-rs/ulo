@@ -111,16 +111,21 @@ pub enum WiringError {
     /// settings is this entry alone. Modules importing one another through other modules are
     /// accepted: an import decides what a module sees, and a cycle that blocks construction is a
     /// dependency cycle, [`Cycle`](WiringError::Cycle).
+    #[non_exhaustive]
     ImportCycle { path: Vec<ModuleName> },
     /// Step 1: a re-export of a key the module cannot see.
+    #[non_exhaustive]
     ReexportNotVisible { module: ModuleName, key: KeyName, at: &'static Location<'static> },
     /// Step 1: a re-export of a key the module sees from several sources.
+    #[non_exhaustive]
     ReexportAmbiguous { module: ModuleName, key: KeyName, sources: Vec<ModuleName>, at: &'static Location<'static> },
     /// Step 1: an execution input declared inside a keyed module.
+    #[non_exhaustive]
     KeyedInput { module: ModuleName, key: KeyName, at: &'static Location<'static> },
     /// Step 1: a keyed module keyed again, `m.keyed::<Inner>().keyed::<Outer>()`. The module's
     /// identity carries `outer` and its exports `inner`, so the two disagree for every module
     /// written this way. `module` is the module as its identity names it.
+    #[non_exhaustive]
     NestedKeyed { module: ModuleName, outer: TypeName, inner: TypeName },
     /// Step 1: a second registration of an identity already registered, whose
     /// [`Module::settings`](crate::Module::settings) differ from the first's. The two are one
@@ -128,24 +133,30 @@ pub enum WiringError {
     /// is the registration holding the identity, `second` the later one; `settings` holds each
     /// setting that differs, in the order the first wrote them. Also answered by `load` for a
     /// module whose identity the graph holds.
+    #[non_exhaustive]
     DifferingSettings { module: ModuleName, first: ModuleSite, second: ModuleSite, settings: Vec<DifferingSetting> },
     /// Step 1: a setting name written twice in one module's
     /// [`Module::settings`](crate::Module::settings). `first` is the
     /// [`ModuleSettings::with`](crate::ModuleSettings::with) call that recorded it and `second`
     /// the repeat, so a module appending its settings to an adapter's or an exporter's names the
     /// adapter's or exporter's line beside its own.
+    #[non_exhaustive]
     DuplicateSetting { setting: &'static str, module: ModuleName, first: &'static Location<'static>, second: &'static Location<'static> },
     /// Step 1: `export::<T>()` of a key the module does not bind. `imported` when the module sees
     /// the key through an import, which leaves through `reexport`; `near` is a key the module
     /// binds that is spelled the same up to a trailing `+ Send + Sync`, or by its last path
     /// segment.
+    #[non_exhaustive]
     ExportNotBound { module: ModuleName, key: KeyName, imported: bool, near: Option<KeyName>, at: &'static Location<'static> },
 
     /// Step 2: a second single binding for a key in one module, naming both source locations.
+    #[non_exhaustive]
     DuplicateBinding { key: KeyName, module: ModuleName, first: &'static Location<'static>, second: &'static Location<'static> },
     /// Step 2: `provide` and `contribute` under one key.
+    #[non_exhaustive]
     KindMix { key: KeyName, module: ModuleName, single: &'static Location<'static>, collection: &'static Location<'static> },
     /// Step 2: an alias whose target nothing visible binds.
+    #[non_exhaustive]
     DanglingAlias { alias: KeyName, target: KeyName, module: ModuleName, at: &'static Location<'static> },
     /// Step 2: a controller registered as a provider, where its handlers would never mount. The
     /// type is known to be a controller in two ways, and an entry is reported once whichever
@@ -164,6 +175,7 @@ pub enum WiringError {
     /// already an `Arc` of the collection's type; or a generic type whose `Controller` impl covers
     /// some instantiations only, which the macro's probe cannot read where the type is generic.
     /// `key` is the binding's key, a contribution's the collection's.
+    #[non_exhaustive]
     ControllerProvided {
         key: KeyName,
         controller: TypeName,
@@ -173,67 +185,86 @@ pub enum WiringError {
     },
     /// Step 2: the `Err` a `try_value` recorded, redacted: `ModuleDef::try_value`, or
     /// `Contribute::try_value`, whose `key` is the collection's.
+    #[non_exhaustive]
     ValueFailed { module: ModuleName, key: KeyName, error: Redacted, at: &'static Location<'static> },
     /// Step 2: a qualified contribution under a role key, `key` the qualified collection. A
     /// transport reads only the role key's unqualified collection.
+    #[non_exhaustive]
     QualifiedRoleContribution { key: KeyName, module: ModuleName, at: &'static Location<'static> },
     /// Step 2: a single binding under a role key, through its primary key, an `also_as` key or an
     /// alias. A transport reads enhancers only from the role key's collection. `key` is the
     /// binding's key that names the role key, qualified as the binding is, and `at` the call that
     /// registered the binding.
+    #[non_exhaustive]
     SingleRoleBinding { key: KeyName, module: ModuleName, at: &'static Location<'static> },
     /// Step 2: two `.ready(..)` checks on one binding.
+    #[non_exhaustive]
     DuplicateReadiness { key: KeyName, module: ModuleName, first: &'static Location<'static>, second: &'static Location<'static> },
     /// Step 2: an execution input a transport declares through `Transport::inputs` that has a
     /// second source. `first` is a transport's declaration; `second` is a module's
     /// `input::<T>().seeded_by::<Tr>()` naming another seeder, a later transport's declaration,
     /// or a single binding.
+    #[non_exhaustive]
     InputConflict { key: KeyName, first: InputOrigin, second: InputOrigin },
     /// Step 2, tests: an override that matches no binding. `keyed` names a keyed module whose
     /// qualifier the override's key carries and which binds the key unqualified, as a keyed
     /// module's bindings are: `.in_module_keyed::<M, Q>()` reaches that binding as written.
+    #[non_exhaustive]
     OverrideUnmatched { key: KeyName, keyed: Option<ModuleName>, at: &'static Location<'static> },
     /// Step 2, tests: an override that matches several bindings, listing every match; scope it
     /// with `.in_module::<M>()` or replace all with `.everywhere()`.
+    #[non_exhaustive]
     OverrideAmbiguous { key: KeyName, matches: Vec<ModuleName>, at: &'static Location<'static> },
     /// Step 2, tests: `.in_module::<M>()` over several instances of `M`; name one with
     /// `.in_module_keyed::<M, Q>()` or `.in_module_of(&config)`.
+    #[non_exhaustive]
     OverrideModuleAmbiguous { module: &'static str, candidates: Vec<ModuleName>, at: &'static Location<'static> },
     /// Step 2, tests: an override that would change a key's kind; `override_many` replaces a
     /// whole collection.
+    #[non_exhaustive]
     OverrideKind { key: KeyName, expected: BindingKind, found: BindingKind, at: &'static Location<'static> },
     /// Step 2, tests: `override_value::<dyn Timer>`. Hint: "set it with `TestApp::timer(..)`".
+    #[non_exhaustive]
     TimerOverride { at: &'static Location<'static> },
     /// Step 2, tests: `override_value::<dyn Runtime>`. Hint: "set it with `TestApp::runtime(..)`".
+    #[non_exhaustive]
     RuntimeOverride { at: &'static Location<'static> },
     /// Step 2, tests: a `replace_module` replacement that does not export a superset of the
     /// original's keys.
+    #[non_exhaustive]
     ReplacementMissingExports { original: ModuleName, replacement: ModuleName, missing: Vec<KeyName> },
     /// Step 2, tests: a `replace_module` whose original no module imports, the same stale mock an
     /// override that matches nothing is.
+    #[non_exhaustive]
     ReplacementUnmatched { original: ModuleName, at: &'static Location<'static> },
     /// Step 2, tests: a second `replace_module` of an original already replaced, naming both
     /// calls. Wiring applies the first.
+    #[non_exhaustive]
     DuplicateReplacement { original: ModuleName, first: &'static Location<'static>, second: &'static Location<'static> },
     /// Step 2: a controller's `.at(prefix)` that none of its handlers reads, every one belonging
     /// to a transport whose `Transport::READS_PREFIX` is `false`, an RPC pattern or a gRPC method
     /// path. `transports` lists those transports, each once, empty for a controller that mounts
     /// no handler; `at` is the `.at(..)` call.
+    #[non_exhaustive]
     UnreadPrefix { controller: KeyName, module: ModuleName, prefix: String, transports: Vec<TypeName>, at: &'static Location<'static> },
 
     /// Step 3: an injection point whose key the module cannot see. `consumer` names what reads
     /// it, as in ``UserService (param `mailer`)``. `near` is a visible key spelled the same up to
     /// a trailing `+ Send + Sync`, or by its last path segment, with the module exporting it.
+    #[non_exhaustive]
     Missing { key: KeyName, consumer: String, module: ModuleName, near: Option<(KeyName, ModuleName)> },
     /// Step 3: an injection point whose key the module sees from several sources, naming each.
+    #[non_exhaustive]
     Ambiguous { key: KeyName, consumer: String, module: ModuleName, sources: Vec<(ModuleName, &'static Location<'static>)> },
     /// Step 3: a binding that is not a controller reads a controller's key, through its
     /// construction, a hook, its readiness check or an alias. A controller is the edge of the
     /// application, reached by its transport alone. `consumer` names the reader as `Missing`
     /// does; `module` is the reader's module, and `controller_module` the controller's.
+    #[non_exhaustive]
     ControllerRead { controller: KeyName, consumer: String, module: ModuleName, controller_module: ModuleName },
 
     /// Step 4: the full path, as in `A → B → C → A`, each step with its module.
+    #[non_exhaustive]
     Cycle { path: Vec<(KeyName, ModuleName)> },
 
     /// Step 5: a binding that cannot run in an execution depends on per-execution data. `path`
@@ -241,15 +272,18 @@ pub enum WiringError {
     /// factory closure builds the binding rather than a `Construct` type, so its scope is
     /// written where the closure is registered, not on an `#[injectable]`. `controller` when the
     /// binding is a controller, whose scope is written on its `#[controller]`.
+    #[non_exhaustive]
     ScopeViolation { binding: KeyName, declared: ScopeKind, by_closure: bool, controller: bool, module: ModuleName, path: Vec<String> },
     /// Step 5: hooks on an `Auto` binding the scope pass inferred per-execution, a contribution
     /// declared by closure included.
+    #[non_exhaustive]
     HooksOnPerExecution { binding: KeyName, module: ModuleName },
     /// Step 5: an enhancer a handler declares by closure in an explicit singleton scope, which
     /// reads per-execution data. `closure` names it, as in ``method-level guard #2 of
     /// UsersController::get``, and the report writes the handler's `transport` after it, as in
     /// `(Http)`; `role` is `guard`, `interceptor` or `error handler`; `path` runs from the
     /// injection point to the read of execution data.
+    #[non_exhaustive]
     ClosureScopeViolation {
         closure: String,
         transport: TypeName,
@@ -261,20 +295,25 @@ pub enum WiringError {
     /// `ExecutionRef`, an execution input or a per-execution key, where no execution exists.
     /// `closure` names it, as in ``readiness check of `PgPool` in DbModule``; `path` runs from the
     /// injection point to the read of execution data. A metadata value has no `at`.
+    #[non_exhaustive]
     ClosureNeedsExecution { closure: String, path: Vec<String>, at: Option<&'static Location<'static>> },
     /// Step 5: a non-optional input read on a path from a handler whose transport does not seed
     /// it. `steps` holds the steps after the handler, each binding between it and the read and
     /// then the injection point; the report writes the handler and its `transport` ahead of them.
+    #[non_exhaustive]
     InputNotSeeded { handler: String, transport: TypeName, input: KeyName, seeder: TypeName, steps: Vec<String> },
 
     /// Step 6: an explicit bound with no `Timer`. `item` names the bounded item, as in
     /// ``readiness `.attempt_timeout` of `PgPool` ``.
+    #[non_exhaustive]
     BoundWithoutTimer { item: String, at: &'static Location<'static> },
     /// Step 6: a readiness `.backoff(..)` on an app with no `Timer`, which cannot wait between
     /// attempts. `binding` is the checked binding as printed, and `at` the last `.backoff(..)`
     /// call.
+    #[non_exhaustive]
     BackoffWithoutTimer { binding: String, at: &'static Location<'static> },
     /// Step 6: a builder knob set on an app with no `Timer`.
+    #[non_exhaustive]
     KnobWithoutTimer { knob: &'static str },
     /// Step 6: a bound of `After(Duration::ZERO)` on a construction, a readiness check, one of its
     /// attempts or a hook, which would time the item out before it starts. Refused whatever the
@@ -282,10 +321,12 @@ pub enum WiringError {
     /// the binding the item belongs to, `None` for a module's own hook; `at` is the call that wrote
     /// the bound, or the registration that brought the type in for a trait const. Hint:
     /// `.unbounded()`.
+    #[non_exhaustive]
     ZeroBound { item: BoundItem, binding: Option<KeyName>, module: ModuleName, at: &'static Location<'static> },
     /// Step 6: `construct_timeout` or `hook_timeout` set to `Duration::ZERO`, which would end
     /// every item left at `Default` before it starts. `knob` is the builder method's name and
     /// `at` the call that set it. Hint: `.unbounded()` on the items.
+    #[non_exhaustive]
     ZeroDefault { knob: &'static str, at: &'static Location<'static> },
     // Last: a variant added before others changes their discriminants, which cargo-semver-checks
     // reports as a break.
@@ -294,6 +335,7 @@ pub enum WiringError {
     /// `import` is that module as the application writes the import, such as
     /// `ulo_ws::WsModule::for_root()` for a WebSocket gateway on the HTTP server's port.
     /// `consumer` names the reader as `Missing` does.
+    #[non_exhaustive]
     NotImported { key: KeyName, consumer: String, module: ModuleName, import: &'static str },
 }
 
@@ -992,10 +1034,13 @@ impl fmt::Display for WiringError {
 pub enum InputOrigin {
     /// The transport's `Transport::inputs`. `name` is the transport's marker type; a report
     /// prints `ulo_http::Http` as `Http`.
+    #[non_exhaustive]
     Transport { name: TypeName, at: &'static Location<'static> },
     /// A module's `input::<T>().seeded_by::<Tr>()`. `seeders` holds each `Tr`.
+    #[non_exhaustive]
     Module { module: ModuleName, seeders: Vec<TypeName>, at: &'static Location<'static> },
     /// A single binding under the input's key.
+    #[non_exhaustive]
     Binding { module: ModuleName, at: &'static Location<'static> },
 }
 
@@ -1046,8 +1091,10 @@ pub enum ModuleSite {
     /// The root module the app was built from.
     Root,
     /// `ModuleDef::import` in `importer`, the call at `at`.
+    #[non_exhaustive]
     Import { importer: ModuleName, at: &'static Location<'static> },
     /// `AppHandle::load`, the call at `at`.
+    #[non_exhaustive]
     Load { at: &'static Location<'static> },
 }
 

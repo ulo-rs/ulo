@@ -125,16 +125,21 @@ fn checked_key(key: &str) -> Result<String, MetadataError> {
 #[non_exhaustive]
 pub enum MetadataError {
     /// The key is empty or holds a character outside `0`-`9`, `a`-`z`, `_`, `-` and `.`.
+    #[non_exhaustive]
     InvalidKey { key: String },
     /// The key begins `grpc-`, is `te`, `content-type` or `content-length`, or is a
     /// connection-specific name HTTP/2 forbids: `connection`, `keep-alive`, `proxy-connection`,
     /// `transfer-encoding` or `upgrade`.
+    #[non_exhaustive]
     Reserved { key: String },
     /// An ASCII value under a key ending `-bin`, which carries bytes.
+    #[non_exhaustive]
     AsciiUnderBinaryKey { key: String },
     /// A binary value under a key not ending `-bin`, which carries ASCII.
+    #[non_exhaustive]
     BinaryUnderAsciiKey { key: String },
     /// An ASCII value holding a byte outside `0x20` to `0x7E`.
+    #[non_exhaustive]
     InvalidAscii { key: String },
 }
 

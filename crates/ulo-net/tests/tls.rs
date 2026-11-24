@@ -69,7 +69,7 @@ fn a_key_that_is_not_the_certificates_is_refused() {
     let other = Certified::self_signed(&["localhost"]);
     let refused = Tls::from_pem(other.cert_pem(), localhost().key_pem()).load(&[]).expect_err("a key not matching the certificate is refused");
     assert!(
-        matches!(refused, TlsError::PrivateKey { path: None, cause: KeyCause::DoesNotMatchCertificate }),
+        matches!(refused, TlsError::PrivateKey { path: None, cause: KeyCause::DoesNotMatchCertificate, .. }),
         "refused as a key that is not the certificate's, got {refused:?}"
     );
 }
@@ -80,7 +80,7 @@ fn a_pem_section_holding_no_key_is_refused_as_unrecognised() {
     let not_a_key = "-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n";
     let refused = Tls::from_pem(localhost().cert_pem(), not_a_key).load(&[]).expect_err("a section holding no key is refused");
     assert!(
-        matches!(refused, TlsError::PrivateKey { path: None, cause: KeyCause::Unrecognised }),
+        matches!(refused, TlsError::PrivateKey { path: None, cause: KeyCause::Unrecognised, .. }),
         "refused as bytes that are no supported key, got {refused:?}"
     );
 }
@@ -95,7 +95,7 @@ fn an_unrecognised_key_file_is_refused_with_its_path() {
     let refused = Tls::from_pem_files(&cert, &key).load(&[]).expect_err("a file holding no key is refused");
     let _ = std::fs::remove_dir_all(&dir);
     match refused {
-        TlsError::PrivateKey { path: Some(path), cause: KeyCause::Unrecognised } => assert_eq!(path, key),
+        TlsError::PrivateKey { path: Some(path), cause: KeyCause::Unrecognised, .. } => assert_eq!(path, key),
         other => panic!("a key file holding no key was {other:?}"),
     }
 }
@@ -194,7 +194,7 @@ mod given_configuration {
 
     fn refused(alpn: &[&[u8]], missing: &[&str]) {
         let Err(error) = Tls::from_config(config_with(alpn)).load(HTTP) else { panic!("{alpn:?} must be refused") };
-        let TlsError::Alpn { required, given, missing: lacking } = &error else { panic!("{error:?}") };
+        let TlsError::Alpn { required, given, missing: lacking, .. } = &error else { panic!("{error:?}") };
         assert_eq!(required, &["h2", "http/1.1"]);
         assert_eq!(given.len(), alpn.len());
         assert_eq!(lacking, missing);

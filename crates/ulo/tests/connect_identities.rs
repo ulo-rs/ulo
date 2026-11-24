@@ -203,7 +203,7 @@ async fn execution_required<S: Construct>() -> Key {
     }))
     .await;
     match app.get::<S>().await {
-        Err(LookupError::ExecutionRequired { key }) => key.key(),
+        Err(LookupError::ExecutionRequired { key, .. }) => key.key(),
         Err(other) => panic!("expected `ExecutionRequired`, got: {other}"),
         Ok(_) => panic!("the build succeeded outside an execution"),
     }

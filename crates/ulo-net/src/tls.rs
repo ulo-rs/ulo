@@ -185,6 +185,7 @@ pub enum CertificateCause {
     /// The PEM holds no `CERTIFICATE` section.
     NoneFound,
     /// The `index`th section, counting from 0, did not parse.
+    #[non_exhaustive]
     Unparseable { index: usize, reason: String },
 }
 
@@ -204,6 +205,7 @@ pub enum KeyCause {
     /// The PEM holds no private key section.
     NoneFound,
     /// The key section did not parse.
+    #[non_exhaustive]
     Unparseable { reason: String },
     /// The section parses as PEM and holds bytes that are no RSA, ECDSA or EdDSA private key the
     /// TLS backend supports.
@@ -228,16 +230,20 @@ impl fmt::Display for KeyCause {
 #[derive(Debug)]
 pub enum TlsError {
     /// A certificate or key file could not be read; `source.kind()` says why.
+    #[non_exhaustive]
     Read { path: PathBuf, source: io::Error },
     /// The certificate PEM holds no certificate, or one that does not parse. `path` is the file it
     /// was read from, `None` for PEM given in memory.
+    #[non_exhaustive]
     Certificate { path: Option<PathBuf>, cause: CertificateCause },
     /// The key PEM holds no private key, one that does not parse or is not a supported key, or one
     /// that is not the certificate's.
+    #[non_exhaustive]
     PrivateKey { path: Option<PathBuf>, cause: KeyCause },
     /// A configuration given to [`Tls::from_config`] names an application protocol and omits one
     /// the transport needs. `required` is what the transport needs, `given` what the configuration
     /// names and `missing` the part of `required` it lacks.
+    #[non_exhaustive]
     Alpn { required: Vec<String>, given: Vec<String>, missing: Vec<String> },
     /// rustls refused the configuration for another reason.
     Rustls(rustls::Error),

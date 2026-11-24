@@ -375,7 +375,7 @@ where
         // Reported here, ahead of the service's `Tracked`: the stream returns `None` after this
         // event, which `Tracked` would report `Completed`, and the first report stays.
         self.cx.exec().report_stream_end(StreamOutcome::CutOff(None));
-        Bytes::from(render::late_event(&error).encode())
+        Bytes::from(render::late_event(&error.__into_sent(self.cx.app())).encode())
     }
 
     fn written(&mut self, bytes: Bytes) -> Poll<Option<Result<Bytes, BoxError>>> {

@@ -59,8 +59,8 @@ fn all_errors_arrive_in_one_pass_and_nothing_is_built() {
     assert_eq!(entry!(errors, WiringError::ExportNotBound { key, .. } => key.key()), Key::of::<Unbound, ()>());
     assert_eq!(entry!(errors, WiringError::DuplicateBinding { key, .. } => key.key()), Key::of::<u32, ()>());
     assert_eq!(entry!(errors, WiringError::Missing { key, .. } => key.key()), Key::of::<Absent, ()>());
-    assert_eq!(entry!(errors, WiringError::Cycle { path } => path.len()), 3, "SB, SC and the return to SB");
-    assert_eq!(entry!(errors, WiringError::KnobWithoutTimer { knob } => *knob), "hook_timeout");
+    assert_eq!(entry!(errors, WiringError::Cycle { path, .. } => path.len()), 3, "SB, SC and the return to SB");
+    assert_eq!(entry!(errors, WiringError::KnobWithoutTimer { knob, .. } => *knob), "hook_timeout");
     assert!(probe.is_empty(), "wire() built an instance: {:?}", probe.log());
 }
 
@@ -104,7 +104,7 @@ fn a_missing_piece_skips_only_its_own_edges() {
         m.singleton(|_a: Dep<SA>| async { SC });
     }));
     assert_eq!(variants(&errors), ["Missing", "Cycle"], "{errors}");
-    let cycle = entry!(errors, WiringError::Cycle { path } => path.iter().map(|(k, _)| k.key()).collect::<Vec<_>>());
+    let cycle = entry!(errors, WiringError::Cycle { path, .. } => path.iter().map(|(k, _)| k.key()).collect::<Vec<_>>());
     assert!(cycle.contains(&Key::of::<SA, ()>()) && cycle.contains(&Key::of::<SB, ()>()), "{cycle:?}");
     assert!(!cycle.contains(&Key::of::<SC, ()>()), "a reader of the tangle is not part of it");
 }

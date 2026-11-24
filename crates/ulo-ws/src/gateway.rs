@@ -17,14 +17,14 @@ use std::time::Duration;
 
 use http::{HeaderMap, StatusCode};
 use ulo::{
-    BoxError, BoxFuture, Bound, Construct, EnhancerSpec, ExecOptions, Execution, ExecutionRef, ModuleRef, Mount,
+    AppHandle, BoxError, BoxFuture, Bound, Construct, EnhancerSpec, ExecOptions, Execution, ExecutionRef, ModuleRef, Mount,
     MountedHandler, TypeName, Unreached,
 };
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
 use ulo_transport::{CallError, Count, ErrorKind};
 
 use crate::handler::{GatewayHooks, HandlerFn, WsHandler};
-use crate::close::{CloseCode, CloseCodeError, by_kind, check_reason, truncated};
+use crate::close::{CloseCode, CloseCodeError, by_kind_whole, check_reason, cut};
 use crate::codec::Codec;
 use crate::connection::Connection;
 use crate::envelope::Frame;
@@ -344,6 +344,11 @@ pub enum DisconnectReason {
 /// body is the reason as plain text. A refusal written as a close code alone,
 /// [`code`](Self::code), has no kind and is answered 403.
 ///
+/// The reason is sent through the app's redaction, as a `CallError`'s message is
+/// (`CallError::new`), in the close frame and in a refused handshake's body alike, whichever
+/// spelling wrote it: the whole reason is redacted, then cut to 123 bytes, so a secret the cut
+/// would split is still replaced.
+///
 /// ```
 /// use std::time::Duration;
 /// use ulo_ws::{CallError, ConnectRefused, Detail, Details, ErrorKind};
@@ -357,6 +362,8 @@ pub enum DisconnectReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectRefused {
     pub(crate) close_code: CloseCode,
+    /// Whole: [`reason`](Self::reason) and every send cut it to 123 bytes, after the app's
+    /// redaction has read it whole.
     pub(crate) reason: String,
     pub(crate) kind: Option<ErrorKind>,
     /// The answer under `refuse = handshake`, a 401 without `WWW-Authenticate` taking the
@@ -408,7 +415,7 @@ impl ConnectRefused {
     }
 
     pub fn reason(&self) -> &str {
-        &self.reason
+        cut(&self.reason)
     }
 
     /// The drain's refusal of a connection whose phase began as the drain did: 1001 and the
@@ -431,6 +438,17 @@ impl ConnectRefused {
         ConnectRefused { shed: true, ..ConnectRefused::kind(ErrorKind::Unavailable, "too many connections") }
     }
 
+    /// The refusal with its whole reason through the app's redaction, before any cut, so a
+    /// secret the 123-byte cut would split is still matched: what a close frame and a refused
+    /// handshake carry, cut, whoever wrote the reason, a `CallError`'s message among them
+    /// (`CallError::new`).
+    pub(crate) fn redacted(mut self, app: &AppHandle) -> Self {
+        if let Cow::Owned(reason) = app.redact_text(&self.reason) {
+            self.reason = reason;
+        }
+        self
+    }
+
     /// An error the connect phase's error handlers left unclaimed: a `ConnectRefused` as itself,
     /// anything else refused as `From<CallError>` refuses it.
     pub(crate) fn of_error(err: BoxError) -> Self {
@@ -451,8 +469,8 @@ impl From<CallError> for ConnectRefused {
         let (status, headers) = ulo_http::__private::error_head(&error);
         let kind = error.kind();
         let (close_code, reason) = match error.__close_code().map(CloseCode::new) {
-            Some(Ok(close_code)) => (close_code, truncated(error.message().to_owned())),
-            _ => by_kind(kind, error.message()),
+            Some(Ok(close_code)) => (close_code, error.message().to_owned()),
+            _ => by_kind_whole(kind, error.message()),
         };
         ConnectRefused { close_code, reason, kind: Some(kind), status, headers: Box::new(headers), shed: false }
     }
@@ -460,7 +478,7 @@ impl From<CallError> for ConnectRefused {
 
 impl fmt::Display for ConnectRefused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "connection refused with close code {}: {}", self.close_code, self.reason)
+        write!(f, "connection refused with close code {}: {}", self.close_code, self.reason())
     }
 }
 
@@ -971,6 +989,7 @@ mod tests {
             (ErrorKind::Unavailable, 503),
             (ErrorKind::Unimplemented, 501),
             (ErrorKind::Internal, 500),
+            (ErrorKind::Cancelled, 499),
         ];
         for (kind, status) in cases {
             assert_eq!(ConnectRefused::kind(kind, "why").status.as_u16(), status, "{kind:?}");

@@ -34,6 +34,6 @@ impl<T> Deref for Host<T> {
 impl<T: Clone + Send + Sync + 'static> FromCall<Http> for Host<T> {
     fn from_call(cx: &HttpCx) -> impl Future<Output = Result<Self, ExtractError>> + Send {
         let value = cx.head().parts().extensions.get::<T>().cloned();
-        async move { value.map(Host).ok_or(ExtractError::HostMissing { param: HOST, type_name: type_name::<T>() }) }
+        async move { value.map(Host).ok_or(ExtractError::host_missing(HOST, type_name::<T>())) }
     }
 }

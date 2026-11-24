@@ -348,7 +348,7 @@ async fn a_module_ref_kept_past_construction_reads_without_a_declaration() {
 }
 
 fn construct_refusal(error: LookupError) -> (Key, UndeclaredRead) {
-    let LookupError::Construct { key, reason } = error else {
+    let LookupError::Construct { key, reason, .. } = error else {
         panic!("expected a construction failure, got: {error}");
     };
     let FailureReason::Errored(redacted) = *reason else {

@@ -150,14 +150,14 @@ async fn a_tls_failure_keeps_its_tls_error_for_the_entry_to_downcast() {
 
     let entry = configure_entry(gateway(Tls::from_pem("not a certificate", ours.key_pem()))).await;
     assert!(
-        matches!(tls_error(&entry), TlsError::Certificate { path: None, cause: CertificateCause::NoneFound }),
+        matches!(tls_error(&entry), TlsError::Certificate { path: None, cause: CertificateCause::NoneFound, .. }),
         "a PEM with no certificate: {entry}"
     );
 
     let broken = chain_with_a_broken_second_section(ours.cert_pem());
     let entry = configure_entry(gateway(Tls::from_pem(broken, ours.key_pem()))).await;
     match tls_error(&entry) {
-        TlsError::Certificate { path: None, cause: CertificateCause::Unparseable { index, reason } } => {
+        TlsError::Certificate { path: None, cause: CertificateCause::Unparseable { index, reason, .. }, .. } => {
             assert_eq!(*index, 1, "the second section is the one that does not parse");
             assert!(!reason.is_empty(), "the parser's reason travels: {entry}");
         }
@@ -166,14 +166,14 @@ async fn a_tls_failure_keeps_its_tls_error_for_the_entry_to_downcast() {
 
     let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), "not a key"))).await;
     assert!(
-        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::NoneFound }),
+        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::NoneFound, .. }),
         "a PEM with no key: {entry}"
     );
 
     let undecodable = "-----BEGIN PRIVATE KEY-----\n!!!not base64!!!\n-----END PRIVATE KEY-----\n";
     let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), undecodable))).await;
     match tls_error(&entry) {
-        TlsError::PrivateKey { path: None, cause: KeyCause::Unparseable { reason } } => {
+        TlsError::PrivateKey { path: None, cause: KeyCause::Unparseable { reason, .. }, .. } => {
             assert!(!reason.is_empty(), "the parser's reason travels: {entry}");
         }
         other => panic!("a key section that is not base64 was {other:?}"),
@@ -181,7 +181,7 @@ async fn a_tls_failure_keeps_its_tls_error_for_the_entry_to_downcast() {
 
     let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), other.key_pem()))).await;
     assert!(
-        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::DoesNotMatchCertificate }),
+        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::DoesNotMatchCertificate, .. }),
         "a key that is not the certificate's: {entry}"
     );
 
@@ -189,7 +189,7 @@ async fn a_tls_failure_keeps_its_tls_error_for_the_entry_to_downcast() {
     let not_der = "-----BEGIN PRIVATE KEY-----\nAAAAAAAA\n-----END PRIVATE KEY-----\n";
     let entry = configure_entry(gateway(Tls::from_pem(ours.cert_pem(), not_der))).await;
     assert!(
-        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::Unrecognised }),
+        matches!(tls_error(&entry), TlsError::PrivateKey { path: None, cause: KeyCause::Unrecognised, .. }),
         "a key section holding no key: {entry}"
     );
 }
@@ -210,19 +210,19 @@ async fn a_tls_failure_from_a_file_names_the_file_and_its_cause() {
 
     let entry = configure_entry(gateway(Tls::from_pem_files(&missing, &key))).await;
     match tls_error(&entry) {
-        TlsError::Read { path, source } => assert_eq!((path, source.kind()), (&missing, std::io::ErrorKind::NotFound), "{entry}"),
+        TlsError::Read { path, source, .. } => assert_eq!((path, source.kind()), (&missing, std::io::ErrorKind::NotFound), "{entry}"),
         other => panic!("an unreadable certificate file was {other:?}"),
     }
 
     let entry = configure_entry(gateway(Tls::from_pem_files(&empty, &key))).await;
     match tls_error(&entry) {
-        TlsError::Certificate { path: Some(path), cause: CertificateCause::NoneFound } => assert_eq!(path, &empty, "{entry}"),
+        TlsError::Certificate { path: Some(path), cause: CertificateCause::NoneFound, .. } => assert_eq!(path, &empty, "{entry}"),
         other => panic!("an empty certificate file was {other:?}"),
     }
 
     let entry = configure_entry(gateway(Tls::from_pem_files(&cert, &empty))).await;
     match tls_error(&entry) {
-        TlsError::PrivateKey { path: Some(path), cause: KeyCause::NoneFound } => assert_eq!(path, &empty, "{entry}"),
+        TlsError::PrivateKey { path: Some(path), cause: KeyCause::NoneFound, .. } => assert_eq!(path, &empty, "{entry}"),
         other => panic!("an empty key file was {other:?}"),
     }
 
@@ -230,7 +230,7 @@ async fn a_tls_failure_from_a_file_names_the_file_and_its_cause() {
     std::fs::write(&key, other.key_pem()).unwrap_or_else(|error| panic!("write key: {error}"));
     let entry = configure_entry(gateway(Tls::from_pem_files(&cert, &key))).await;
     match tls_error(&entry) {
-        TlsError::PrivateKey { path: Some(path), cause: KeyCause::DoesNotMatchCertificate } => assert_eq!(path, &key, "{entry}"),
+        TlsError::PrivateKey { path: Some(path), cause: KeyCause::DoesNotMatchCertificate, .. } => assert_eq!(path, &key, "{entry}"),
         other => panic!("another certificate's key file was {other:?}"),
     }
     let _ = std::fs::remove_dir_all(&dir);

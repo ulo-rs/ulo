@@ -195,7 +195,7 @@ pub async fn spent_cap<B: Broker>() {
         Err(error) => {
             let [failure] = &*error.failures else { panic!("expected one failure, the RPC server's close, got: {error}") };
             match failure {
-                ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
+                ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit, .. }, .. } => {
                     assert_eq!(*transport, TypeName::of::<Rpc>(), "the close the cap cut");
                     assert_eq!((*after, *limit), (Duration::ZERO, Limit::ShutdownCap), "the RPC server's close");
                 }

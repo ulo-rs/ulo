@@ -62,7 +62,7 @@ impl<T> Deref for Path<T> {
 impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Path<T> {
     async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
         let Some(route) = cx.matched() else {
-            return Err(ExtractError::Missing { param: "path" });
+            return Err(ExtractError::missing("path"));
         };
         let pairs: Vec<(&str, &str)> = route.params.pairs.iter().map(|(name, value)| (&**name, value.as_str())).collect();
         from_pairs::<T>(&pairs, Source::Path).map(Path).map_err(|error| error.into_extract("path", cx))

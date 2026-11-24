@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 
-use ulo::{BoxError, Closed, FailureReason, GuardRejected, LookupError, PanicRecovered, Redacted, is_panic};
+use ulo::{AppHandle, BoxError, Closed, FailureReason, GuardRejected, LookupError, PanicRecovered, Redacted, is_panic};
 
 use crate::details::Details;
 use crate::extract::ExtractError;
@@ -32,6 +32,13 @@ pub enum ErrorKind {
     Unavailable,
     Unimplemented,
     Internal,
+    /// The caller went away before the call completed: it reset the stream, closed the connection
+    /// or cancelled the call while its request was read. gRPC's CANCELLED, which `statuscodes.md`
+    /// describes as "typically by the caller"; HTTP's 499, the status nginx logs for a client that
+    /// closed the request. A caller that has gone reads no reply, so the kind is for the error
+    /// handlers, the logs and the counters: a departed caller counted apart from a bad request
+    /// and from the server's own unavailability.
+    Cancelled,
 }
 
 impl ErrorKind {
@@ -49,6 +56,7 @@ impl ErrorKind {
             ErrorKind::Unavailable => "unavailable",
             ErrorKind::Unimplemented => "unimplemented",
             ErrorKind::Internal => "internal",
+            ErrorKind::Cancelled => "cancelled",
         }
     }
 }
@@ -137,6 +145,23 @@ pub struct CallError {
 const _: () = assert!(size_of::<CallError>() < 128, "clippy's `result_large_err` fires at 128 bytes");
 
 impl CallError {
+    /// An error of `kind` whose public message, what the caller reads, is `message`.
+    ///
+    /// Every transport writes the message, and every string of the [details](Self::with_details),
+    /// through the app's redaction (`ulo::AppHandle::redact_text`) as it sends them: the value of
+    /// a `Secret` registered with the app is sent as `[redacted]`, as is the userinfo of anything
+    /// shaped like a URL, on HTTP, gRPC, WebSocket and RPC alike, whoever built the error. A secret
+    /// under four characters is not matched and is sent as written, since it would replace
+    /// ordinary words. A message holding no registered secret and no URL userinfo is sent byte
+    /// for byte. The error itself keeps the text as given: [`message`](Self::message) and an error
+    /// handler read it unredacted.
+    ///
+    /// ```
+    /// use ulo_transport::{CallError, ErrorKind};
+    ///
+    /// let error = CallError::new(ErrorKind::NotFound, "no tenant `acme`");
+    /// assert_eq!((error.kind(), error.message()), (ErrorKind::NotFound, "no tenant `acme`"));
+    /// ```
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         CallError {
             kind,
@@ -184,7 +209,7 @@ impl CallError {
     /// | Error | Kind |
     /// |---|---|
     /// | `CallError`, bare or boxed by the reply probe | its own |
-    /// | `ExtractError` | `BadRequest` or `Unprocessable`; a `Dependency` as its lookup error maps |
+    /// | `ExtractError` | its `Classify` kind: `BadRequest`, `Unprocessable`, `Cancelled` for a caller that went away; a `Dependency` as its lookup error maps |
     /// | `GuardRejected` | `Forbidden` |
     /// | `PanicRecovered`, and anything `ulo::is_panic` recognises | `Internal`, with a generic message |
     /// | `LookupError::Construct { reason: Errored(r) }` | `r` by this table, so a constructor's `CallError` "tenant not found" is 404 |
@@ -234,7 +259,8 @@ impl CallError {
     /// The same error with `message` as its public message, for an error handler that localises
     /// or rewords what the client reads. The kind, the details, the challenge, every transport's
     /// status override and the source are kept, so the reply differs only in its text and the
-    /// original stays reachable through [`source_as`](Self::source_as).
+    /// original stays reachable through [`source_as`](Self::source_as). The new message is
+    /// redacted as it is sent, as [`new`](Self::new) describes.
     ///
     /// ```
     /// use ulo_transport::{CallError, ErrorKind};
@@ -259,9 +285,34 @@ impl CallError {
         self.kind
     }
 
-    /// The public message: what a transport writes as `detail` or `message`.
+    /// The public message as given: what a transport writes as `detail` or `message`, after the
+    /// app's redaction.
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// The message and the details as a transport sends them: each string through
+    /// `app.redact_text`, borrowed back when nothing in it was replaced. The one place every
+    /// transport's renderer reads the caller-facing text from.
+    #[doc(hidden)]
+    pub fn __sent<'e>(&'e self, app: &AppHandle) -> (Cow<'e, str>, Cow<'e, Details>) {
+        let message = app.redact_text(&self.message);
+        let details = self.details.redacted(&|text| app.redact_text(text)).map_or(Cow::Borrowed(&self.details), Cow::Owned);
+        (message, details)
+    }
+
+    /// The same error with the message and the details [`__sent`](Self::__sent) gives, every
+    /// other field kept, the source among them; `self` unchanged when nothing was replaced.
+    #[doc(hidden)]
+    pub fn __into_sent(self, app: &AppHandle) -> CallError {
+        let replaced = match self.__sent(app) {
+            (Cow::Borrowed(_), Cow::Borrowed(_)) => None,
+            (message, details) => Some((message.into_owned(), details.into_owned())),
+        };
+        match replaced {
+            None => self,
+            Some((message, details)) => CallError { message, details, ..self },
+        }
     }
 
     pub fn details(&self) -> &Details {

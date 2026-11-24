@@ -211,7 +211,7 @@ async fn one_module_type_two_configs_is_two_modules() {
     .await;
 
     assert_eq!((registered.get(), built.get()), (2, 2), "each configuration registers and builds on its own");
-    let Err(LookupError::AmbiguousModule { module, candidates }) = app.module::<Db>() else {
+    let Err(LookupError::AmbiguousModule { module, candidates, .. }) = app.module::<Db>() else {
         panic!("two configurations of `Db` are not one module");
     };
     assert_eq!(module, std::any::type_name::<Db>());
@@ -421,12 +421,12 @@ async fn module_of_names_one_configuration_or_keyed_instance_and_registers_nothi
     // The keyed instance's configuration unkeyed is another identity, and so is one never imported.
     for (config, handle) in [(db(3), false), (db(9), true)] {
         let found = if handle { app.handle().module_of(&config) } else { app.module_of(&config) };
-        let Err(LookupError::NotFound { key, kind: LookupKind::Module }) = found else {
+        let Err(LookupError::NotFound { key, kind: LookupKind::Module, .. }) = found else {
             panic!("a configuration the graph does not hold answered a module");
         };
         assert_eq!(key.key(), Key::of::<Db, ()>());
     }
-    let Err(LookupError::NotFound { key, kind: LookupKind::Module }) = app.module_of(&db(1).keyed::<Replica>()) else {
+    let Err(LookupError::NotFound { key, kind: LookupKind::Module, .. }) = app.module_of(&db(1).keyed::<Replica>()) else {
         panic!("a key the graph does not hold answered a module");
     };
     assert_eq!(key.key(), Key::of::<Db, Replica>(), "the miss names the qualifier asked for");

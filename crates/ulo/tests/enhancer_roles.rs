@@ -339,7 +339,7 @@ fn an_explicit_singleton_closure_is_refused_in_the_interceptor_and_error_handler
         m.controller::<SingletonInterceptors>();
         m.controller::<SingletonErrorHandlers>();
     }));
-    let found = entries!(errors, WiringError::ClosureScopeViolation { closure, transport, role, path, at }
+    let found = entries!(errors, WiringError::ClosureScopeViolation { closure, transport, role, path, at, .. }
         => (closure.clone(), *transport, *role, path.clone(), *at));
     assert_eq!(found.len(), 4, "{errors}");
     assert_eq!(errors.len(), 4, "{errors}");

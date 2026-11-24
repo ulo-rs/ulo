@@ -72,7 +72,7 @@ async fn a_constructor_that_outlives_its_own_bound_is_timed_out_with_the_item_li
 
     let (key, _, reason) = construction(failing(builder).await);
     assert_eq!(key, Key::of::<S1, ()>());
-    let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
+    let FailureReason::TimedOut { after, limit, .. } = reason else { panic!("expected a timeout, got: {reason}") };
     assert_eq!((after, limit), (Duration::from_secs(2), Limit::Item));
 }
 
@@ -88,7 +88,7 @@ async fn a_constructor_with_no_bound_of_its_own_takes_the_apps_construct_timeout
     .construct_timeout(Duration::from_secs(8));
 
     let (_, _, reason) = construction(failing(builder).await);
-    let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
+    let FailureReason::TimedOut { after, limit, .. } = reason else { panic!("expected a timeout, got: {reason}") };
     assert_eq!((after, limit), (Duration::from_secs(8), Limit::Default));
 }
 
@@ -115,7 +115,7 @@ async fn a_construct_types_own_timeout_is_its_bound() {
 
     let (key, _, reason) = construction(failing(builder).await);
     assert_eq!(key, Key::of::<Slow, ()>());
-    let FailureReason::TimedOut { after, limit } = reason else { panic!("expected a timeout, got: {reason}") };
+    let FailureReason::TimedOut { after, limit, .. } = reason else { panic!("expected a timeout, got: {reason}") };
     assert_eq!((after, limit), (Duration::from_secs(6), Limit::Item));
 }
 

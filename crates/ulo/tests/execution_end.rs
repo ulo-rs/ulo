@@ -138,7 +138,7 @@ async fn a_detached_subtasks_handle_answers_what_the_execution_recorded_and_its_
     let (handle, audit, singleton, through_resolver, singleton_through_resolver) = subtask.expect("the job spawned its subtask").await.unwrap();
 
     match &audit {
-        Err(error @ LookupError::ExecutionEnded { key }) => {
+        Err(error @ LookupError::ExecutionEnded { key, .. }) => {
             assert_eq!(key.key(), Key::of::<Audit, ()>());
             assert!(error.to_string().contains("execution that has ended"), "{error}");
         }
@@ -146,7 +146,7 @@ async fn a_detached_subtasks_handle_answers_what_the_execution_recorded_and_its_
     }
     assert!(matches!(singleton, Err(LookupError::ExecutionEnded { .. })), "whatever the key's scope: {singleton:?}");
     assert!(
-        matches!(&through_resolver, Err(LookupError::ExecutionEnded { key }) if key.key() == Key::of::<Audit, ()>()),
+        matches!(&through_resolver, Err(LookupError::ExecutionEnded { key, .. }) if key.key() == Key::of::<Audit, ()>()),
         "the cache refuses a read that reaches it, naming the key: {through_resolver:?}"
     );
     assert!(

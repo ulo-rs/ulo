@@ -354,7 +354,7 @@ async fn under_a_spent_cap_a_hand_written_gateways_message_ready_unwoken_returns
     let error = closed.expect_err("a close waiting out its grace for the client's close reply is cut by the cap");
     let [failure] = &*error.failures else { panic!("expected one failure, the WebSocket server's close, got: {error}") };
     match failure {
-        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit } } => {
+        ShutdownFailure::Close { transport, reason: FailureReason::TimedOut { after, limit, .. }, .. } => {
             assert_eq!(*transport, TypeName::of::<Ws>(), "the close the cap cut");
             assert_eq!((*after, *limit), (Duration::ZERO, Limit::ShutdownCap), "the WebSocket server's close");
         }

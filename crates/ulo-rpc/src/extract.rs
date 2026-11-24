@@ -65,7 +65,7 @@ impl FromCall<Rpc> for Bytes {
 fn take_data(cx: &RpcCx) -> Result<Data, ExtractError> {
     match cx.take_body() {
         Some(Body::Data(data)) => Ok(data),
-        Some(Body::Stream(_)) | None => Err(ExtractError::Missing { param: PAYLOAD }),
+        Some(Body::Stream(_)) | None => Err(ExtractError::missing(PAYLOAD)),
     }
 }
 
@@ -73,7 +73,7 @@ fn decode<T: DeserializeOwned>(cx: &RpcCx, data: &Data) -> Result<T, ExtractErro
     cx.codec().decode(data).map_err(|err| {
         let mismatch = fits_as_json(cx.codec(), data, &err);
         let source = cx.app().redact(err);
-        if mismatch { ExtractError::Mismatched { param: PAYLOAD, source } } else { ExtractError::Malformed { param: PAYLOAD, source } }
+        if mismatch { ExtractError::mismatched(PAYLOAD, source) } else { ExtractError::malformed(PAYLOAD, source) }
     })
 }
 
@@ -114,7 +114,7 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Inbound<T> {
 
     async fn from_call(cx: &RpcCx) -> Result<Self, ExtractError> {
         let Some(Body::Stream(receiver)) = cx.take_body() else {
-            return Err(ExtractError::Missing { param: PAYLOAD });
+            return Err(ExtractError::missing(PAYLOAD));
         };
         let cx = cx.clone();
         let items = futures_util::stream::unfold(Some(receiver), move |receiver| {
@@ -124,11 +124,11 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Inbound<T> {
                 let Some(data) = receiver.next().await else {
                     let failed = match receiver.halted_at() {
                         Some(Overflow::Items { limit }) => {
-                            ExtractError::Overflowed { param: PAYLOAD, limit: u64::try_from(limit).unwrap_or(u64::MAX) }
+                            ExtractError::overflowed(PAYLOAD, u64::try_from(limit).unwrap_or(u64::MAX))
                         }
-                        Some(Overflow::Bytes { limit, .. }) => ExtractError::OverflowedBytes { param: PAYLOAD, limit },
-                        Some(Overflow::TooLarge { limit, .. }) => ExtractError::TooLarge { param: PAYLOAD, limit },
-                        None if receiver.cut_with_call() => ExtractError::CallEnded { param: PAYLOAD },
+                        Some(Overflow::Bytes { limit, .. }) => ExtractError::overflowed_bytes(PAYLOAD, limit),
+                        Some(Overflow::TooLarge { limit, .. }) => ExtractError::too_large(PAYLOAD, limit),
+                        None if receiver.cut_with_call() => ExtractError::call_ended(PAYLOAD),
                         None => return None,
                     };
                     return Some((Err(failed), None));

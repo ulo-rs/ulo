@@ -160,7 +160,7 @@ impl Exporter for Colliding {
 async fn an_exporter_setting_named_as_a_module_setting_is_refused_with_both_lines() {
     let errors = refused(Root(vec![otel(OtelOptions::default(), Colliding)]));
     assert_eq!(errors.len(), 1, "{errors}");
-    let Some(WiringError::DuplicateSetting { setting, module, first, second }) = errors.iter().next() else {
+    let Some(WiringError::DuplicateSetting { setting, module, first, second, .. }) = errors.iter().next() else {
         panic!("expected `DuplicateSetting`:\n{errors}");
     };
     assert_eq!(*setting, "service_name");

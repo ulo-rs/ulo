@@ -11,7 +11,7 @@ use http_body::Body as _;
 use http_body_util::BodyExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use ulo::BoxError;
+use ulo::{AppHandle, BoxError};
 use ulo_transport::{ExtractError, FieldViolation, FromCall, IntoReply, IntoReplyError, Validate};
 
 use crate::body::HttpBody;
@@ -84,7 +84,7 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Json<T> {
     async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
         let body = take_present::<Self>(cx)?;
         if !media_type(cx).is_some_and(is_json) {
-            return Err(ExtractError::UnsupportedMediaType { param: BODY, expected: "application/json" });
+            return Err(ExtractError::unsupported_media_type(BODY, "application/json"));
         }
         let bytes = collect(cx, body).await?;
         serde_json::from_slice(&bytes).map(Json).map_err(|error| decode_failure(cx, &bytes, error))
@@ -137,7 +137,7 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Http> for Form<T> {
     async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
         let body = take_present::<Self>(cx)?;
         if media_type(cx).as_deref() != Some("application/x-www-form-urlencoded") {
-            return Err(ExtractError::UnsupportedMediaType { param: BODY, expected: "application/x-www-form-urlencoded" });
+            return Err(ExtractError::unsupported_media_type(BODY, "application/x-www-form-urlencoded"));
         }
         let bytes = collect(cx, body).await?;
         let decoded = parse_form(&bytes);
@@ -167,12 +167,14 @@ impl FromCall<Http> for Bytes {
 /// stream with an error. Consumes the body.
 ///
 /// The error that ends it at the limit is an `ExtractError::TooLarge`, boxed, and the stream
-/// returns `None` after it. A body a guard or interceptor took first fails extraction with
-/// `BodyTaken` (500).
+/// returns `None` after it. A read that fails is an `ExtractError`, boxed, as the whole-body
+/// extractors report one: `Cancelled` when the caller went away mid-body, `Malformed` otherwise.
+/// A body a guard or interceptor took first fails extraction with `BodyTaken` (500).
 pub struct BodyStream {
     pub(crate) body: HttpBody,
     pub(crate) limit: u64,
     pub(crate) read: u64,
+    pub(crate) app: AppHandle,
 }
 
 impl Stream for BodyStream {
@@ -192,11 +194,11 @@ impl Stream for BodyStream {
                     Ok(data) => data,
                     Err(_trailers) => continue,
                 },
-                Err(error) => return Poll::Ready(Some(Err(error))),
+                Err(error) => return Poll::Ready(Some(Err(Box::new(read_failure(&this.app, error))))),
             };
             this.read = this.read.saturating_add(data.len() as u64);
             if this.read > this.limit {
-                return Poll::Ready(Some(Err(BoxError::from(ExtractError::TooLarge { param: BODY, limit: this.limit }))));
+                return Poll::Ready(Some(Err(BoxError::from(ExtractError::too_large(BODY, this.limit)))));
             }
             return Poll::Ready(Some(Ok(data)));
         }
@@ -210,7 +212,7 @@ impl FromCall<Http> for BodyStream {
         let body = take::<Self>(cx)?;
         let limit = max_body(cx);
         refuse_declared_excess(cx, limit)?;
-        Ok(BodyStream { body, limit, read: 0 })
+        Ok(BodyStream { body, limit, read: 0, app: cx.app().clone() })
     }
 }
 
@@ -243,10 +245,10 @@ impl FromCall<Http> for Multipart {
             .get(CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| multer::parse_boundary(value).ok())
-            .ok_or(ExtractError::UnsupportedMediaType { param: BODY, expected: "multipart/form-data" })?;
+            .ok_or(ExtractError::unsupported_media_type(BODY, "multipart/form-data"))?;
         let limit = max_body(cx);
         refuse_declared_excess(cx, limit)?;
-        Ok(Multipart { inner: multer::Multipart::new(BodyStream { body, limit, read: 0 }, boundary) })
+        Ok(Multipart { inner: multer::Multipart::new(BodyStream { body, limit, read: 0, app: cx.app().clone() }, boundary) })
     }
 }
 
@@ -268,9 +270,9 @@ fn take<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
                 route = cx.route().unwrap_or(""),
                 "the request body was taken before the extractor ran, by a guard or interceptor calling `HttpCx::take_body`; answered 500"
             );
-            Err(ExtractError::BodyTaken { param: BODY, extractor })
+            Err(ExtractError::body_taken(BODY, extractor))
         }
-        Err(NoBody::Absent) => Err(ExtractError::Missing { param: BODY }),
+        Err(NoBody::Absent) => Err(ExtractError::missing(BODY)),
     }
 }
 
@@ -280,7 +282,7 @@ fn take<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
 fn take_present<E>(cx: &HttpCx) -> Result<HttpBody, ExtractError> {
     let body = take::<E>(cx)?;
     if body.is_end_stream() || declared_length(cx) == Some(0) {
-        return Err(ExtractError::Missing { param: BODY });
+        return Err(ExtractError::missing(BODY));
     }
     Ok(body)
 }
@@ -298,7 +300,7 @@ fn decode_failure(cx: &HttpCx, bytes: &[u8], error: serde_json::Error) -> Extrac
         _ => false,
     };
     let source = cx.app().redact(Box::new(error));
-    if mismatch { ExtractError::Mismatched { param: BODY, source } } else { ExtractError::Malformed { param: BODY, source } }
+    if mismatch { ExtractError::mismatched(BODY, source) } else { ExtractError::malformed(BODY, source) }
 }
 
 /// The essence of `Content-Type`, the type and subtype lowercased without parameters.
@@ -320,25 +322,56 @@ fn declared_length(cx: &HttpCx) -> Option<u64> {
 /// 413 from `Content-Length` alone, before any of the body is read.
 fn refuse_declared_excess(cx: &HttpCx, limit: u64) -> Result<(), ExtractError> {
     match declared_length(cx) {
-        Some(length) if length > limit => Err(ExtractError::TooLarge { param: BODY, limit }),
+        Some(length) if length > limit => Err(ExtractError::too_large(BODY, limit)),
         _ => Ok(()),
     }
 }
 
 /// The whole body, counted against the route's limit as it arrives: `TooLarge` the moment it
-/// passes, whatever `Content-Length` claimed. A failed read is `Malformed`.
+/// passes, whatever `Content-Length` claimed. A failed read is `Cancelled` when the caller went
+/// away and `Malformed` otherwise, as [`read_failure`] tells them apart.
 async fn collect(cx: &HttpCx, mut body: HttpBody) -> Result<Bytes, ExtractError> {
     let limit = max_body(cx);
     refuse_declared_excess(cx, limit)?;
     let mut buffer = BytesMut::new();
     while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|error| ExtractError::Malformed { param: BODY, source: cx.app().redact(error) })?;
+        let frame = frame.map_err(|error| read_failure(cx.app(), error))?;
         if let Ok(data) = frame.into_data() {
             if (buffer.len() as u64).saturating_add(data.len() as u64) > limit {
-                return Err(ExtractError::TooLarge { param: BODY, limit });
+                return Err(ExtractError::too_large(BODY, limit));
             }
             buffer.extend_from_slice(&data);
         }
     }
     Ok(buffer.freeze())
+}
+
+/// A failed read of the body as an extraction error: `Cancelled` when [`caller_left`] reads it as
+/// the caller going away, `Malformed` otherwise, the host's error redacted through the app either
+/// way.
+pub(crate) fn read_failure(app: &AppHandle, error: BoxError) -> ExtractError {
+    let left = caller_left(&*error);
+    let source = app.redact(error);
+    if left { ExtractError::cancelled(BODY, source) } else { ExtractError::malformed(BODY, source) }
+}
+
+/// Whether a body read failed because the caller went away rather than because of what it sent:
+/// an `io::Error` of kind `UnexpectedEof`, `ConnectionReset`, `ConnectionAborted`, `BrokenPipe` or
+/// `NotConnected` down the error's `source()` chain, to 32 levels. hyper reports an HTTP/1.1 body
+/// the connection closed inside, whether by `Content-Length` or mid-chunk, as `UnexpectedEof`
+/// under its own error, and broken chunk framing as `InvalidInput`, which stays `Malformed`. A
+/// host on another stack states the caller's leaving in the same vocabulary (`HttpBody::new`).
+pub(crate) fn caller_left(error: &(dyn std::error::Error + 'static)) -> bool {
+    use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, NotConnected, UnexpectedEof};
+    let mut next = Some(error);
+    for _ in 0..32 {
+        let Some(link) = next else { return false };
+        if let Some(io) = link.downcast_ref::<std::io::Error>()
+            && matches!(io.kind(), UnexpectedEof | ConnectionReset | ConnectionAborted | BrokenPipe | NotConnected)
+        {
+            return true;
+        }
+        next = link.source();
+    }
+    false
 }

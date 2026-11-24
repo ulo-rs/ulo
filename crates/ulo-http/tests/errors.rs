@@ -91,6 +91,7 @@ fn kind_named(name: &str) -> ErrorKind {
         "timeout" => ErrorKind::Timeout,
         "unavailable" => ErrorKind::Unavailable,
         "unimplemented" => ErrorKind::Unimplemented,
+        "cancelled" => ErrorKind::Cancelled,
         _ => ErrorKind::Internal,
     }
 }
@@ -308,6 +309,15 @@ async fn every_error_kind_renders_its_status_as_a_problem_document_of_that_statu
         assert_eq!(problem["status"], status.as_u16(), "{name}: the document repeats the status");
         assert_eq!(problem["detail"], "the message", "{name}");
     }
+
+    // 499 has no registered phrase, so its document carries no `title`.
+    let cancelled = StatusCode::from_u16(499).expect("499 is a status code");
+    assert_eq!(status_for(ErrorKind::Cancelled), cancelled, "`status_for` is the table the renderer reads");
+    let reply = app.send(Call::get("/kind/cancelled")).await;
+    assert_eq!(reply.status, cancelled);
+    let problem = reply.json();
+    assert_eq!((&problem["type"], problem.get("title")), (&serde_json::json!("about:blank"), None));
+    assert_eq!((&problem["status"], &problem["detail"]), (&serde_json::json!(499), &serde_json::json!("the message")));
     app.stop().await;
 }
 

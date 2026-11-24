@@ -89,9 +89,9 @@ impl ParamsError {
     pub(crate) fn into_extract_in(self, whole: &'static str, app: &AppHandle) -> ExtractError {
         let param = self.field.unwrap_or(whole);
         if self.missing {
-            ExtractError::Missing { param }
+            ExtractError::missing(param)
         } else {
-            ExtractError::Malformed { param, source: app.redact(Box::new(self)) }
+            ExtractError::malformed(param, app.redact(Box::new(self)))
         }
     }
 
@@ -101,7 +101,7 @@ impl ParamsError {
     /// [`into_extract`](Self::into_extract) answers.
     pub(crate) fn into_mismatch(self, whole: &'static str, cx: &HttpCx) -> ExtractError {
         let param = self.field.unwrap_or(whole);
-        ExtractError::Mismatched { param, source: cx.app().redact(Box::new(self)) }
+        ExtractError::mismatched(param, cx.app().redact(Box::new(self)))
     }
 }
 

@@ -130,7 +130,7 @@ async fn get<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError>
 async fn post<Q: Send + Sync + 'static>(cx: HttpCx) -> Result<Response, BoxError> {
     let endpoint = cx.exec().get::<GraphqlEndpoint<Q>>().await?;
     if !is_json(cx.headers()) {
-        return Err(ExtractError::UnsupportedMediaType { param: "body", expected: "application/json" }.into());
+        return Err(ExtractError::unsupported_media_type("body", "application/json").into());
     }
     let media = Media::negotiate(cx.headers())?;
     let body = <Bytes as FromCall<Http>>::from_call(&cx).await?;

@@ -21,8 +21,8 @@ struct NeedsSession {
 
 fn classify(e: &LookupError) -> String {
     match e {
-        LookupError::NotFound { key, kind } => format!("NotFound {kind:?} {key}"),
-        LookupError::Construct { key, reason } => match &**reason {
+        LookupError::NotFound { key, kind, .. } => format!("NotFound {kind:?} {key}"),
+        LookupError::Construct { key, reason, .. } => match &**reason {
             FailureReason::Errored(r) => {
                 let undeclared = r
                     .downcast_ref::<Permanent>()

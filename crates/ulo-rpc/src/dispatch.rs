@@ -494,13 +494,13 @@ fn settle_event(shared: &Shared, pattern: &str, exec: &ExecutionRef, outcome: Ou
     match outcome {
         Outcome::Done(Ok(_)) | Outcome::Expired(Some(Ok(_))) => ack.ack(),
         Outcome::Done(Err(err)) => {
-            let error = render(err, exec);
+            let error = render(err, exec, &shared.app);
             trace::record_failure(&call_span, error.kind);
             tracing::warn!(pattern, link = shared.link, kind = %error.kind, message = %error.message, "an event's handler failed; the event was rejected");
             ack.reject();
         }
         Outcome::Expired(Some(Err(err))) => {
-            let error = body_of(&CallError::from_boxed(err));
+            let error = body_of(&CallError::from_boxed(err), &shared.app);
             trace::record_failure(&call_span, error.kind);
             tracing::warn!(pattern, link = shared.link, kind = %error.kind, message = %error.message, "an event's deadline passed; the event was rejected");
             ack.reject();
@@ -548,10 +548,10 @@ async fn answer(
             send(reply, exec, id, Frame::Err { id, error: timed_out() }).await;
         }
         Outcome::Done(Err(err)) => {
-            send(reply, exec, id, Frame::Err { id, error: render(err, exec) }).await;
+            send(reply, exec, id, Frame::Err { id, error: render(err, exec, &shared.app) }).await;
         }
         Outcome::Expired(Some(Err(err))) => {
-            send(reply, exec, id, Frame::Err { id, error: body_of(&CallError::from_boxed(err)) }).await;
+            send(reply, exec, id, Frame::Err { id, error: body_of(&CallError::from_boxed(err), &shared.app) }).await;
         }
         Outcome::Expired(None) => {
             send(reply, exec, id, Frame::Err { id, error: timed_out() }).await;
@@ -616,7 +616,7 @@ async fn stream_reply(
 /// cleanly on `EndStream`. With no handler, a miss's recovered stream, it renders as it stands.
 async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &RpcCx, err: BoxError) -> Option<ErrorBody> {
     let Some(handler) = handler else {
-        return (!err.is::<EndStream>()).then(|| render(err, exec));
+        return (!err.is::<EndStream>()).then(|| render(err, exec, cx.app()));
     };
     // `dispatch_late` takes the error by value; the original is kept to write when an error
     // handler answers `Ok`, which on the late path is ignored.
@@ -626,15 +626,15 @@ async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &R
     };
     match ulo::dispatch_late(handler, exec, cx, err).await {
         LateOutcome::End => None,
-        LateOutcome::Render(err) => Some(render(err, exec)),
+        LateOutcome::Render(err) => Some(render(err, exec, cx.app())),
         LateOutcome::Ignored => {
             tracing::warn!(
                 handler = handler.name(),
                 "an error handler answered `Ok` to an error raised after the reply stream began; its reply is dropped and the original error is written"
             );
-            Some(body_of(&original))
+            Some(body_of(&original, cx.app()))
         }
-        _ => Some(body_of(&original)),
+        _ => Some(body_of(&original, cx.app())),
     }
 }
 
@@ -793,19 +793,23 @@ impl ErrorBody {
 
 /// An error no handler claimed, as the `err` frame's `e`: `timeout` when the call's deadline
 /// passed, otherwise `CallError::from_boxed`'s kind, message and details.
-pub(crate) fn render(err: BoxError, exec: &ExecutionRef) -> ErrorBody {
+pub(crate) fn render(err: BoxError, exec: &ExecutionRef, app: &AppHandle) -> ErrorBody {
     if exec.cancel_reason() == Some(CancelReason::Deadline) {
         return timed_out();
     }
-    body_of(&CallError::from_boxed(err))
+    body_of(&CallError::from_boxed(err), app)
 }
 
-fn body_of(error: &CallError) -> ErrorBody {
-    ErrorBody::new(error.kind(), error.message(), error.details().clone())
+/// `error` as the envelope carries it, its message and details through the app's redaction
+/// (`CallError::new`).
+fn body_of(error: &CallError, app: &AppHandle) -> ErrorBody {
+    let (message, details) = error.__sent(app);
+    ErrorBody::new(error.kind(), message, details.into_owned())
 }
 
 fn timed_out() -> ErrorBody {
-    body_of(&timeout_error())
+    let error = timeout_error();
+    ErrorBody::new(error.kind(), error.message(), error.details().clone())
 }
 
 /// The `Timeout` a passed deadline offers the error handlers, and what an unclaimed one writes.
