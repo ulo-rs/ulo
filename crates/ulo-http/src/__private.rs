@@ -57,9 +57,10 @@ pub fn missing_host(version: http::Version, headers: &HeaderMap) -> Option<crate
 
 /// The 400 problem document the `ulo_http` service answers an HTTP/1.x request with when two
 /// readers could read it differently, more than one `Host` line or `Content-Length` beside
-/// `Transfer-Encoding` (RFC 9112 §3.2, §6.3), with `Connection: close`, `Routing::Unrouted` and the
-/// request's version; `None` for any other request. The service's own check, so `ulo-ws-hyper`
-/// answers a handshake on its own port exactly as the HTTP server's port does.
+/// `Transfer-Encoding` (RFC 9112 §3.2, §6.3), or when it is a WebSocket handshake carrying
+/// `Transfer-Encoding`, with `Connection: close`, `Routing::Unrouted` and the request's version;
+/// `None` for any other request. The service's own check, so `ulo-ws-hyper` answers a handshake on
+/// its own port exactly as the HTTP server's port does.
 pub fn ambiguous_head(version: http::Version, headers: &HeaderMap) -> Option<crate::Response> {
     crate::service::ambiguous(version, headers, &HttpConfig::default())
 }

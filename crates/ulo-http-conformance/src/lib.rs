@@ -390,6 +390,7 @@ macro_rules! http_conformance_suite {
             duplicate_host_refused => wire_table::duplicate_host_refused,
             duplicate_host_closes_an_http10_keep_alive => wire_table::duplicate_host_closes_an_http10_keep_alive,
             content_length_beside_transfer_encoding_refused => wire_table::content_length_beside_transfer_encoding_refused,
+            handshake_with_transfer_encoding_refused => wire_table::handshake_with_transfer_encoding_refused,
             reset_content_carries_no_body => wire_table::reset_content_carries_no_body,
             reshaped_error => errors::reshaped,
             recovered_error => errors::recovered,

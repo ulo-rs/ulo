@@ -313,6 +313,38 @@ pub async fn content_length_beside_transfer_encoding_refused<H: Host>(mode: Mode
     host.stop().await;
 }
 
+/// A WebSocket handshake carrying `Transfer-Encoding` is answered 400 with `Connection: close` and
+/// never switches protocols, `Content-Length` beside it or not and `websocket` among other
+/// `Upgrade` tokens or alone: a handshake has no body, and a 101 hands the connection over with
+/// the body's bytes unread. Where the host takes upgrades the connection closes after the 400 and
+/// the request pipelined behind it is not answered. A host declared without `upgrades` switches
+/// nothing and frames the body itself, and actix answers a request it has already read behind the
+/// 400, so there the pipelined request is not held.
+pub async fn handshake_with_transfer_encoding_refused<H: Host>(mode: Mode) {
+    let host = start::<H>(mode).await;
+    let pipelined = request(&host, "GET", "/hit", &[]);
+    let cases = [
+        ("`Transfer-Encoding: chunked`", "websocket", "transfer-encoding: chunked\r\n"),
+        ("`Content-Length` then `Transfer-Encoding`", "websocket", "content-length: 5\r\ntransfer-encoding: chunked\r\n"),
+        ("`Transfer-Encoding` then `Content-Length`", "websocket", "transfer-encoding: chunked\r\ncontent-length: 5\r\n"),
+        ("`websocket` among other `Upgrade` tokens", "h2c,WebSocket", "transfer-encoding: chunked\r\n"),
+    ];
+    for (what, upgrade, framing) in cases {
+        let handshake = format!(
+            "GET {} HTTP/1.1\r\nhost: {}\r\nconnection: Upgrade\r\nupgrade: {upgrade}\r\n{framing}\r\n0\r\n\r\n",
+            host.target("/echo"),
+            host.authority(),
+        ) + &pipelined;
+        let raw = exchange(&host, handshake.as_bytes(), what).await;
+        assert_eq!(status_of(&raw), Some(400), "{what}: {}", text(&raw));
+        assert!(has_header(&raw, "connection", "close"), "{what}: the 400 does not carry `Connection: close`: {}", text(&raw));
+        if H::limits().upgrades() {
+            assert_eq!(responses(&raw), 1, "{what}: the pipelined request was answered on the same connection: {}", text(&raw));
+        }
+    }
+    host.stop().await;
+}
+
 /// A 205 a handler gave a body reaches the wire with none and `Content-Length: 0`, the form every
 /// host writes and RFC 9110 §15.3.6 admits, whether the handler left the framing to the host or set
 /// `Content-Length` or `Transfer-Encoding` itself, and the request pipelined behind it is answered

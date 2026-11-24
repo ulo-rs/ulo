@@ -1,9 +1,9 @@
 //! The close codes a connection ends with: a refused connect by its kind, 3003 for a connect
 //! guard's `Ok(false)`, 3000 and 3008 for `Unauthorized` and `Timeout`, 1008 for the client's
 //! other mistakes, 1013 for `TooManyRequests` and `Unavailable`, 1011 for a fault, a panic or
-//! `Unimplemented`, a code `OnConnect` or an error sets itself, and the drain's 1001. A close by
-//! kind carries the kind ahead of the reason on every code, and a code set by `OnConnect` or an
-//! error the reason alone. A refused connect is answered with the Close frame alone.
+//! `Unimplemented`, a code `OnConnect` or an error sets itself, or a connect guard's boxed
+//! `ConnectRefused`, and the drain's 1001. A close by kind carries the kind ahead of the reason on
+//! every code, and a code set by `OnConnect`, an error or a `ConnectRefused` the reason alone. A refused connect is answered with the Close frame alone.
 
 use serde_json::json;
 use ulo_ws::DisconnectReason;
@@ -11,7 +11,7 @@ use ulo_ws::DisconnectReason;
 use super::Served;
 use crate::Host;
 use crate::app::{
-    AS_NOT_FOUND, AS_OWN_CODE, AS_TIMEOUT, AS_UNAUTHORIZED, AS_UNAVAILABLE, AS_UNIMPLEMENTED, BUSY, BY_ERROR, BY_GUARD, ERROR_CODE,
+    AS_NOT_FOUND, AS_OWN_CODE, AS_REFUSED, AS_TIMEOUT, AS_UNAUTHORIZED, AS_UNAVAILABLE, AS_UNIMPLEMENTED, BUSY, BY_ERROR, BY_GUARD, ERROR_CODE,
     FAULT, OWN, OWN_CODE, PANIC, REFUSE,
 };
 
@@ -31,13 +31,15 @@ pub async fn guard_refusal<H: Host>() {
 
 /// A connect guard's error closes by its kind, the kind ahead of the message: the IANA registry's
 /// 3000 and 3008 for `Unauthorized` and `Timeout`, 1008 for `NotFound`; and the code
-/// `WithCloseCode` set in place of the kind's, with the message alone.
+/// `WithCloseCode` set in place of the kind's, with the message alone; a `ConnectRefused` the guard
+/// boxed into its `Err` closes with its own code and reason.
 pub async fn by_kind<H: Host>() {
     let app = Served::<H>::start().await;
     assert_eq!(refused_with(&app, AS_UNAUTHORIZED).await, Some((3000, format!("unauthorized: {BY_ERROR}"))), "`Unauthorized`");
     assert_eq!(refused_with(&app, AS_TIMEOUT).await, Some((3008, format!("timeout: {BY_ERROR}"))), "`Timeout`");
     assert_eq!(refused_with(&app, AS_NOT_FOUND).await, Some((1008, format!("not_found: {BY_ERROR}"))), "`NotFound`");
     assert_eq!(refused_with(&app, AS_OWN_CODE).await, Some((ERROR_CODE, BY_ERROR.to_owned())), "`WithCloseCode`");
+    assert_eq!(refused_with(&app, AS_REFUSED).await, Some((OWN.0.get(), OWN.1.to_owned())), "a boxed `ConnectRefused`");
     app.stop().await;
 }
 
