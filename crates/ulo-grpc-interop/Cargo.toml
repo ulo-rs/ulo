@@ -12,6 +12,9 @@ publish = false
 
 [dependencies]
 ulo = { path = "../ulo" }
+# Also tonic, prost and the codec, through its re-exports. Its tonic carries the `gzip` and
+# `tls-ring` features `ulo-grpc-interop-client` compresses its requests, inflates replies and dials
+# the TLS pass with.
 ulo-grpc = { path = "../ulo-grpc" }
 ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
 # `certs DIR`: the CA and server certificate of the runner's TLS pass, generated per run.
@@ -22,12 +25,6 @@ bytes.workspace = true
 http-body.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 futures-util.workspace = true
-# What the generated code names.
-prost.workspace = true
-# `gzip` and `tls-ring`: `ulo-grpc-interop-client` compressing its requests, inflating replies and
-# dialling the TLS pass.
-tonic = { workspace = true, features = ["channel", "codegen", "gzip", "tls-ring"] }
-tonic-prost.workspace = true
 # `ulo-grpc-interop-client`: the message it compresses by hand, the call it writes by hand over
 # the channel, and the channel wrapped to read reply flags.
 flate2.workspace = true

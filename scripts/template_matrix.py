@@ -5,11 +5,12 @@
     python3 scripts/template_matrix.py http grpc rpc-tcp      # the named projects
     python3 scripts/template_matrix.py all                    # every project in the matrix
     python3 scripts/template_matrix.py generate               # `ulo generate` on a fresh http project
+    python3 scripts/template_matrix.py grpc-client            # the grpc project generating its client
     python3 scripts/template_matrix.py --self-test            # the checks, run against planted output
 
 The matrix is every transport with no database (`http`, `ws`, `grpc`, `rpc-tcp`, `rpc-udp`,
 `rpc-nats`, `rpc-redis`, `rpc-rabbitmq`, `rpc-mqtt`, `rpc-kafka`) and every database on `http`
-(`http+sqlx-postgres` and the ten after it), plus `generate`. The database layer touches `app.rs`,
+(`http+sqlx-postgres` and the ten after it), plus `generate` and `grpc-client`. The database layer touches `app.rs`,
 `database.rs`, the manifest and `config/app.toml` only, so the full cross of 120 adds nothing the
 eleven do not. The names are the `ValueEnum`s of `crates/ulo-cli/src/commands/new.rs`, and `--list`
 is checked against the CLI's own `--help` before anything runs.
@@ -36,6 +37,13 @@ it with the lines the CLI prints at the end of `AppModule::register`, adds the `
 the CLI says the file needs, then runs steps 3 to 5. The `resolver` kind registers nothing (it is
 merged into a query root the project does not have), so its file is dead code and that project's
 clippy runs `-D warnings -A dead_code`.
+
+`grpc-client` writes the grpc project, drops `.build_client(false)` from its `build.rs`, the one edit
+a user makes to call a service, then runs steps 3 to 5. The template generates no client, and every
+other crate that generates one builds against the workspace's lockfile, so this project is where a
+client is generated against the newest tonic-build the requirements admit: a tonic-build release
+whose client code `ulo-build` cannot bind to `ulo_grpc::tonic` fails here, in a project whose
+manifest names no `tonic`, before a user's build script meets it.
 
 All projects share one target directory (`--target-dir`, `target/template-matrix` by default), so
 the framework compiles once per run. Standard library only, and Python 3.9.
@@ -64,6 +72,9 @@ DATABASES = [
     "diesel-postgres", "diesel-mysql", "diesel-sqlite", "mongodb", "redis",
 ]
 GENERATE = "generate"
+GRPC_CLIENT = "grpc-client"
+# The call in the grpc template's `build.rs` that `grpc-client` removes.
+NO_CLIENT = ".build_client(false)"
 
 # What `ulo generate` is run for, as `(kind, name, extra arguments)`; `controller` is run on both
 # of its transports.
@@ -81,11 +92,11 @@ COMMAND_TIMEOUT = 3600
 
 def matrix():
     """Every project name in the matrix."""
-    return TRANSPORTS + [f"http+{db}" for db in DATABASES] + [GENERATE]
+    return TRANSPORTS + [f"http+{db}" for db in DATABASES] + [GENERATE, GRPC_CLIENT]
 
 
 def arguments(name):
-    """The `ulo new` arguments for a matrix name other than `generate`."""
+    """The `ulo new` arguments for a matrix name other than `generate` and `grpc-client`."""
     if "+" in name:
         transport, db = name.split("+", 1)
         return ["--transport", transport, "--db", db]
@@ -246,6 +257,20 @@ def add_dependencies(manifest, lines):
     return head + sep + body + ("\n" + rest if rest else "")
 
 
+def generate_clients(build_rs):
+    """`build_rs` with the call that turns client generation off removed."""
+    if build_rs.count(NO_CLIENT) != 1:
+        raise Failure(f"the grpc template's build.rs has no single `{NO_CLIENT}` to remove")
+    return build_rs.replace(NO_CLIENT, "")
+
+
+def run_grpc_client(ulo, base, env, log, patch):
+    directory = new_project(ulo, "grpc", base, env, log, patch)
+    build_rs = directory / "build.rs"
+    build_rs.write_text(generate_clients(build_rs.read_text()))
+    return directory
+
+
 def run_generate(ulo, base, env, log, patch):
     directory = new_project(ulo, "http", base, env, log, patch)
     dead_code = False
@@ -280,6 +305,9 @@ def one(name, ulo, base, env, patch, logdir, verbose):
             if name == GENERATE:
                 directory, dead_code = run_generate(ulo, base, env, log, patch)
                 clippy = ["-D", "warnings", "-A", "dead_code"] if dead_code else ["-D", "warnings"]
+            elif name == GRPC_CLIENT:
+                directory = run_grpc_client(ulo, base, env, log, patch)
+                clippy = ["-D", "warnings"]
             else:
                 directory = new_project(ulo, name, base, env, log, patch)
                 clippy = ["-D", "warnings"]
@@ -352,13 +380,21 @@ def self_test():
     expect("add_dependencies", add_dependencies(manifest, ['ulo-rpc = "=1"']),
            '[package]\nname = "p"\n\n[dependencies]\nserde = "1"\nulo-rpc = "=1"\n\n[build-dependencies]\nb = "1"\n')
     expect("project_name", project_name("http+sqlx-sqlite"), "tm-http-sqlx-sqlite")
-    expect("matrix size", len(matrix()), 10 + 11 + 1)
+    build_rs = 'fn main() {\n    ulo_build::configure().build_client(false).compile(&["p.proto"], &["."]).unwrap();\n}\n'
+    expect("generate_clients", generate_clients(build_rs),
+           'fn main() {\n    ulo_build::configure().compile(&["p.proto"], &["."]).unwrap();\n}\n')
+    try:
+        generate_clients(build_rs.replace(NO_CLIENT, ""))
+        failures.append("generate_clients: a build.rs with no `.build_client(false)` was accepted")
+    except Failure:
+        pass
+    expect("matrix size", len(matrix()), 10 + 11 + 2)
 
     if failures:
         for failure in failures:
             print("self-test:", failure)
         return 1
-    print("self-test: 4 violating outputs refused, 2 valid outputs accepted, the generate edits exact")
+    print("self-test: 4 violating outputs refused, 2 valid outputs accepted, the generate and client edits exact")
     return 0
 
 

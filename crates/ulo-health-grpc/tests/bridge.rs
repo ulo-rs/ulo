@@ -13,14 +13,13 @@ use futures_util::StreamExt;
 use tonic::Streaming;
 use tonic::transport::{Channel, Endpoint};
 use tonic_health::pb::health_check_response::ServingStatus as Wire;
-use tonic_health::ServingStatus;
 use tonic_health::pb::health_client::HealthClient;
 use tonic_health::pb::{HealthCheckRequest, HealthCheckResponse};
 use ulo::{
     App, AppHandle, Bound, BoxFuture, Dep, FailureReason, HookKind, Module, ModuleDef, ModuleIdentity, ShutdownFailure, Signal, StartupError, WiringError,
 };
 use ulo_health::{Check, Health, HealthModule};
-use ulo_grpc::GrpcHealth;
+use ulo_grpc::{GrpcHealth, ServingStatus};
 use ulo_health_grpc::{HealthGrpc, ZeroInterval};
 
 const PATIENCE: Duration = Duration::from_secs(10);
