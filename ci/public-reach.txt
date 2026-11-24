@@ -27,53 +27,40 @@ crate ulo-db-seaorm
 crate ulo-otel
 crate ulo-otel-otlp
 
-allow ulo_db ulo_db::Store ulo_config::problems::Problems  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
-allow ulo_db ulo_db::StoreModule ulo_config::config::Config  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
-allow ulo_db_diesel ulo_db_diesel::DieselModule ulo_db::module::StoreModule  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_mongodb ulo_db_mongodb::Mongo ulo_db::store::Store  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_mongodb ulo_db_mongodb::MongoModule ulo_db::module::StoreModule  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_redis ulo_db_redis::Redis ulo_db::store::Store  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_redis ulo_db_redis::RedisModule ulo_db::module::StoreModule  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_seaorm ulo_db_seaorm::SeaOrm ulo_db::migrate::MigrationLock  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_seaorm ulo_db_seaorm::SeaOrm ulo_db::migrate::Migrations  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_seaorm ulo_db_seaorm::SeaOrm ulo_db::store::Store  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_seaorm ulo_db_seaorm::SeaOrmMigrations ulo_db::migrate::Migrations  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_seaorm ulo_db_seaorm::SeaOrmModule ulo_db::module::StoreModule  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_sqlx ulo_db_sqlx::SqlxModule ulo_db::module::StoreModule  # `ulo-db`'s generic type behind this crate's own; re-exporting `ulo-db`'s types from each adapter is open
-allow ulo_db_sqlx ulo_db_sqlx::check_scheme ulo_config::problems::Problems  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
-allow ulo_db_sqlx ulo_db_sqlx::validate_url ulo_config::problems::Problems  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
-allow ulo_graphql ulo_graphql::GqlError serde_json::value::Value  # `serde_json` values in a GraphQL request or response; re-exporting `serde_json` is open
-allow ulo_graphql ulo_graphql::GqlRequest serde_json::map::Map  # `serde_json` values in a GraphQL request or response; re-exporting `serde_json` is open
-allow ulo_graphql ulo_graphql::GqlRequest serde_json::value::Value  # `serde_json` values in a GraphQL request or response; re-exporting `serde_json` is open
-allow ulo_graphql ulo_graphql::GqlResponse serde_json::value::Value  # `serde_json` values in a GraphQL request or response; re-exporting `serde_json` is open
+allow ulo_db ulo_db::StoreModule ulo_config::config::Config  # the `Config` `from_config` reads, which the application builds through `ulo-config`'s builder and sources and so depends on; a re-export of the one type would spare no dependency
+allow ulo_db_diesel ulo_db_diesel::DieselModule ulo_db::module::StoreModule  # the type behind the alias `DieselModule`, which is the name a user writes, and whose methods a user calls through it
+allow ulo_db_mongodb ulo_db_mongodb::Mongo ulo_db::store::Store  # a `ulo-db` trait in this store's impls, which `ulo-db` calls; an application names the store and its module alias and calls none of the trait's methods
+allow ulo_db_mongodb ulo_db_mongodb::MongoModule ulo_db::module::StoreModule  # the type behind the alias `MongoModule`, which is the name a user writes, and whose methods a user calls through it
+allow ulo_db_redis ulo_db_redis::Redis ulo_db::store::Store  # a `ulo-db` trait in this store's impls, which `ulo-db` calls; an application names the store and its module alias and calls none of the trait's methods
+allow ulo_db_redis ulo_db_redis::RedisModule ulo_db::module::StoreModule  # the type behind the alias `RedisModule`, which is the name a user writes, and whose methods a user calls through it
+allow ulo_db_seaorm ulo_db_seaorm::SeaOrm ulo_db::migrate::MigrationLock  # a `ulo-db` trait in this store's impls, which `ulo-db` calls; an application names the store and its module alias and calls none of the trait's methods
+allow ulo_db_seaorm ulo_db_seaorm::SeaOrm ulo_db::migrate::Migrations  # a `ulo-db` trait in this store's impls, which `ulo-db` calls; an application names the store and its module alias and calls none of the trait's methods
+allow ulo_db_seaorm ulo_db_seaorm::SeaOrm ulo_db::store::Store  # a `ulo-db` trait in this store's impls, which `ulo-db` calls; an application names the store and its module alias and calls none of the trait's methods
+allow ulo_db_seaorm ulo_db_seaorm::SeaOrmMigrations ulo_db::migrate::Migrations  # the `ulo-db` trait `.migrate(..)` takes the value through; an application builds `SeaOrmMigrations::<M>::new()` and passes it on without naming the trait
+allow ulo_db_seaorm ulo_db_seaorm::SeaOrmModule ulo_db::module::StoreModule  # the type behind the alias `SeaOrmModule`, which is the name a user writes, and whose methods a user calls through it
+allow ulo_db_sqlx ulo_db_sqlx::SqlxModule ulo_db::module::StoreModule  # the type behind the alias `SqlxModule`, which is the name a user writes, and whose methods a user calls through it
+allow ulo_db_sqlx ulo_db_sqlx::check_scheme ulo_config::problems::Problems  # what a store's `Store::validate` returns, which a store crate calling this implements and names as `ulo_db::Problems`
+allow ulo_db_sqlx ulo_db_sqlx::validate_url ulo_config::problems::Problems  # what a store's `Store::validate` returns, which a store crate calling this implements and names as `ulo_db::Problems`
 allow ulo_graphql_async_graphql ulo_graphql_async_graphql::AsyncGraphql ulo_graphql::Engine  # the engine trait this adapter implements; an application names it through `ulo-graphql`
 allow ulo_graphql_async_graphql ulo_graphql_async_graphql::dep async_graphql::context::Context  # async-graphql's own types, which an application on this adapter depends on
 allow ulo_graphql_async_graphql ulo_graphql_async_graphql::dep async_graphql::error::Result  # async-graphql's own types, which an application on this adapter depends on
 allow ulo_graphql_juniper ulo_graphql_juniper::Juniper ulo_graphql::Engine  # the engine trait this adapter implements; an application names it through `ulo-graphql`
-allow ulo_graphql_ws ulo_graphql_ws::ConnectionInit serde_json::map::Map  # `serde_json` values in a GraphQL request or response; re-exporting `serde_json` is open
-allow ulo_graphql_ws ulo_graphql_ws::ConnectionInit serde_json::value::Value  # `serde_json` values in a GraphQL request or response; re-exporting `serde_json` is open
 allow ulo_graphql_ws ulo_graphql_ws::GraphqlWs ulo_ws::gateway::Gateway  # the gateway traits `GraphqlWs` is mounted through; no user names them
 allow ulo_graphql_ws ulo_graphql_ws::GraphqlWs ulo_ws::gateway::GatewayConfig  # the gateway traits `GraphqlWs` is mounted through; no user names them
 allow ulo_grpc ulo_grpc::Grpc ulo_http::__private::Carried  # the seal `Grpc` implements for the shared stage; no user names it
 allow ulo_grpc ulo_grpc::Grpc ulo_http::transport::HttpCarried  # the seal `Grpc` implements for the shared stage; no user names it
-allow ulo_grpc ulo_grpc::GrpcHealth tonic_health::ServingStatus  # tonic-health's serving status, which `GrpcHealth` sets; re-exporting it is open
 allow ulo_grpc ulo_grpc::PreDispatch ulo_http::pre_dispatch::PreDispatch  # the type behind the alias `ulo_grpc::PreDispatch`, which is the name a user writes
 allow ulo_grpc ulo_grpc::Streaming futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_http ulo_http::Backend rustls::server::server_conn::ServerConfig  # the backend SPI; a backend crate depends on `ulo-net`, which re-exports rustls
 allow ulo_http ulo_http::Backend ulo_net::listener::BoundListener  # the backend SPI; a backend crate depends on `ulo-net`, which re-exports rustls
 allow ulo_http ulo_http::BodyStream futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
-allow ulo_http ulo_http::Event serde_json::error::Error  # a JSON encoder's error, propagated with `?`; re-exporting `serde_json` for it is open
 allow ulo_http ulo_http::HttpBody http_body::Body  # the `http-body` trait `HttpBody` implements, read by a backend converting bodies
 allow ulo_http ulo_http::Service tower_service::Service  # a tower `Service` impl; a host serving through tower depends on tower
 allow ulo_http ulo_http::Upgraded futures_io::if_std::AsyncRead  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_http ulo_http::Upgraded futures_io::if_std::AsyncWrite  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_http ulo_http::embed::Service tower_service::Service  # a tower `Service` impl; a host serving through tower depends on tower
-allow ulo_otel ulo_otel::Otel opentelemetry_sdk::trace::tracer::SdkTracer  # `Otel::layer()`'s tracing-opentelemetry types, named by a subscriber setup; re-exporting them is open
-allow ulo_otel ulo_otel::Otel tracing_opentelemetry::layer::OpenTelemetryLayer  # `Otel::layer()`'s tracing-opentelemetry types, named by a subscriber setup; re-exporting them is open
-allow ulo_otel ulo_otel::OtelOptions ulo_config::config::Config  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
-allow ulo_otel ulo_otel::OtelOptions ulo_config::error::ConfigError  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
-allow ulo_otel ulo_otel::OtelOptions ulo_config::problems::Problems  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
-allow ulo_otel ulo_otel::OtelOptions ulo_config::source::Env  # `ulo-config`'s types in the configuration API; re-exporting them from this crate is open
+allow ulo_otel ulo_otel::OtelOptions ulo_config::config::Config  # the `Config` `from_config` reads, which the application builds through `ulo-config`'s builder and sources and so depends on; `from_env` is the path that needs no `ulo-config`, its types under `ulo_otel::config`
+allow ulo_otel ulo_otel::OtelOptions ulo_config::error::ConfigError  # the error of `from_config`, whose caller built the `Config` it passes through `ulo-config` and so depends on it
 allow ulo_otel_otlp ulo_otel_otlp::OtlpExporter ulo_otel::exporter::Exporter  # `ulo-otel`'s trait this exporter implements; the application depends on `ulo-otel`
 allow ulo_rpc ulo_rpc::Inbound futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_rpc ulo_rpc::Outbound futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
@@ -84,12 +71,10 @@ allow ulo_rpc ulo_rpc::link::Outbound futures_core::stream::BoxStream  # a futur
 allow ulo_rpc ulo_rpc::link::TaskPanics futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_rpc ulo_rpc::link::TaskPanics futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_ws ulo_ws::BroadcastAdapter futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
-allow ulo_ws ulo_ws::Frame serde_json::error::Error  # a JSON encoder's error, propagated with `?`; re-exporting `serde_json` for it is open
 allow ulo_ws ulo_ws::GatewayTable ulo_transport::prepare::Failures  # a server's `prepare` SPI; a server crate builds its failures through `ulo-transport`
 allow ulo_ws ulo_ws::Reply futures_core::stream::BoxStream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 
-allow ulo_transport ulo_transport::span::call tracing::span::Span  # the span a transport opens per call, `tracing`'s own type; every transport crate depends on `tracing`, and re-exporting it from this crate is open
-allow ulo_transport ulo_transport::Detail serde_json::value::Value  # a detail's JSON payload; re-exporting `serde_json` from this crate is open
-allow ulo_transport ulo_transport::Tracked futures_core::stream::Stream  # the `Stream` impl of a reply's stream-end tracker; re-exporting `futures_core::Stream` from this crate is open
+allow ulo_transport ulo_transport::span::call tracing::span::Span  # the span a transport opens per call; the transport crate calling this instruments its futures with `tracing::Instrument` and logs through `tracing`'s macros, so it depends on `tracing` whatever this crate re-exports
+allow ulo_transport ulo_transport::Tracked futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
 allow ulo_rpc_conformance ulo_rpc_conformance::Stamped ulo_rpc::link::Link  # the `Link` the wrapper implements is `ulo-rpc`'s SPI, which a link crate running the suite depends on to implement its own; a second path to it from the suite is not re-exported
 allow ulo_rpc_conformance ulo_rpc_conformance::cases::deadlines::Stamped ulo_rpc::link::Link  # the same wrapper at its defining path

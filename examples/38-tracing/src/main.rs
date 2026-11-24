@@ -1,7 +1,7 @@
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use ulo::Signal;
-use ulo_config::Env;
+use ulo_otel::config::Env;
 use ulo_otel::{Otel, OtelOptions};
 use ulo_otel_otlp::OtlpExporter;
 use ulo_runtime_tokio::{Tokio, shutdown_signal};

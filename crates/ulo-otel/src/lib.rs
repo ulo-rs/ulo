@@ -3,7 +3,7 @@
 //! ```
 //! use tracing_subscriber::filter::LevelFilter;
 //! use tracing_subscriber::layer::SubscriberExt;
-//! use ulo_config::Env;
+//! use ulo_otel::config::Env;
 //! use ulo_otel::{Exporter, Otel, OtelOptions};
 //!
 //! // `exporter` is `ulo_otel_otlp::OtlpExporter::http()` against a collector.
@@ -53,3 +53,19 @@ mod source;
 pub use exporter::Exporter;
 pub use options::OtelOptions;
 pub use otel::{Otel, OtelModule};
+/// The layer [`Otel::layer`] answers and the tracer inside it, tracing-opentelemetry's and the
+/// OpenTelemetry SDK's own types, re-exported so code naming the layer, a function returning it to
+/// a subscriber built elsewhere, needs neither dependency of its own.
+#[doc(no_inline)]
+pub use opentelemetry_sdk::trace::SdkTracer;
+#[doc(no_inline)]
+pub use tracing_opentelemetry::OpenTelemetryLayer;
+
+/// The `ulo-config` types [`OtelOptions::from_env`] takes and fails with, re-exported so an
+/// application reading the options from the process environment, `Env::process()`, needs no
+/// `ulo-config` dependency of its own. [`OtelOptions::from_config`] takes a `Config` the
+/// application built through `ulo-config`, which names that crate already.
+pub mod config {
+    #[doc(no_inline)]
+    pub use ulo_config::{Env, Problems};
+}

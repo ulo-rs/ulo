@@ -684,6 +684,9 @@ jobs:
       # project whose tests print no `test <name> ... ok` line fails, as `unsafe_allowed.py miri`
       # fails an entry that ran none: both count with `scripts/ran_a_test.py`. A failing project's
       # whole log is printed. Before the build, the script's checks run against planted output.
+      # Each project resolves its own lockfile, so third-party crates are the newest the
+      # requirements admit: the `grpc-client` leg, the grpc project with its client generated, is
+      # where a new tonic-build release meets `ulo-build`'s client code first.
       - run: python3 scripts/template_matrix.py --self-test
       - run: python3 scripts/template_matrix.py "${{ matrix.project }}"
 

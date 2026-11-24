@@ -19,6 +19,14 @@ use ulo::{BoxFuture, ExecutionRef};
 
 pub use futures_core::stream::BoxStream;
 
+/// The JSON [`GqlRequest`]'s variables and extensions, [`GqlResponse`]'s data and a [`GqlError`]'s
+/// extensions are written in, `serde_json`'s own types, re-exported so an engine adapter or a
+/// handler building a request or a response needs no `serde_json` dependency of its own.
+pub mod json {
+    #[doc(no_inline)]
+    pub use serde_json::{Map, Value};
+}
+
 /// A GraphQL engine, written without macros. Each call runs inside `exec`, the execution the
 /// transport opened, from which the adapter resolves the schema's context type per call.
 pub trait Engine: Send + Sync + 'static {

@@ -2948,7 +2948,6 @@ dependencies = [
  "tracing-subscriber",
  "ulo",
  "ulo-build",
- "ulo-config",
  "ulo-grpc",
  "ulo-http",
  "ulo-http-hyper",
@@ -8841,8 +8840,10 @@ dependencies = [
 name = "ulo-build"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "prettyplease",
  "prost-build",
  "protoc-bin-vendored",
+ "syn 2.0.118",
  "tonic-prost-build",
 ]
 
@@ -9179,10 +9180,7 @@ dependencies = [
  "http 1.5.0",
  "http-body 1.1.0",
  "http-body-util",
- "prost",
  "tokio",
- "tonic",
- "tonic-prost",
  "tower",
  "ulo",
  "ulo-build",

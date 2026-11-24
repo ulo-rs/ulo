@@ -80,6 +80,13 @@ pub mod details {
     pub use ulo_transport::Link;
 }
 
+/// The JSON a [`Detail::Json`] carries, `serde_json`'s own type, re-exported so code building one
+/// needs no `serde_json` dependency of its own.
+pub mod json {
+    #[doc(no_inline)]
+    pub use serde_json::Value;
+}
+
 #[doc(hidden)]
 pub mod __private;
 
@@ -91,6 +98,11 @@ pub use compression::Encoding;
 pub use extract::{Message, Request, Streaming};
 pub use handler::GrpcHandler;
 pub use health::GrpcHealth;
+/// The status [`GrpcHealth::set`] and [`GrpcHealth::set_named`] write and [`GrpcHealth::status`]
+/// reads, tonic-health's own type, re-exported so an application setting one needs no
+/// `tonic-health` dependency of its own.
+#[doc(no_inline)]
+pub use tonic_health::ServingStatus;
 pub use metadata::{MetadataEntry, MetadataError};
 pub use method::{Method, Shape};
 pub use pre_dispatch::PreDispatch;

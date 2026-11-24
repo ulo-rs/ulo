@@ -22,4 +22,11 @@
 
 mod gateway;
 
+/// The JSON object [`ConnectionInit::payload`] answers, `serde_json`'s own types, re-exported so a
+/// guard reading the payload names them with no `serde_json` dependency of its own.
+pub mod json {
+    #[doc(no_inline)]
+    pub use serde_json::{Map, Value};
+}
+
 pub use gateway::{ConnectionInit, GraphqlWs, InitTimeout, InitTimeoutError};

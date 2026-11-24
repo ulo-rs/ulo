@@ -3,9 +3,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tonic_health::ServingStatus;
 use ulo::{Bound, Runtime};
-use ulo_grpc::GrpcHealth;
+use ulo_grpc::{GrpcHealth, ServingStatus};
 use ulo_health::Readiness;
 
 /// `Bound::Default`'s interval (integrations DESIGN §3.4, decision 13).

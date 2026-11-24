@@ -8,22 +8,23 @@
 //! a tonic client does not expose, is read off the reply body by [`Tap`]. The one step tonic's
 //! client cannot write, an uncompressed message inside a call whose other messages are
 //! compressed (`client_compressed_streaming`), is written as frames by hand over the same channel
-//! and its reply decoded by tonic's codec.
+//! and its reply read by tonic's `Streaming`, each message decoded as prost decodes it.
 
 use std::future::Future;
 use std::io::Write as _;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures_util::{StreamExt, stream};
-use prost::Message as _;
-use tonic::codec::{BufferSettings, CompressionEncoding};
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
-use tonic::{Code, Status};
-use tonic_prost::ProstDecoder;
 use tower::Service;
+use ulo_grpc::prost::Message as _;
+use ulo_grpc::tonic::codec::{CompressionEncoding, DecodeBuf, Decoder};
+use ulo_grpc::tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+use ulo_grpc::tonic::{Code, Status};
+use ulo_grpc::{prost, tonic};
 use ulo_grpc_interop::pb::test_service_client::TestServiceClient;
 use ulo_grpc_interop::pb::{
     BoolValue, Payload, ResponseParameters, SimpleRequest, StreamingInputCallRequest, StreamingInputCallResponse,
@@ -249,13 +250,25 @@ async fn by_hand<T: prost::Message + Default + Send + 'static>(mut channel: Chan
         return Err(failed("the hand-written call", status));
     }
     let (parts, body) = response.into_parts();
-    let mut messages = tonic::codec::Streaming::<T>::new_response(ProstDecoder::new(BufferSettings::default()), body, parts.status, None, None);
+    let mut messages = tonic::codec::Streaming::<T>::new_response(Decode(PhantomData), body, parts.status, None, None);
     let reply = messages.message().await.map_err(|status| failed("the hand-written call", status))?;
     let trailing = messages.trailers().await.map_err(|status| failed("the hand-written call", status))?;
     let status = trailing.as_ref().and_then(|trailers| trailers.get("grpc-status")).and_then(|value| value.to_str().ok());
     match (reply, status) {
         (Some(reply), Some("0")) => Ok(reply),
         (reply, status) => Err(format!("the hand-written call ended with grpc-status {status:?} and {} message", if reply.is_some() { "a" } else { "no" })),
+    }
+}
+
+/// Each reply message decoded as `T`.
+struct Decode<T>(PhantomData<fn() -> T>);
+
+impl<T: prost::Message + Default> Decoder for Decode<T> {
+    type Item = T;
+    type Error = Status;
+
+    fn decode(&mut self, buf: &mut DecodeBuf<'_>) -> Result<Option<T>, Status> {
+        T::decode(buf).map(Some).map_err(|error| Status::internal(format!("the reply message does not decode: {error}")))
     }
 }
 
