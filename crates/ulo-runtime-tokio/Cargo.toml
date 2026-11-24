@@ -11,8 +11,8 @@ categories = ["asynchronous"]
 
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.3" }
-# `rt-multi-thread` for the runtime `run` builds.
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "signal", "macros", "net"] }
+# `rt-multi-thread` for the runtime `run` builds; `sync` for the oneshot handing `serve` its signal.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "signal", "macros", "net", "sync"] }
 tracing.workspace = true
 
 [dev-dependencies]

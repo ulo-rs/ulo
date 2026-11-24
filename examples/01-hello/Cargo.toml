@@ -10,6 +10,7 @@ ulo = { path = "../../crates/ulo" }
 ulo-http = { path = "../../crates/ulo-http" }
 ulo-http-hyper = { path = "../../crates/ulo-http-hyper" }
 ulo-runtime-tokio = { path = "../../crates/ulo-runtime-tokio" }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [dev-dependencies]
 ex-support = { path = "../support" }

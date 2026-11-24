@@ -7,5 +7,6 @@ async fn the_binary_serves_on_the_port_it_is_given_and_exits_clean_on_sigterm() 
     assert_eq!(get(addr, "/").await.body, "Hello, ulo!");
     let exit = bin.terminate();
     assert!(exit.status.success(), "{exit:?}");
+    assert!(exit.stdout.iter().any(|line| line.contains("listening") && line.contains(&addr.to_string())), "no `listening` line naming {addr}: {exit:?}");
     assert_eq!(exit.stderr, "");
 }
