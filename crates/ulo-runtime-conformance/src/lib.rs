@@ -21,8 +21,9 @@ pub trait Harness {
     /// How many threads poll the tasks of the runtime [`runtime`](Self::runtime) answers, the
     /// thread running `block_on` among them where it polls tasks too. The blocking scenario hands
     /// over more pieces of blocking work than this, so a runtime running blocking work on those
-    /// threads has none left for the task that releases them. Called inside the future `block_on`
-    /// runs.
+    /// threads has none left for the task that releases them. The suite checks the count against
+    /// the threads that poll the tasks it spawns, and fails when more of them poll than this
+    /// answers. Called inside the future `block_on` runs.
     fn workers() -> usize;
 
     /// A runtime of its own, running, with what shuts it down, for the scenarios on a runtime that
@@ -139,6 +140,7 @@ macro_rules! runtime_suite {
             join_all_returns_once_every_task_has_ended => set::join_all,
             a_dropped_set_aborts_its_tasks => set::dropped,
             blocking_work_runs_beside_the_runtime_s_tasks => blocking::beside_tasks [workers],
+            tasks_are_polled_on_no_more_threads_than_the_harness_s_workers => blocking::polled_within_workers [workers],
             blocking_work_runs_off_the_caller_s_thread_and_answers_its_value => blocking::answered,
             blocking_work_that_panics_is_panicked_and_goes_no_further => blocking::panicked,
             the_app_binds_the_runtime_as_one_object => app::one_object,
