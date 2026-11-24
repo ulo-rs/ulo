@@ -69,16 +69,60 @@ pub fn code_for_http(status: StatusCode) -> Code {
 ///
 /// let error = CallError::new(ErrorKind::Conflict, "the user exists").with_grpc_code(Code::AlreadyExists);
 /// assert_eq!(error.kind(), ErrorKind::Conflict);
+/// assert_eq!(error.grpc_code(), Some(Code::AlreadyExists));
 /// assert_eq!(to_status(&error).code(), Code::AlreadyExists);
 /// ```
-pub trait WithGrpcCode {
+///
+/// Sealed: [`CallError`] is the one implementor, the store the renderer reads, so the trait can
+/// gain a method without breaking a type outside this crate.
+///
+/// ```compile_fail,E0277
+/// use tonic::Code;
+/// use ulo_grpc::WithGrpcCode;
+///
+/// struct Mine;
+///
+/// impl WithGrpcCode for Mine {
+///     fn with_grpc_code(self, _code: Code) -> Self {
+///         self
+///     }
+///
+///     fn grpc_code(&self) -> Option<Code> {
+///         None
+///     }
+/// }
+/// ```
+pub trait WithGrpcCode: sealed::Sealed {
     fn with_grpc_code(self, code: Code) -> Self;
+
+    /// The code [`with_grpc_code`](Self::with_grpc_code) set, as it was set, so an error handler
+    /// rebuilding the error keeps it. `None` when none was set, and the kind's code
+    /// ([`code_for`]) applies. `Code::Ok` is answered here too, though the renderer ignores it and
+    /// sends the kind's.
+    fn grpc_code(&self) -> Option<Code>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for ulo_transport::CallError {}
 }
 
 impl WithGrpcCode for CallError {
     fn with_grpc_code(self, code: Code) -> Self {
         self.__with_grpc_code(i32::from(code))
     }
+
+    fn grpc_code(&self) -> Option<Code> {
+        self.__grpc_code().and_then(code_of)
+    }
+}
+
+/// The code numbered `written`, or `None` for a number no code has, which only the doc-hidden
+/// store can write: `Code::from_i32` reads such a number as `Unknown`, which was never set.
+fn code_of(written: i32) -> Option<Code> {
+    let code = Code::from_i32(written);
+    (i32::from(code) == written).then_some(code)
 }
 
 /// The code [`WithGrpcCode`] set on `err`, when it is one of the sixteen error codes. `OK`, or a
@@ -357,5 +401,21 @@ mod tests {
         }
         let named = CallError::new(ErrorKind::Conflict, "exists").with_grpc_code(Code::AlreadyExists);
         assert_eq!(to_status(&named).code(), Code::AlreadyExists);
+    }
+
+    /// Every code reads back as it was set, `OK` among them though the renderer ignores it; a
+    /// number no code has reads back unset rather than as `Unknown`.
+    #[test]
+    fn grpc_code_answers_the_code_as_set() {
+        assert_eq!(CallError::new(ErrorKind::Conflict, "exists").grpc_code(), None);
+        for number in 0..=16 {
+            let code = Code::from_i32(number);
+            let call = CallError::new(ErrorKind::Conflict, "exists").with_grpc_code(code);
+            assert_eq!(call.grpc_code(), Some(code), "{number}");
+        }
+        for written in [-1, 17] {
+            let call = CallError::new(ErrorKind::Conflict, "exists").__with_grpc_code(written);
+            assert_eq!(call.grpc_code(), None, "{written}");
+        }
     }
 }
