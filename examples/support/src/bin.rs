@@ -2,9 +2,9 @@
 //! carries: `main` is the one part of an example the library's tests do not reach.
 //!
 //! A server example's `main` reads `PORT` (default 3000) and prints one `listening on http://ADDR`
-//! line per bound address, or calls `run`, which prints nothing; its smoke test starts it with
-//! [`Bin::server`], which hands it a free port, and checks the printed address is that port
-//! ([`Bin::addr`]) or that the port accepts ([`Bin::serving`]). Every wait is bounded by [`GUARD`]
+//! line per bound address, or calls `run`, whose `listening` event its subscriber logs; its smoke
+//! test starts it with [`Bin::server`], which hands it a free port, and checks the printed address
+//! is that port ([`Bin::addr`]) or that the port accepts ([`Bin::serving`]). Every wait is bounded by [`GUARD`]
 //! of real time, so a binary that never prints, never listens or never exits fails the test instead
 //! of hanging it.
 

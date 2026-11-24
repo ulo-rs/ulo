@@ -3,7 +3,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use crate::app::AppHandle;
+use crate::app::{App, AppHandle, Connected};
 use crate::error::{PrepareEntry, PrepareError, RuntimeMissing};
 use crate::graph::scopes::input_reads;
 use crate::graph::{BindingId, Graph};
@@ -81,6 +81,70 @@ pub trait Server: Send + Sync + 'static {
         Vec::new()
     }
 }
+
+/// One [`Server`], or a tuple of two to eight, as a runtime crate's `run` takes them:
+/// `ulo_runtime_tokio::run(AppModule, server)` or `run(AppModule, (http, rpc))`.
+/// [`bind_to`](Self::bind_to) queues each on the app in the order written, as a chain of
+/// [`App::bind`] calls queues them. A type implementing `Server` is a `Servers` with nothing more
+/// written; more than eight servers are bound with that chain.
+///
+/// The trait is sealed: it is implemented for every `Server` and for tuples of two to eight, and
+/// for nothing else. `run` calls `bind_to`; an application never writes it.
+///
+/// ```compile_fail,E0277
+/// struct Mine;
+///
+/// impl ulo::Servers for Mine {
+///     fn bind_to(self, app: ulo::App<ulo::Connected>) -> ulo::App<ulo::Connected> {
+///         app
+///     }
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a server or a tuple of two to eight servers",
+    label = "one `ulo::Server`, or a tuple of two to eight, is expected here",
+    note = "each element of a tuple implements `ulo::Server`; more than eight are bound with the chain, one `bind` each"
+)]
+pub trait Servers: sealed::Sealed {
+    fn bind_to(self, app: App<Connected>) -> App<Connected>;
+}
+
+mod sealed {
+    use super::Server;
+
+    /// What [`Servers`](super::Servers) is implemented for, and the only types it can be.
+    pub trait Sealed {}
+
+    impl<S: Server> Sealed for S {}
+}
+
+impl<S: Server> Servers for S {
+    fn bind_to(self, app: App<Connected>) -> App<Connected> {
+        app.bind(self)
+    }
+}
+
+macro_rules! servers_tuple {
+    ($($server:ident),+) => {
+        impl<$($server: Server),+> sealed::Sealed for ($($server,)+) {}
+
+        impl<$($server: Server),+> Servers for ($($server,)+) {
+            #[allow(non_snake_case, reason = "each binding is named for its type parameter")]
+            fn bind_to(self, app: App<Connected>) -> App<Connected> {
+                let ($($server,)+) = self;
+                app$(.bind($server))+
+            }
+        }
+    };
+}
+
+servers_tuple!(A, B);
+servers_tuple!(A, B, C);
+servers_tuple!(A, B, C, D);
+servers_tuple!(A, B, C, D, E);
+servers_tuple!(A, B, C, D, E, F);
+servers_tuple!(A, B, C, D, E, F, G);
+servers_tuple!(A, B, C, D, E, F, G, H);
 
 /// What a server receives when it prepares and binds: its transport's handlers and the app.
 pub struct Mounted<'a, T: Transport> {

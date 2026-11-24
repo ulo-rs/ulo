@@ -44,17 +44,19 @@
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
+use std::future::{Future, poll_fn};
+use std::io::{self, Write};
+use std::pin::{Pin, pin};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
 pub use async_executor::Executor;
 use async_executor::FallibleTask;
 use event_listener::Event;
-use ulo::{App, BoxFuture, Connected, Module, Refused, RuntimeTask, Server, Shutdown, ShutdownError, Signal, StartupError, TaskHandle};
+use tracing::subscriber::NoSubscriber;
+use ulo::{App, BoundAddr, BoxFuture, Module, Refused, RuntimeTask, Servers, Shutdown, ShutdownError, Signal, StartupError, TaskHandle};
 
 /// The app's runtime on one `async-executor` [`Executor`]: tasks are spawned on it from whichever
 /// thread asks, and run on the threads that run it (`executor.run(..)`, smol's own pattern), so a
@@ -303,7 +305,7 @@ impl RuntimeTask for Task {
 /// ```ignore
 /// # // reason: the chain `run` performs, written out; `bind_to` queues each server `servers` holds
 /// smol.block_on(async {
-///     // Polled once here, which installs the handlers.
+///     // `run` installs its handlers at this point; this future installs them at its first poll.
 ///     let signal = shutdown_signal();
 ///     let app = App::builder(root).runtime(smol.clone()).wire()?.connect().await?;
 ///     let app = servers.bind_to(app).listen().await?;
@@ -311,50 +313,140 @@ impl RuntimeTask for Task {
 /// })
 /// ```
 ///
-/// `servers` is one server or a tuple of them, bound in the order written. Each address the app
-/// listens on is logged at `info` through `tracing`, as `ulo.transport` and `address`, once
-/// `listen` has bound them all. [`shutdown_signal`] ends it: SIGINT or SIGTERM on Unix, Ctrl-C on
-/// Windows. Its handlers are installed before `wire`, so a signal that arrives while `connect` runs
-/// hooks and readiness checks is held: the app finishes starting and `serve` shuts it down, where
-/// the signal's default action would end the process with no hook run. The app then runs its
-/// shutdown sequence, its hooks, the drain and each server's `close`, and `run` answers that
-/// shutdown's [`Shutdown`], or [`RunError::Shutdown`] listing its failures. A startup that fails
-/// answers [`RunError::Startup`] with nothing served, whatever had initialized torn down as
-/// `connect` tears it down. The workers are joined before `run` returns.
+/// `servers` is one [`Server`](ulo::Server) or a tuple of two to eight, bound in the order
+/// written ([`Servers`]). Each address the app listens on is logged at `info` through `tracing`,
+/// as `ulo.transport` and `address`, once `listen` has bound them all; with no `tracing`
+/// subscriber set, so that the event reaches nothing, `run` writes `listening on <address>
+/// (<transport>)` to stderr in its place, one line per address. [`shutdown_signal`] ends it:
+/// SIGINT or SIGTERM on Unix, Ctrl-C on Windows. Its handlers are installed before `wire`, so a
+/// signal that arrives while `connect` runs hooks and readiness checks is held: the app finishes
+/// starting and `serve` shuts it down, where the signal's default action would end the process
+/// with no hook run. The app then runs its shutdown sequence, its hooks, the drain and each
+/// server's `close`, and `run` answers that shutdown's [`Shutdown`], or [`RunError::Shutdown`]
+/// listing its failures. A startup that fails answers [`RunError::Startup`] with nothing served,
+/// whatever had initialized torn down as `connect` tears it down. The workers are joined before
+/// `run` returns.
+///
+/// A second signal, from the first on until `run` returns, ends the process at once: `run` writes
+/// `shutdown cut short by a second signal, <signal>` to stderr and exits with the status a shell
+/// reports for a process that signal ended, 130 for SIGINT and 143 for SIGTERM, and on Windows
+/// `STATUS_CONTROL_C_EXIT`, the status its default Ctrl-C handler ends a process with. Nothing
+/// after it runs: no hook, no `close`, no destructor. The signals are read on a thread of their
+/// own, not on the executor's, so a hook or a drain holding every executor thread does not hold
+/// the exit. A supervisor reads the status as a failure, where a shutdown that finished answers
+/// `Ok` and a `main` returning it exits 0. The handlers stay installed once `run` has returned,
+/// with nothing reading them: a SIGINT or SIGTERM after that does nothing, so a `main` with work
+/// left after `run` is stopped by SIGKILL alone.
 ///
 /// An application that sets a builder knob (`drain_timeout`, `shutdown_timeout`, `unserved`, a
 /// test clock), reads the app between two phases, ends on a future of its own or runs on an
 /// executor it sizes writes the chain itself, inside a [`Smol::block_on`] of its own.
-pub fn run<M>(root: impl Module, servers: impl Servers<M>) -> Result<Shutdown, RunError> {
+pub fn run(root: impl Module, servers: impl Servers) -> Result<Shutdown, RunError> {
     let workers = std::thread::available_parallelism().map_or(0, |threads| threads.get() - 1);
     let smol = Smol::new(Arc::new(Executor::new())).with_workers(workers);
+    let signals = Watch::start();
     smol.block_on(async {
-        let signal = installed(shutdown_signal());
         let app = App::builder(root).runtime(smol.clone()).wire()?.connect().await?;
         let app = servers.bind_to(app).listen().await?;
+        let unheard = tracing::dispatcher::get_default(|dispatch| dispatch.is::<NoSubscriber>());
         for bound in app.addresses() {
             tracing::info!(ulo.transport = bound.transport, address = %bound.addr, "listening");
+            if unheard {
+                listening(&bound);
+            }
         }
-        Ok(app.serve(signal).await?)
+        Ok(app.serve(signals.first()).await?)
     })
 }
 
-/// `signal` polled once, which installs its handlers, and answered as a future `serve` can await.
-/// `run` calls it before `connect`, whose hooks and readiness checks can take seconds: a signal
+/// The OS's shutdown signals, their handlers installed at [`start`](Self::start) and read on a
+/// thread of their own: the first answered by [`first`](Self::first), for `serve`, and the second
+/// by [`cut_short`]. One set of handlers counts both, so no delivery reaches one and not the other.
+/// Dropping it stops and joins the thread.
+///
+/// `run` starts it before `connect`, whose hooks and readiness checks can take seconds: a signal
 /// arriving then is held for `serve`, which shuts the started app down, rather than ending the
 /// process by the signal's default action with no hook run.
-fn installed(signal: impl Future<Output = Signal> + Send + 'static) -> impl Future<Output = Signal> + Send + 'static {
-    let mut signal = Box::pin(signal);
-    let early = match signal.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
-        Poll::Ready(signal) => Some(signal),
-        Poll::Pending => None,
-    };
-    async move {
-        match early {
-            Some(signal) => signal,
-            None => signal.await,
+struct Watch {
+    first: Arc<First>,
+    stop: Arc<Stop>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// The first signal, set once by the watching thread.
+struct First {
+    signal: Mutex<Option<Signal>>,
+    event: Event,
+}
+
+impl Watch {
+    fn start() -> Watch {
+        let mut signals = os::Signals::install();
+        let first = Arc::new(First { signal: Mutex::new(None), event: Event::new() });
+        let stop = Arc::new(Stop { stopped: AtomicBool::new(false), event: Event::new() });
+        let thread = {
+            let (first, stop) = (Arc::clone(&first), Arc::clone(&stop));
+            std::thread::spawn(move || {
+                let mut watch = pin!(async {
+                    let signal = signals.next().await;
+                    *first.signal.lock().unwrap_or_else(PoisonError::into_inner) = Some(signal);
+                    first.event.notify(usize::MAX);
+                    cut_short(&signals.next().await);
+                });
+                let mut stopped = pin!(stop.wait());
+                async_io::block_on(poll_fn(|cx| match stopped.as_mut().poll(cx) {
+                    Poll::Ready(()) => Poll::Ready(()),
+                    Poll::Pending => watch.as_mut().poll(cx),
+                }));
+            })
+        };
+        Watch { first, stop, thread: Some(thread) }
+    }
+
+    async fn first(&self) -> Signal {
+        loop {
+            if let Some(signal) = self.first.signal.lock().unwrap_or_else(PoisonError::into_inner).clone() {
+                return signal;
+            }
+            // Registered before the slot is read again, so a signal set in between still wakes it.
+            let listener = self.first.event.listen();
+            if let Some(signal) = self.first.signal.lock().unwrap_or_else(PoisonError::into_inner).clone() {
+                return signal;
+            }
+            listener.await;
         }
     }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        self.stop.stopped.store(true, Ordering::Release);
+        self.stop.event.notify(usize::MAX);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Ends the process on a second signal, with one line saying so and the status a shell reports for
+/// a process the signal ended.
+fn cut_short(signal: &Signal) -> ! {
+    let status = match signal.name() {
+        "SIGINT" => 130,
+        "SIGTERM" => 143,
+        // `STATUS_CONTROL_C_EXIT`, 0xC000013A, which Windows' default handler ends a process with
+        // on Ctrl-C.
+        _ => -1_073_741_510,
+    };
+    // One write, so a log line written from another thread cannot land inside it.
+    let _ = io::stderr().write_all(format!("shutdown cut short by a second signal, {signal}\n").as_bytes());
+    std::process::exit(status)
+}
+
+/// The line `run` writes for an address when no subscriber hears its `listening` event.
+fn listening(bound: &BoundAddr) {
+    let tls = if bound.tls { " over TLS" } else { "" };
+    let _ = writeln!(io::stderr(), "listening on {} ({}{tls})", bound.addr, bound.transport);
 }
 
 /// Resolves on the first shutdown signal the OS delivers: SIGINT or SIGTERM on Unix, Ctrl-C on
@@ -366,9 +458,13 @@ fn installed(signal: impl Future<Output = Signal> + Send + 'static) -> impl Futu
 /// notifications `async-io`'s reactor delivers, so it resolves on any executor and the function
 /// may be called anywhere. A handler stays installed for the rest of the process with no action
 /// once the future has resolved or dropped, so a second SIGINT during the shutdown sequence does
-/// not end it.
+/// not end it; [`run`] ends the process on one.
 pub fn shutdown_signal() -> impl Future<Output = Signal> + Send + 'static {
-    os::shutdown_signal()
+    first_signal()
+}
+
+async fn first_signal() -> Signal {
+    os::Signals::install().next().await
 }
 
 #[cfg(any(unix, windows))]
@@ -376,25 +472,38 @@ mod os {
     use std::future::poll_fn;
     use std::pin::Pin;
 
-    use async_signal::{Signal as Os, Signals};
+    use async_signal::Signal as Os;
     use futures_core::Stream;
     use ulo::Signal;
 
     /// Ctrl-C reaches a Windows process as `SIGINT`, the one signal `async-signal` installs there.
     const INTERRUPT: &str = if cfg!(windows) { "CTRL_C" } else { "SIGINT" };
 
-    pub(super) async fn shutdown_signal() -> Signal {
-        let Ok(mut signals) = Signals::new(std::iter::empty::<Os>()) else {
-            return std::future::pending().await;
-        };
-        // One at a time, so a signal the platform refuses, `SIGTERM` on Windows, leaves the other.
-        let _ = signals.add_signals([Os::Term]);
-        let _ = signals.add_signals([Os::Int]);
-        match poll_fn(|cx| Pin::new(&mut signals).poll_next(cx)).await {
-            Some(Ok(Os::Term)) => Signal::new("SIGTERM"),
-            Some(Ok(_)) => Signal::new(INTERRUPT),
-            // The notifier failed and no signal can arrive through it any more.
-            Some(Err(_)) | None => std::future::pending().await,
+    /// SIGTERM and SIGINT, read by [`next`](Self::next); `None` when no notifier could be made.
+    pub(super) struct Signals(Option<async_signal::Signals>);
+
+    impl Signals {
+        /// A signal delivered from here on is answered by `next`.
+        pub(super) fn install() -> Signals {
+            let Ok(mut signals) = async_signal::Signals::new(std::iter::empty::<Os>()) else {
+                return Signals(None);
+            };
+            // One at a time, so a signal the platform refuses, `SIGTERM` on Windows, leaves the other.
+            let _ = signals.add_signals([Os::Term]);
+            let _ = signals.add_signals([Os::Int]);
+            Signals(Some(signals))
+        }
+
+        pub(super) async fn next(&mut self) -> Signal {
+            let Some(signals) = &mut self.0 else {
+                return std::future::pending().await;
+            };
+            match poll_fn(|cx| Pin::new(&mut *signals).poll_next(cx)).await {
+                Some(Ok(Os::Term)) => Signal::new("SIGTERM"),
+                Some(Ok(_)) => Signal::new(INTERRUPT),
+                // The notifier failed and no signal can arrive through it any more.
+                Some(Err(_)) | None => std::future::pending().await,
+            }
         }
     }
 }
@@ -403,8 +512,16 @@ mod os {
 mod os {
     use ulo::Signal;
 
-    pub(super) async fn shutdown_signal() -> Signal {
-        std::future::pending().await
+    pub(super) struct Signals;
+
+    impl Signals {
+        pub(super) fn install() -> Signals {
+            Signals
+        }
+
+        pub(super) async fn next(&mut self) -> Signal {
+            std::future::pending().await
+        }
     }
 }
 
@@ -455,50 +572,3 @@ impl Error for RunError {
         }
     }
 }
-
-/// What [`run`] binds: one [`Server`], or a tuple of two to eight, queued on the app in the order
-/// written, as a chain of `bind` calls queues them.
-///
-/// `M` is [`One`] or [`Several`], picked by inference and never written. One blanket over every
-/// `Server` and one over tuples of them cannot both implement a single `Servers`, since `ulo` may
-/// implement `Server` for a tuple; the marker keeps the two apart.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a server or a tuple of two to eight servers",
-    label = "`run` takes one `ulo::Server`, or a tuple of two to eight",
-    note = "each element of a tuple implements `ulo::Server`; more than eight are bound with the chain, one `bind` each"
-)]
-pub trait Servers<M> {
-    fn bind_to(self, app: App<Connected>) -> App<Connected>;
-}
-
-/// The [`Servers`] marker of one server.
-pub enum One {}
-
-/// The [`Servers`] marker of a tuple of servers.
-pub enum Several {}
-
-impl<S: Server> Servers<One> for S {
-    fn bind_to(self, app: App<Connected>) -> App<Connected> {
-        app.bind(self)
-    }
-}
-
-macro_rules! servers_tuple {
-    ($($server:ident),+) => {
-        impl<$($server: Server),+> Servers<Several> for ($($server,)+) {
-            #[allow(non_snake_case, reason = "each binding is named for its type parameter")]
-            fn bind_to(self, app: App<Connected>) -> App<Connected> {
-                let ($($server,)+) = self;
-                app$(.bind($server))+
-            }
-        }
-    };
-}
-
-servers_tuple!(A, B);
-servers_tuple!(A, B, C);
-servers_tuple!(A, B, C, D);
-servers_tuple!(A, B, C, D, E);
-servers_tuple!(A, B, C, D, E, F);
-servers_tuple!(A, B, C, D, E, F, G);
-servers_tuple!(A, B, C, D, E, F, G, H);

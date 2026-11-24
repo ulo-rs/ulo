@@ -79,7 +79,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`cargo run`, then `curl http://127.0.0.1:3000/`. `run` builds a tokio runtime and starts the
+`cargo run`, then `curl http://127.0.0.1:3000/`. With no `tracing` subscriber installed, `run`
+writes `listening on 127.0.0.1:3000 (http)` to stderr; example 01 installs one, which logs the same
+address with every other `info` event. `run` builds a tokio runtime and starts the
 application in five phases: `wire` checks the whole module graph and reports every problem at once,
 `connect` builds the providers and runs their hooks, `bind` and `listen` acquire the sockets, and
 `serve` runs until Ctrl-C or SIGTERM, then drains and closes. An application that sets a knob, a

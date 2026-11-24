@@ -33,7 +33,7 @@
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
-use std::io;
+use std::io::{self, Write};
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll, Waker};
@@ -41,8 +41,9 @@ use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
+use tracing::subscriber::NoSubscriber;
 use ulo::{
-    App, BoxFuture, Connected, ExecutionRef, Module, Refused, RuntimeShutDown, RuntimeTask, Server, Shutdown, ShutdownError, Signal,
+    App, BoundAddr, BoxFuture, ExecutionRef, Module, Refused, RuntimeShutDown, RuntimeTask, Servers, Shutdown, ShutdownError, Signal,
     StartupError, TaskHandle,
 };
 
@@ -358,9 +359,14 @@ impl ulo::Timer for Timer {
 ///
 /// The handlers are installed when the future is first polled, inside the tokio runtime that
 /// polls it, so the function may be called anywhere. On Unix tokio keeps a handler installed for
-/// the rest of the process, so a second SIGINT during the shutdown sequence does not end it.
+/// the rest of the process, so a second SIGINT during the shutdown sequence does not end it; [`run`]
+/// ends the process on one.
 pub fn shutdown_signal() -> impl Future<Output = Signal> + Send + 'static {
-    os::shutdown_signal()
+    first_signal()
+}
+
+async fn first_signal() -> Signal {
+    os::Signals::install().next().await
 }
 
 #[cfg(unix)]
@@ -368,59 +374,75 @@ mod os {
     use tokio::signal::unix::{SignalKind, signal};
     use ulo::Signal;
 
-    pub(super) async fn shutdown_signal() -> Signal {
-        let sigterm = signal(SignalKind::terminate()).ok();
-        let sigint = signal(SignalKind::interrupt()).ok();
-        let terminate = async move {
-            if let Some(mut stream) = sigterm
-                && stream.recv().await.is_some()
-            {
-                return;
-            }
-            std::future::pending::<()>().await
-        };
-        let interrupt = async move {
-            if let Some(mut stream) = sigint
-                && stream.recv().await.is_some()
-            {
-                return;
-            }
-            std::future::pending::<()>().await
-        };
-        tokio::select! {
-            () = terminate => Signal::new("SIGTERM"),
-            () = interrupt => Signal::new("SIGINT"),
+    /// SIGTERM and SIGINT, read by [`next`](Self::next).
+    pub(super) struct Signals {
+        terminate: Option<tokio::signal::unix::Signal>,
+        interrupt: Option<tokio::signal::unix::Signal>,
+    }
+
+    impl Signals {
+        /// Inside a tokio runtime. A signal delivered from here on is answered by `next`.
+        pub(super) fn install() -> Signals {
+            Signals { terminate: signal(SignalKind::terminate()).ok(), interrupt: signal(SignalKind::interrupt()).ok() }
         }
+
+        pub(super) async fn next(&mut self) -> Signal {
+            tokio::select! {
+                () = delivery(&mut self.terminate) => Signal::new("SIGTERM"),
+                () = delivery(&mut self.interrupt) => Signal::new("SIGINT"),
+            }
+        }
+    }
+
+    /// Pending for good when the handler was not installed or its driver has gone.
+    async fn delivery(stream: &mut Option<tokio::signal::unix::Signal>) {
+        if let Some(stream) = stream
+            && stream.recv().await.is_some()
+        {
+            return;
+        }
+        std::future::pending().await
     }
 }
 
 #[cfg(windows)]
 mod os {
-    use tokio::signal::windows::{ctrl_c, ctrl_close};
+    use tokio::signal::windows::{CtrlC, CtrlClose, ctrl_c, ctrl_close};
     use ulo::Signal;
 
-    pub(super) async fn shutdown_signal() -> Signal {
-        let on_ctrl_c = ctrl_c().ok();
-        let on_ctrl_close = ctrl_close().ok();
-        let ctrl_c = async move {
-            if let Some(mut stream) = on_ctrl_c
-                && stream.recv().await.is_some()
-            {
-                return;
+    /// Ctrl-C and Ctrl-Close, read by [`next`](Self::next).
+    pub(super) struct Signals {
+        ctrl_c: Option<CtrlC>,
+        ctrl_close: Option<CtrlClose>,
+    }
+
+    impl Signals {
+        /// Inside a tokio runtime. A signal delivered from here on is answered by `next`.
+        pub(super) fn install() -> Signals {
+            Signals { ctrl_c: ctrl_c().ok(), ctrl_close: ctrl_close().ok() }
+        }
+
+        pub(super) async fn next(&mut self) -> Signal {
+            let ctrl_c = async {
+                if let Some(stream) = &mut self.ctrl_c
+                    && stream.recv().await.is_some()
+                {
+                    return;
+                }
+                std::future::pending::<()>().await
+            };
+            let ctrl_close = async {
+                if let Some(stream) = &mut self.ctrl_close
+                    && stream.recv().await.is_some()
+                {
+                    return;
+                }
+                std::future::pending::<()>().await
+            };
+            tokio::select! {
+                () = ctrl_c => Signal::new("CTRL_C"),
+                () = ctrl_close => Signal::new("CTRL_CLOSE"),
             }
-            std::future::pending::<()>().await
-        };
-        let ctrl_close = async move {
-            if let Some(mut stream) = on_ctrl_close
-                && stream.recv().await.is_some()
-            {
-                return;
-            }
-            std::future::pending::<()>().await
-        };
-        tokio::select! {
-            () = ctrl_c => Signal::new("CTRL_C"),
-            () = ctrl_close => Signal::new("CTRL_CLOSE"),
         }
     }
 }
@@ -429,8 +451,16 @@ mod os {
 mod os {
     use ulo::Signal;
 
-    pub(super) async fn shutdown_signal() -> Signal {
-        std::future::pending().await
+    pub(super) struct Signals;
+
+    impl Signals {
+        pub(super) fn install() -> Signals {
+            Signals
+        }
+
+        pub(super) async fn next(&mut self) -> Signal {
+            std::future::pending().await
+        }
     }
 }
 
@@ -471,7 +501,7 @@ where
 /// ```ignore
 /// # // reason: the chain `run` performs, written out; `bind_to` queues each server `servers` holds
 /// runtime.block_on(async {
-///     // Polled once here, which installs the handlers.
+///     // `run` installs its handlers at this point; this future installs them at its first poll.
 ///     let signal = shutdown_signal();
 ///     let app = App::builder(root).runtime(Tokio::current()).wire()?.connect().await?;
 ///     let app = servers.bind_to(app).listen().await?;
@@ -479,18 +509,32 @@ where
 /// })
 /// ```
 ///
-/// `servers` is one server or a tuple of them, bound in the order written. Each address the app
-/// listens on is logged at `info` through `tracing`, as `ulo.transport` and `address`, once
-/// `listen` has bound them all. [`shutdown_signal`] ends it: SIGINT or SIGTERM on Unix, Ctrl-C or
-/// Ctrl-Close on Windows. Its handlers are installed before `wire`, so a signal that arrives while
-/// `connect` runs hooks and readiness checks is held: the app finishes starting and `serve` shuts
-/// it down, where the signal's default action would end the process with no hook run. The app
-/// then runs its shutdown sequence, its hooks, the drain and each server's `close`, and `run`
-/// answers that shutdown's [`Shutdown`], or [`RunError::Shutdown`] listing its failures. A
-/// startup that fails answers [`RunError::Startup`] with nothing served, whatever had initialized
-/// torn down as `connect` tears it down. The runtime is shut down before `run` returns without
-/// waiting for a blocking task still running, which a drop, and so the end of a `#[tokio::main]`,
-/// waits for with no bound.
+/// `servers` is one [`Server`](ulo::Server) or a tuple of two to eight, bound in the order
+/// written ([`Servers`]). Each address the app listens on is logged at `info` through `tracing`,
+/// as `ulo.transport` and `address`, once `listen` has bound them all; with no `tracing`
+/// subscriber set, so that the event reaches nothing, `run` writes `listening on <address>
+/// (<transport>)` to stderr in its place, one line per address. [`shutdown_signal`] ends it:
+/// SIGINT or SIGTERM on Unix, Ctrl-C or Ctrl-Close on Windows. Its handlers are installed before
+/// `wire`, so a signal that arrives while `connect` runs hooks and readiness checks is held: the
+/// app finishes starting and `serve` shuts it down, where the signal's default action would end
+/// the process with no hook run. The app then runs its shutdown sequence, its hooks, the drain and
+/// each server's `close`, and `run` answers that shutdown's [`Shutdown`], or
+/// [`RunError::Shutdown`] listing its failures. A startup that fails answers
+/// [`RunError::Startup`] with nothing served, whatever had initialized torn down as `connect`
+/// tears it down. The runtime is shut down before `run` returns without waiting for a blocking
+/// task still running, which a drop, and so the end of a `#[tokio::main]`, waits for with no
+/// bound.
+///
+/// A second signal, from the first on until `run` returns, ends the process at once: `run` writes
+/// `shutdown cut short by a second signal, <signal>` to stderr and exits with the status a shell
+/// reports for a process that signal ended, 130 for SIGINT and 143 for SIGTERM, and on Windows
+/// `STATUS_CONTROL_C_EXIT`, the status its default Ctrl-C handler ends a process with. Nothing
+/// after it runs: no hook, no `close`, no destructor. The signals are read on a thread of their
+/// own, on a current-thread runtime of its own, so a hook or a drain holding the thread `run`
+/// blocks, or a handler blocking every worker, does not hold the exit. A supervisor reads the status as a failure, where a shutdown that finished answers
+/// `Ok` and a `main` returning it exits 0. The handlers stay installed once `run` has returned,
+/// with nothing reading them: a SIGINT or SIGTERM after that does nothing, so a `main` with work
+/// left after `run` is stopped by SIGKILL alone.
 ///
 /// An application that sets a builder knob (`drain_timeout`, `shutdown_timeout`, `unserved`, a
 /// test clock), reads the app between two phases, ends on a future of its own or runs on a
@@ -500,40 +544,121 @@ where
 ///
 /// Inside a tokio runtime, as `Runtime::block_on` does: `run` starts the process's runtime, and
 /// an `async fn main` already has one.
-pub fn run<M>(root: impl Module, servers: impl Servers<M>) -> Result<Shutdown, RunError> {
+pub fn run(root: impl Module, servers: impl Servers) -> Result<Shutdown, RunError> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(RunError::Runtime)?;
     let tokio = Tokio::from_handle(runtime.handle().clone());
-    let answer = runtime.block_on(async move {
-        let signal = installed(shutdown_signal());
+    let mut reader = Reader::start().map_err(RunError::Runtime)?;
+    let answer = runtime.block_on(async {
         let app = App::builder(root).runtime(tokio).wire()?.connect().await?;
         let app = servers.bind_to(app).listen().await?;
+        let unheard = tracing::dispatcher::get_default(|dispatch| dispatch.is::<NoSubscriber>());
         for bound in app.addresses() {
             tracing::info!(ulo.transport = bound.transport, address = %bound.addr, "listening");
+            if unheard {
+                listening(&bound);
+            }
         }
-        Ok(app.serve(signal).await?)
+        Ok(app.serve(reader.first()).await?)
     });
+    drop(reader);
     // The app has drained, closed and abandoned what outlived the drain; a drop would also wait for
     // each blocking task still running, which no deadline bounds.
     runtime.shutdown_background();
     answer
 }
 
-/// `signal` polled once, which installs its handlers, and answered as a future `serve` can await.
-/// `run` calls it before `connect`, whose hooks and readiness checks can take seconds: a signal
+/// The OS's shutdown signals, their handlers installed at [`start`](Self::start) and read on a
+/// thread of their own, on a current-thread runtime of its own: the first answered by
+/// [`first`](Self::first), for `serve`, and the second by [`cut_short`]. One set of handlers counts
+/// both, so no delivery reaches one and not the other. The app's workers do not read them, so a
+/// handler or a task blocking every worker does not hold the exit. Dropping it stops and joins the
+/// thread.
+///
+/// `run` starts it before `connect`, whose hooks and readiness checks can take seconds: a signal
 /// arriving then is held for `serve`, which shuts the started app down, rather than ending the
 /// process by the signal's default action with no hook run.
-fn installed(signal: impl Future<Output = Signal> + Send + 'static) -> impl Future<Output = Signal> + Send + 'static {
-    let mut signal = Box::pin(signal);
-    let early = match signal.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
-        Poll::Ready(signal) => Some(signal),
-        Poll::Pending => None,
-    };
-    async move {
-        match early {
-            Some(signal) => signal,
-            None => signal.await,
+struct Reader {
+    first: Option<tokio::sync::oneshot::Receiver<Signal>>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Reader {
+    /// Answers once the handlers are installed, or the OS's refusal of the thread or its runtime.
+    fn start() -> io::Result<Reader> {
+        let (send, first) = tokio::sync::oneshot::channel();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let (installed, started) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new().name("ulo-signals".into()).spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread().enable_io().build() {
+                Ok(runtime) => runtime,
+                Err(error) => return drop(installed.send(Err(error))),
+            };
+            runtime.block_on(async move {
+                let mut signals = os::Signals::install();
+                let _ = installed.send(Ok(()));
+                tokio::select! {
+                    _ = stopped => {}
+                    () = async {
+                        let _ = send.send(signals.next().await);
+                        cut_short(&signals.next().await);
+                    } => {}
+                }
+            });
+        })?;
+        match started.recv() {
+            Ok(Ok(())) => Ok(Reader { first: Some(first), stop: Some(stop), thread: Some(thread) }),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(io::Error::other("the signal thread ended before installing its handlers")),
         }
     }
+
+    /// The first signal; pending for good once the thread has stopped.
+    fn first(&mut self) -> impl Future<Output = Signal> + Send + 'static {
+        let first = self.first.take();
+        async move {
+            match first {
+                Some(first) => match first.await {
+                    Ok(signal) => signal,
+                    // The thread stopped, which only the drop does once `serve` has answered.
+                    Err(_) => std::future::pending().await,
+                },
+                None => std::future::pending().await,
+            }
+        }
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Ends the process on a second signal, with one line saying so and the status a shell reports for
+/// a process the signal ended.
+fn cut_short(signal: &Signal) -> ! {
+    let status = match signal.name() {
+        "SIGINT" => 130,
+        "SIGTERM" => 143,
+        // `STATUS_CONTROL_C_EXIT`, 0xC000013A, which Windows' default handler ends a process with
+        // on Ctrl-C and on Ctrl-Close.
+        _ => -1_073_741_510,
+    };
+    // One write, so a log line written from another thread cannot land inside it.
+    let _ = io::stderr().write_all(format!("shutdown cut short by a second signal, {signal}\n").as_bytes());
+    std::process::exit(status)
+}
+
+/// The line `run` writes for an address when no subscriber hears its `listening` event.
+fn listening(bound: &BoundAddr) {
+    let tls = if bound.tls { " over TLS" } else { "" };
+    let _ = writeln!(io::stderr(), "listening on {} ({}{tls})", bound.addr, bound.transport);
 }
 
 /// How [`run`] ended, when it did not end in a clean shutdown. `Display` is the wrapped error's
@@ -576,61 +701,15 @@ impl fmt::Debug for RunError {
     }
 }
 
-/// Transparent for the two errors it holds unchanged: their text is its text, so their source is
-/// its source, and a chain reporter prints neither twice.
+/// Its text holds the wrapped error's text, so the wrapped error's source is its source, and a
+/// chain reporter prints no text twice. `Runtime` writes a sentence before the `io::Error`'s text,
+/// which names no runtime.
 impl Error for RunError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            RunError::Runtime(error) => Some(error),
+            RunError::Runtime(error) => error.source(),
             RunError::Startup(error) => error.source(),
             RunError::Shutdown(error) => error.source(),
         }
     }
 }
-
-/// What [`run`] binds: one [`Server`], or a tuple of two to eight, queued on the app in the order
-/// written, as a chain of `bind` calls queues them.
-///
-/// `M` is [`One`] or [`Several`], picked by inference and never written. One blanket over every
-/// `Server` and one over tuples of them cannot both implement a single `Servers`, since `ulo` may
-/// implement `Server` for a tuple; the marker keeps the two apart.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a server or a tuple of two to eight servers",
-    label = "`run` takes one `ulo::Server`, or a tuple of two to eight",
-    note = "each element of a tuple implements `ulo::Server`; more than eight are bound with the chain, one `bind` each"
-)]
-pub trait Servers<M> {
-    fn bind_to(self, app: App<Connected>) -> App<Connected>;
-}
-
-/// The [`Servers`] marker of one server.
-pub enum One {}
-
-/// The [`Servers`] marker of a tuple of servers.
-pub enum Several {}
-
-impl<S: Server> Servers<One> for S {
-    fn bind_to(self, app: App<Connected>) -> App<Connected> {
-        app.bind(self)
-    }
-}
-
-macro_rules! servers_tuple {
-    ($($server:ident),+) => {
-        impl<$($server: Server),+> Servers<Several> for ($($server,)+) {
-            #[allow(non_snake_case, reason = "each binding is named for its type parameter")]
-            fn bind_to(self, app: App<Connected>) -> App<Connected> {
-                let ($($server,)+) = self;
-                app$(.bind($server))+
-            }
-        }
-    };
-}
-
-servers_tuple!(A, B);
-servers_tuple!(A, B, C);
-servers_tuple!(A, B, C, D);
-servers_tuple!(A, B, C, D, E);
-servers_tuple!(A, B, C, D, E, F);
-servers_tuple!(A, B, C, D, E, F, G);
-servers_tuple!(A, B, C, D, E, F, G, H);
