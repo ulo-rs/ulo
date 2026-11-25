@@ -1,0 +1,36 @@
+name: weekly
+
+# The `grpc-client` project resolves its own lockfile, so a tonic-build release reaches
+# `ulo-build`'s client code on its own timetable, not on a push. A schedule runs on the default
+# branch alone. Scheduled runs are not pull request checks: a failure blocks nothing, shows in the
+# Actions tab, and is notified by GitHub only to the user who last changed the `cron` line, as
+# that user's notification settings allow.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A manual run started while the scheduled one is still going waits for it.
+concurrency:
+  group: weekly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  grpc-client:
+    name: template matrix grpc-client
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target/template-matrix"
+          key: grpc-client
+      - run: python3 scripts/template_matrix.py --self-test
+      - run: python3 scripts/template_matrix.py grpc-client
