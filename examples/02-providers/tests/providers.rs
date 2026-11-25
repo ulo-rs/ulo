@@ -1,23 +1,25 @@
 use std::sync::Arc;
 
-use ex_02_providers::{Counter, Greeter, HelloController, Settings, builder};
-use ex_support::{get, start};
+use ex_02_providers::{AppModule, Counter, Greeter, HelloController, Settings};
+use ex_support::get;
+use ulo::testing::TestApp;
 use ulo::{ConnectError, Dep, StartupError, module};
+use ulo_http_hyper::testing::TestServer;
 use ulo_runtime_tokio::Tokio;
 
 #[tokio::test]
 async fn two_requests_read_one_singletons_counter() {
-    let server = start(builder()).await;
+    let served = TestServer::start(TestApp::of(AppModule).runtime(Tokio::current())).await.unwrap();
 
-    assert_eq!(get(server.addr, "/").await.body, "Hello #1");
-    assert_eq!(get(server.addr, "/").await.body, "Hello #2");
+    assert_eq!(get(served.addr(), "/").await.body, "Hello #1");
+    assert_eq!(get(served.addr(), "/").await.body, "Hello #2");
 
-    let counter: Dep<Counter> = server.handle.get().await.unwrap();
+    let counter: Dep<Counter> = served.handle().get().await.unwrap();
     assert_eq!(counter.next(), 3);
-    let again: Dep<Counter> = server.handle.get().await.unwrap();
+    let again: Dep<Counter> = served.handle().get().await.unwrap();
     assert!(Arc::ptr_eq(counter.arc(), again.arc()));
 
-    server.stop().await.unwrap();
+    served.close().await.unwrap();
 }
 
 #[module(

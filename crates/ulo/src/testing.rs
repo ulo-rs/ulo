@@ -16,6 +16,9 @@
 //! method on the pending override, after every override kind and before any scope:
 //! `.override_value::<PgPool>(fake).qualified::<Replica>().in_module::<DbModule>()`.
 //!
+//! A test that serves the app over a socket starts it with `ulo_http_hyper::testing::TestServer`,
+//! which binds port 0 and serves in a task of the runtime the `TestApp` was given.
+//!
 //! # Time in a test
 //!
 //! [`ScriptedTimer`] is the clock for a test that pins a deadline: no sleep it hands out ends
