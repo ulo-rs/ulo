@@ -135,6 +135,12 @@ pub enum WiringError {
     /// module whose identity the graph holds.
     #[non_exhaustive]
     DifferingSettings { module: ModuleName, first: ModuleSite, second: ModuleSite, settings: Vec<DifferingSetting> },
+    /// Step 1: a second registration of a module declared `#[module(identity = type)]` that has
+    /// fields. Its fields are not its identity, so two registrations of its type would be one
+    /// module with the second's fields unused; it is registered once. `first` is the
+    /// registration holding the identity, `second` the later one. Also answered by `load`.
+    #[non_exhaustive]
+    RegisteredTwice { module: ModuleName, first: ModuleSite, second: ModuleSite },
     /// Step 1: a setting name written twice in one module's
     /// [`Module::settings`](crate::Module::settings). `first` is the
     /// [`ModuleSettings::with`](crate::ModuleSettings::with) call that recorded it and `second`
@@ -397,6 +403,7 @@ impl WiringError {
             WiringError::ImportCycle { .. }
             | WiringError::NestedKeyed { .. }
             | WiringError::DifferingSettings { .. }
+            | WiringError::RegisteredTwice { .. }
             | WiringError::DuplicateSetting { .. }
             | WiringError::OverrideModuleAmbiguous { .. }
             | WiringError::TimerOverride { .. }
@@ -426,6 +433,7 @@ impl WiringError {
             WiringError::ControllerProvided { controller, .. } => vec![*controller],
             WiringError::ImportCycle { .. }
             | WiringError::DifferingSettings { .. }
+            | WiringError::RegisteredTwice { .. }
             | WiringError::DuplicateSetting { .. }
             | WiringError::ReexportNotVisible { .. }
             | WiringError::ReexportAmbiguous { .. }
@@ -489,7 +497,7 @@ impl WiringError {
             WiringError::ControllerProvided { module, controller_at, .. } => {
                 std::iter::once(module).chain(controller_at.iter().map(|(controller_module, _)| controller_module)).collect()
             }
-            WiringError::DifferingSettings { module, first, second, .. } => {
+            WiringError::DifferingSettings { module, first, second, .. } | WiringError::RegisteredTwice { module, first, second } => {
                 std::iter::once(module).chain(first.importer()).chain(second.importer()).collect()
             }
             WiringError::ReexportAmbiguous { module, sources, .. } => std::iter::once(module).chain(sources).collect(),
@@ -979,6 +987,16 @@ impl WiringError {
                         .to_owned(),
                 ],
             ),
+            WiringError::RegisteredTwice { module, first, second } => tree(
+                f,
+                format!("{} is registered twice, and its fields are not its identity", show_module(module)),
+                vec![
+                    first.line(false, &show_module),
+                    second.line(true, &show_module),
+                    "help: a module whose fields are not its identity is registered once; give it an identity (`Eq + Hash + Clone` fields, or `settings()`) to share it"
+                        .to_owned(),
+                ],
+            ),
             WiringError::DifferingSettings { module, first, second, settings } => {
                 let names: Vec<String> = settings.iter().map(|setting| format!("`{}`", setting.name)).collect();
                 let values = |side: usize| {
@@ -1084,7 +1102,8 @@ impl fmt::Display for InputOrigin {
     }
 }
 
-/// Where a module was registered, as [`WiringError::DifferingSettings`] names each side.
+/// Where a module was registered, as [`WiringError::DifferingSettings`] and
+/// [`WiringError::RegisteredTwice`] name each side.
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum ModuleSite {
