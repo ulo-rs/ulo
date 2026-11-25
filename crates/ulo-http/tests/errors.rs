@@ -16,7 +16,7 @@ use http::StatusCode;
 use o1_support::{Call, start};
 use ulo::{AnyErrorHandler, BoxError, Dep, ErrorHandler, ModuleDef, controller, handlers};
 use ulo_http::{Http, HttpBody, HttpCx, Path, Response, WithHttpStatus, status_for};
-use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind};
+use ulo_transport::{CallError, Classify, Detail, Details, ErrorKind, FromCall, Injected};
 
 /// A domain error whose variants are classified by the derive.
 #[derive(Debug, Classify)]
@@ -99,6 +99,9 @@ fn kind_named(name: &str) -> ErrorKind {
 /// Built per call by a constructor that fails with a status of its own.
 struct Tenant;
 
+/// Built per call by a constructor that fails with a challenge of its own.
+struct Vault;
+
 #[controller]
 struct Faults;
 
@@ -126,6 +129,19 @@ impl Faults {
     #[ulo_http::get("/tenant")]
     fn tenant(&self, _tenant: Dep<Tenant>) -> &'static str {
         "built"
+    }
+
+    /// Fails as its `Vault` parameter's constructor fails, through the framework's extraction.
+    #[ulo_http::get("/vault")]
+    fn vault(&self, _vault: Dep<Vault>) -> &'static str {
+        "built"
+    }
+
+    /// The same failure reaching the handler as an `ExtractError`, converted by its own `?`.
+    #[ulo_http::get("/vault-question-mark")]
+    async fn vault_question_mark(&self, cx: HttpCx) -> Result<&'static str, CallError> {
+        <Injected<Dep<Vault>> as FromCall<Http>>::from_call(&cx).await?;
+        Ok("built")
     }
 
     #[ulo_http::get("/challenge")]
@@ -272,6 +288,9 @@ fn plain(m: &mut ModuleDef<'_>) {
     m.try_execution(|| async {
         Err::<Tenant, CallError>(CallError::new(ErrorKind::Conflict, "the tenant moved").with_http_status(StatusCode::PRECONDITION_FAILED))
     });
+    m.try_execution(|| async {
+        Err::<Vault, CallError>(CallError::unauthorized("Basic realm=\"vault\""))
+    });
 }
 
 fn chained(m: &mut ModuleDef<'_>) {
@@ -353,6 +372,17 @@ async fn a_dependency_s_constructor_error_is_sent_with_its_own_status() {
     let reply = app.send(Call::get("/tenant")).await;
     assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
     assert_eq!(reply.json()["detail"], "the tenant moved");
+    app.stop().await;
+}
+
+#[tokio::test]
+async fn a_handlers_own_question_mark_on_a_dependency_error_answers_as_the_frameworks_extraction_does() {
+    let app = start(plain).await;
+    let framework = app.send(Call::get("/vault")).await;
+    let own = app.send(Call::get("/vault-question-mark")).await;
+    assert_eq!(framework.header("www-authenticate"), Some("Basic realm=\"vault\""));
+    assert_eq!(framework.status, StatusCode::UNAUTHORIZED);
+    assert_eq!((own.status, own.header("www-authenticate")), (framework.status, framework.header("www-authenticate")));
     app.stop().await;
 }
 

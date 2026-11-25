@@ -100,7 +100,10 @@ fn bind_in_modules(item: &mut syn::Item, binding: &syn::Item) {
 ///
 /// The module is named as tonic names its client module, `user_service` beside
 /// `user_service_client`, by tonic-build's own snake-casing, so the two agree character for
-/// character.
+/// character. A name that is a Rust keyword is declared as a raw identifier, `r#match`, and a
+/// service named `Super` or `Crate`, which no raw identifier can spell, gets a trailing `_`, the
+/// suffix prost-build already gives `Self` (`Self_`, so `self_` beside tonic's `self__client`);
+/// every other name is written as tonic-build snake-cases it.
 fn markers(service: &Service, build_client: bool) -> String {
     let module = snake_case(&service.name);
     let qualified = if service.package.is_empty() {
@@ -114,7 +117,7 @@ fn markers(service: &Service, build_client: bool) -> String {
     // service `Users`, holds `users::users`, which clippy's `module_inception` would report in
     // the user's crate on a module the user cannot rename.
     let _ = writeln!(out, "#[allow(clippy::module_inception)]");
-    let _ = writeln!(out, "pub mod {module} {{");
+    let _ = writeln!(out, "pub mod {} {{", module_ident(&module));
     for method in &service.methods {
         let _ = write!(out, "{}", marker(method, &qualified));
     }
@@ -128,6 +131,24 @@ fn markers(service: &Service, build_client: bool) -> String {
         let _ = writeln!(out, "}}");
     }
     out
+}
+
+/// Keywords of edition 2024 that a raw identifier can stand in for, strict and reserved.
+const KEYWORDS: &[&str] = &[
+    "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "do", "dyn", "else", "enum", "extern", "false",
+    "final", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub",
+    "ref", "return", "static", "struct", "trait", "true", "try", "type", "typeof", "unsafe", "unsized", "use", "virtual", "where",
+    "while", "yield",
+];
+
+fn module_ident(snake: &str) -> String {
+    if matches!(snake, "self" | "super" | "crate") {
+        format!("{snake}_")
+    } else if KEYWORDS.contains(&snake) {
+        format!("r#{snake}")
+    } else {
+        snake.to_owned()
+    }
 }
 
 fn marker(method: &Method, service: &str) -> String {
