@@ -227,7 +227,7 @@ async fn a_server_s_grace_runs_from_the_end_of_a_close_that_took_time() {
         while let Some(delivery) = inbound.next().await {
             let (Frame::Req { id, .. }, Some(reply)) = (delivery.frame, delivery.reply) else { continue };
             // Queued at the call; the send's wait is dropped unpolled.
-            drop(reply.send(Frame::Res { id, data: Data::new(vec![b'a'; FRAME_BYTES]) }));
+            drop(reply.send(Frame::res(id, Data::new(vec![b'a'; FRAME_BYTES]))));
             counting.fetch_add(1, Ordering::SeqCst);
         }
     });
@@ -235,7 +235,7 @@ async fn a_server_s_grace_runs_from_the_end_of_a_close_that_took_time() {
     let mut peer = TcpStream::connect(addr).expect("the server accepts a connection");
     let calls = frames(&peer);
     for id in 1..=calls {
-        let request = Frame::Req { id, pattern: "server_cut_grace".to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+        let request = Frame::req(id, "server_cut_grace", CallHeaders::new(), Data::new(b"1".as_slice()));
         write_frame(&mut peer, &request).expect("the request is written");
     }
     gate("the server answers every call", || answered.load(Ordering::SeqCst) == calls).await;

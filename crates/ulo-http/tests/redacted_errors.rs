@@ -36,7 +36,7 @@ fn leaking() -> CallError {
     let metadata = BTreeMap::from([("key".to_owned(), SECRET.to_owned())]);
     CallError::new(ErrorKind::NotFound, format!("key {SECRET} refused")).with_details(
         Details::new()
-            .with(Detail::ErrorInfo { reason: "refused".to_owned(), domain: format!("{SECRET}.example"), metadata })
+            .with(Detail::error_info("refused", format!("{SECRET}.example"), metadata))
             .with(Detail::Json(serde_json::json!({ "tried": [SECRET], SECRET: 1 }))),
     )
 }

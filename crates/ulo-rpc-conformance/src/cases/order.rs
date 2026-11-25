@@ -139,7 +139,7 @@ impl<B: Broker> Linked<B> {
                     held.insert(id);
                     opened += 1;
                 }
-                Frame::Cancel { id } => {
+                Frame::Cancel { id, .. } => {
                     assert!(held.remove(&id), "the server received a cancel for a call it does not hold: {id}");
                     cancels += 1;
                 }
@@ -170,9 +170,9 @@ pub async fn cancel_follows_its_request<B: Broker>() {
     let codec = if linked.server.capabilities().binary { Codec::Cbor } else { Codec::Json };
     let null = codec.encode(&()).expect("a unit encodes");
     for id in 1..=ROUNDS {
-        let request = Frame::Req { id, pattern: ORDERED.to_owned(), headers: CallHeaders::new(), data: null.clone() };
+        let request = Frame::req(id, ORDERED, CallHeaders::new(), null.clone());
         let request = (linked.outbound.send)(pattern.clone(), request, Some(ReplyTo { id }));
-        let cancel = (linked.outbound.send)(pattern.clone(), Frame::Cancel { id }, None);
+        let cancel = (linked.outbound.send)(pattern.clone(), Frame::cancel(id), None);
         let (requested, cancelled) = futures_util::join!(request, cancel);
         requested.unwrap_or_else(|error| panic!("request {id} was not sent: {error}"));
         cancelled.unwrap_or_else(|error| panic!("the cancel of request {id} was not sent: {error}"));
@@ -192,9 +192,9 @@ pub async fn cancel_before_opened<B: Broker>() {
     let mut linked = Linked::<B>::streamed().await;
     let pattern = Pattern::from(ORDERED);
     for id in 1..=OPENS {
-        let open = Frame::Open { id, pattern: ORDERED.to_owned(), headers: CallHeaders::new() };
+        let open = Frame::open(id, ORDERED, CallHeaders::new());
         let open = (linked.outbound.send)(pattern.clone(), open, Some(ReplyTo { id }));
-        let cancel = (linked.outbound.send)(pattern.clone(), Frame::Cancel { id }, None);
+        let cancel = (linked.outbound.send)(pattern.clone(), Frame::cancel(id), None);
         let (opened, cancelled) = futures_util::join!(open, cancel);
         opened.unwrap_or_else(|error| panic!("the open of call {id} was not sent: {error}"));
         cancelled.unwrap_or_else(|error| panic!("the cancel of call {id} was not sent: {error}"));
@@ -232,7 +232,7 @@ impl<B: Broker> Linked<B> {
     async fn cancel_with_opened_withheld(&mut self, id: u64, headers: CallHeaders) {
         probe(self).withhold();
         let pattern = Pattern::from(ORDERED);
-        let open = Frame::Open { id, pattern: ORDERED.to_owned(), headers };
+        let open = Frame::open(id, ORDERED, headers);
         (self.outbound.send)(pattern.clone(), open, Some(ReplyTo { id }))
             .await
             .unwrap_or_else(|error| panic!("the open of call {id} was not sent: {error}"));
@@ -241,7 +241,7 @@ impl<B: Broker> Linked<B> {
         assert!(matches!(frame, Frame::Open { .. }), "the server received {frame:?} where the open was due");
         let probe = probe(self);
         probe_until::<B>(probe, "the server's `opened` reaching the client", |probe| probe.withheld() == 1).await;
-        (self.outbound.send)(pattern, Frame::Cancel { id }, None)
+        (self.outbound.send)(pattern, Frame::cancel(id), None)
             .await
             .unwrap_or_else(|error| panic!("the cancel of call {id} was not sent: {error}"));
         assert_eq!(probe.calls(), Some(1), "the client's table once the call was cancelled before its `opened`");

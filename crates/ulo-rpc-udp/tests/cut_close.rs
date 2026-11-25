@@ -31,7 +31,7 @@ impl Module for Root {
 }
 
 fn request(id: u64) -> Frame {
-    Frame::Req { id, pattern: "cut_close.hold".to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) }
+    Frame::req(id, "cut_close.hold", CallHeaders::new(), Data::new(b"1".as_slice()))
 }
 
 // One thread: neither the writer nor the receive task runs between `close`'s one poll and the
@@ -61,7 +61,7 @@ async fn the_calls_held_through_a_cut_close_are_answered_unavailable() {
     let also_held = tokio::time::timeout(PATIENCE, inbound.next()).await.expect("the third request in time").expect("a delivery");
     let answered_reply = answered.reply.expect("a request's reply path");
     let answered_id = answered.frame.id().expect("the request's id");
-    answered_reply.send(Frame::Res { id: answered_id, data: Data::new(b"2".as_slice()) }).await.expect("the answer before the close is sent");
+    answered_reply.send(Frame::res(answered_id, Data::new(b"2".as_slice()))).await.expect("the answer before the close is sent");
     let (len, _) = tokio::time::timeout(PATIENCE, caller.recv_from(&mut buffer)).await.expect("the answer in time").expect("the answer is received");
     let mut held_ids = BTreeSet::from([7, 8, 9]);
     match Codec::Json.decode_frame(&buffer[..len]).expect("the answer decodes") {
@@ -74,7 +74,7 @@ async fn the_calls_held_through_a_cut_close_are_answered_unavailable() {
         assert!(closing.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending(), "the close ended in its first poll");
     }
     let reply = held.reply.expect("a request's reply path");
-    let late = reply.send(Frame::Res { id: held.frame.id().expect("the request's id"), data: Data::new(b"3".as_slice()) });
+    let late = reply.send(Frame::res(held.frame.id().expect("the request's id"), Data::new(b"3".as_slice())));
     drop((inbound, also_held));
     drop(udp);
     assert!(late.await.is_err(), "the held call's own answer after the close's first poll was not refused");
@@ -88,7 +88,7 @@ async fn the_calls_held_through_a_cut_close_are_answered_unavailable() {
         assert_eq!(from, addr, "the answer came from the server's socket");
         let frame = Codec::Json.decode_frame(&buffer[..len]).expect("the answer decodes");
         let id = frame.id().expect("the answer's id");
-        let unavailable = Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) };
+        let unavailable = Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()));
         assert_eq!(frame, unavailable, "a held call's answer");
         answered_ids.insert(id);
     }

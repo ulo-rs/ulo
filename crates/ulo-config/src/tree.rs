@@ -8,13 +8,30 @@ pub enum Origin {
     /// A file, with the line and column of the value. A `.env` file reports the line alone, and a
     /// failure of the file as a whole carries neither: a zero line or column is "not known" and is
     /// left out of the rendering.
+    #[non_exhaustive]
     File { path: Arc<str>, line: u32, column: u32 },
     /// An environment variable, by name.
+    #[non_exhaustive]
     Variable { name: String },
     /// A value set in code through `Values`, by key.
+    #[non_exhaustive]
     Explicit { key: String },
     /// The type's `Default`.
     Default,
+}
+
+impl Origin {
+    pub fn file(path: impl Into<Arc<str>>, line: u32, column: u32) -> Self {
+        Origin::File { path: path.into(), line, column }
+    }
+
+    pub fn variable(name: impl Into<String>) -> Self {
+        Origin::Variable { name: name.into() }
+    }
+
+    pub fn explicit(key: impl Into<String>) -> Self {
+        Origin::Explicit { key: key.into() }
+    }
 }
 
 impl fmt::Display for Origin {

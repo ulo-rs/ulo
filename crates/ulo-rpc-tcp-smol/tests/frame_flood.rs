@@ -34,7 +34,7 @@ async fn run(probe: Probe) {
     let peer = TcpStream::connect(server.addr).expect("the link accepts a connection");
     probe.settles("the connection's first read reaching the gate", || server.gate.parks() >= 1).await;
 
-    let cancel = Codec::Json.encode_frame(&Frame::Cancel { id: u64::MAX }).expect("the frame encodes");
+    let cancel = Codec::Json.encode_frame(&Frame::cancel(u64::MAX)).expect("the frame encodes");
     let frame = 4 + cancel.len();
     let mut flood = Vec::with_capacity(FRAMES * frame);
     for _ in 0..FRAMES {

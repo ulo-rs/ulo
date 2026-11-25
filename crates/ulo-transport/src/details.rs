@@ -20,6 +20,7 @@ pub enum Detail {
     /// `google.rpc.BadRequest`.
     FieldViolations(Vec<FieldViolation>),
     /// `google.rpc.ErrorInfo`.
+    #[non_exhaustive]
     ErrorInfo { reason: String, domain: String, metadata: BTreeMap<String, String> },
     /// `google.rpc.RetryInfo`; HTTP `Retry-After`.
     RetryAfter(Duration),
@@ -96,6 +97,11 @@ impl Details {
 }
 
 impl Detail {
+    /// `google.rpc.ErrorInfo`: a machine-readable `reason` within `domain`, with `metadata`.
+    pub fn error_info(reason: impl Into<String>, domain: impl Into<String>, metadata: BTreeMap<String, String>) -> Self {
+        Detail::ErrorInfo { reason: reason.into(), domain: domain.into(), metadata }
+    }
+
     fn each_str(&self, f: &mut dyn FnMut(&str)) {
         match self {
             Detail::FieldViolations(violations) => violations.iter().for_each(|v| {

@@ -167,8 +167,8 @@ fn every_value_carries_the_origin_of_the_source_that_supplied_it() {
     assert_eq!(by_path("from_default"), Origin::Default);
     assert_eq!(file_at(&by_path("from_file")), (text(&file), 3, 13), "the value's own line and column in the TOML file");
     assert_eq!(file_at(&by_path("from_dotenv")), (text(&dotenv), 3, 0), "a `.env` value carries its line and no column");
-    assert_eq!(by_path("from_env"), Origin::Variable { name: "FROM_ENV".into() });
-    assert_eq!(by_path("from_values"), Origin::Explicit { key: "from_values".into() });
+    assert_eq!(by_path("from_env"), Origin::variable("FROM_ENV"));
+    assert_eq!(by_path("from_values"), Origin::explicit("from_values"));
 }
 
 /// The origin of a value is the layer that won it, not one it overrode; a valid override clears
@@ -190,7 +190,7 @@ fn the_origin_is_the_winning_layer_s_and_a_valid_override_clears_the_problem() {
     let both_bad = Config::builder().source(File::toml(&file)).source(Env::from_map([("PORT", "env")])).load();
     let problems = problems_of::<Port>(&both_bad, "");
     assert_eq!(problems.len(), 1);
-    assert_eq!(problems[0].origin(), Some(&Origin::Variable { name: "PORT".into() }), "the environment overrode the file, so the report names the variable");
+    assert_eq!(problems[0].origin(), Some(&Origin::variable("PORT")), "the environment overrode the file, so the report names the variable");
 
     let overridden = Config::builder().source(File::toml(&file)).source(Values::new().set("port", 8080)).load();
     assert_eq!(Section::<Port>::read(&overridden, "").value().expect("a valid explicit value over a bad file value").port, 8080);
@@ -259,10 +259,10 @@ fn every_problem_is_reported_together_each_with_its_path_and_origin() {
     let problems = problems_of::<Whole>(&config, "");
     let found = sorted(pairs(problems.iter()));
     let expected = sorted(vec![
-        ("http.port".to_owned(), Some(Origin::File { path: file.to_string_lossy().as_ref().into(), line: 3, column: 8 })),
-        ("database.pool".to_owned(), Some(Origin::Variable { name: "APP_DATABASE__POOL".into() })),
-        ("http.hosts".to_owned(), Some(Origin::Explicit { key: "http.hosts".into() })),
-        (String::new(), Some(Origin::File { path: absent.to_string_lossy().as_ref().into(), line: 0, column: 0 })),
+        ("http.port".to_owned(), Some(Origin::file(file.to_string_lossy(), 3, 8))),
+        ("database.pool".to_owned(), Some(Origin::variable("APP_DATABASE__POOL"))),
+        ("http.hosts".to_owned(), Some(Origin::explicit("http.hosts"))),
+        (String::new(), Some(Origin::file(absent.to_string_lossy(), 0, 0))),
     ]);
     assert_eq!(found, expected, "the report: {problems:?}");
     assert_eq!(problems.len(), expected.len(), "one problem per fault, none twice: {problems:?}");
@@ -394,7 +394,7 @@ fn defaults_of_a_type_carry_the_origin_default_at_the_path_they_are_placed() {
     assert_eq!(problems_of::<Numeric>(&at_root, "")[0].origin(), Some(&Origin::Default));
 
     let overridden = Config::builder().source(Defaults::of::<Limits>()).source(Values::new().set("rate", "slow")).load();
-    assert_eq!(problems_of::<Numeric>(&overridden, "")[0].origin(), Some(&Origin::Explicit { key: "rate".into() }));
+    assert_eq!(problems_of::<Numeric>(&overridden, "")[0].origin(), Some(&Origin::explicit("rate")));
 }
 
 struct Root(Config);
@@ -439,8 +439,8 @@ fn wire_reports_source_value_and_validation_problems_in_one_entry() {
     let config_error = failed[0].downcast_ref::<ConfigError>().expect("the structured error stays reachable");
     let found = sorted(pairs(config_error.problems().iter()));
     let expected = sorted(vec![
-        (String::new(), Some(Origin::File { path: absent.to_string_lossy().as_ref().into(), line: 0, column: 0 })),
-        ("http.hosts".to_owned(), Some(Origin::Explicit { key: "http.hosts".into() })),
+        (String::new(), Some(Origin::file(absent.to_string_lossy(), 0, 0))),
+        ("http.hosts".to_owned(), Some(Origin::explicit("http.hosts"))),
     ]);
     assert_eq!(found, expected, "the source failure and the ill-typed value are reported; the hook runs on a value that read");
     assert!(!errors.to_string().is_empty());

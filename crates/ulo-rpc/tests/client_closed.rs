@@ -129,7 +129,7 @@ async fn a_call_in_flight_at_close_is_answered() {
     .expect("the request was sent");
     client.close().await.expect("the client closes");
     let feed = lock(&link.replies).clone().expect("the connection's reply lane");
-    feed.send(Frame::Res { id, data: Data::new(b"5".to_vec()) }).expect("the reply is fed");
+    feed.send(Frame::res(id, Data::new(b"5".to_vec()))).expect("the reply is fed");
     let answer = tokio::time::timeout(PATIENCE, call).await.expect("the call ends").expect("the call's task");
     assert_eq!(answer.expect("the call in flight is answered"), 5);
     client_closed(client.request::<_, u32>("p", &1u32).await, "a request after the close");

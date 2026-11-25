@@ -63,7 +63,7 @@ struct HttpFallbacks {
 }
 
 fn explicit(key: &str) -> Origin {
-    Origin::Explicit { key: key.to_owned() }
+    Origin::explicit(key)
 }
 
 fn summary(problems: &[Problem]) -> Vec<(String, Option<Origin>, String)> {

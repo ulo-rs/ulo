@@ -262,7 +262,7 @@ fn reason(error: &ErrorBody) -> Option<&str> {
 /// and acknowledged it.
 fn refused(settled: &Settled, id: u64, what: &str) {
     match settled.frames.as_slice() {
-        [Frame::Err { id: answered, error }] if *answered == id => {
+        [Frame::Err { id: answered, error, .. }] if *answered == id => {
             assert_eq!((error.kind, reason(error)), (ErrorKind::BadRequest, Some("bad_deadline")), "{what}: the refusal: {error:?}");
         }
         other => panic!("{what}: expected one `err` frame refusing the call `bad_deadline`, got: {other:?}"),
@@ -275,21 +275,21 @@ fn refused(settled: &Settled, id: u64, what: &str) {
 async fn refuses(value: &str) {
     let running = Running::start().await;
     let what = format!("a request whose `deadline-ms` is {value:?}");
-    let settled = running.deliver(Frame::Req { id: 1, pattern: UNARY.to_owned(), headers: deadline(value), data: Data::new(b"null".as_slice()) }).await;
+    let settled = running.deliver(Frame::req(1, UNARY, deadline(value), Data::new(b"null".as_slice()))).await;
     refused(&settled, 1, &what);
 
     let what = format!("a streamed request whose `deadline-ms` is {value:?}");
-    let opened = running.deliver(Frame::Open { id: 2, pattern: STREAMED.to_owned(), headers: deadline(value) });
+    let opened = running.deliver(Frame::open(2, STREAMED, deadline(value)));
     let (settled, ()) = tokio::join!(opened, async {
         // The items and their end reach a call the server never opened, and are dropped.
-        let items = [Frame::In { id: 2, data: Data::new(b"1".as_slice()) }, Frame::InEnd { id: 2 }];
+        let items = [Frame::input(2, Data::new(b"1".as_slice())), Frame::in_end(2)];
         for frame in items {
             running.deliveries.send(Delivery { frame, reply: None, ack: Ack::none() }).expect("the server reads its link");
         }
     });
     refused(&settled, 2, &what);
 
-    let settled = running.deliver(Frame::Evt { pattern: EVENT.to_owned(), headers: deadline(value), data: Data::new(b"7".as_slice()) }).await;
+    let settled = running.deliver(Frame::evt(EVENT, deadline(value), Data::new(b"7".as_slice()))).await;
     assert_eq!(settled.ack, Some(false), "an event whose `deadline-ms` is {value:?} was not rejected: {settled:?}");
 
     assert_eq!(running.runs.count(), 0, "handlers that ran for calls whose `deadline-ms` is {value:?}");
@@ -323,7 +323,7 @@ async fn the_refusal_quotes_the_value_cut_short() {
     let running = Running::start().await;
     let long = "9".repeat(100);
     for (id, value) in [(1, "abc".to_owned()), (2, long.clone())] {
-        let settled = running.deliver(Frame::Req { id, pattern: UNARY.to_owned(), headers: deadline(&value), data: Data::new(b"null".as_slice()) }).await;
+        let settled = running.deliver(Frame::req(id, UNARY, deadline(&value), Data::new(b"null".as_slice()))).await;
         refused(&settled, id, &format!("a request whose `deadline-ms` is {value:?}"));
         let [Frame::Err { error, .. }] = settled.frames.as_slice() else { unreachable!("`refused` matched one `err`") };
         let quoted: String = value.chars().take(64).collect();
@@ -338,12 +338,12 @@ async fn the_refusal_quotes_the_value_cut_short() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_readable_deadline_still_sets_the_execution_s() {
     let running = Running::start().await;
-    let settled = running.deliver(Frame::Req { id: 1, pattern: UNARY.to_owned(), headers: deadline("5000"), data: Data::new(b"null".as_slice()) }).await;
+    let settled = running.deliver(Frame::req(1, UNARY, deadline("5000"), Data::new(b"null".as_slice()))).await;
     assert!(matches!(settled.frames.as_slice(), [Frame::Res { id: 1, .. }]), "a call with a five-second deadline was not answered: {settled:?}");
     let started = Instant::now();
-    let settled = running.deliver(Frame::Req { id: 2, pattern: STALL.to_owned(), headers: deadline("50"), data: Data::new(b"null".as_slice()) }).await;
+    let settled = running.deliver(Frame::req(2, STALL, deadline("50"), Data::new(b"null".as_slice()))).await;
     assert!(
-        matches!(settled.frames.as_slice(), [Frame::Err { id: 2, error }] if error.kind == ErrorKind::Timeout),
+        matches!(settled.frames.as_slice(), [Frame::Err { id: 2, error, .. }] if error.kind == ErrorKind::Timeout),
         "a call stalling past its 50 ms deadline was not answered `timeout`: {settled:?}"
     );
     assert!(started.elapsed() < Duration::from_secs(5), "the 50 ms deadline took {:?}", started.elapsed());
@@ -364,16 +364,16 @@ async fn a_spent_deadline_is_answered_timeout_with_no_handler_run() {
     let running = Running::start().await;
     for (n, value) in ["0", " 0 ", "000"].into_iter().enumerate() {
         let id = 2 * n as u64 + 1;
-        let settled = running.deliver(Frame::Req { id, pattern: STALL.to_owned(), headers: deadline(value), data: Data::new(b"null".as_slice()) }).await;
+        let settled = running.deliver(Frame::req(id, STALL, deadline(value), Data::new(b"null".as_slice()))).await;
         assert!(
-            matches!(settled.frames.as_slice(), [Frame::Err { id: answered, error }] if *answered == id && error.kind == ErrorKind::Timeout && reason(error).is_none()),
+            matches!(settled.frames.as_slice(), [Frame::Err { id: answered, error, .. }] if *answered == id && error.kind == ErrorKind::Timeout && reason(error).is_none()),
             "a call whose `deadline-ms` is {value:?} was not answered `timeout`: {settled:?}"
         );
         assert_eq!(settled.ack, Some(true), "a call answered `timeout` at once is acknowledged: {value:?}");
 
-        let opened = running.deliver(Frame::Open { id: id + 1, pattern: STREAMED.to_owned(), headers: deadline(value) });
+        let opened = running.deliver(Frame::open(id + 1, STREAMED, deadline(value)));
         let (settled, ()) = tokio::join!(opened, async {
-            let items = [Frame::In { id: id + 1, data: Data::new(b"1".as_slice()) }, Frame::InEnd { id: id + 1 }];
+            let items = [Frame::input(id + 1, Data::new(b"1".as_slice())), Frame::in_end(id + 1)];
             for frame in items {
                 running.deliveries.send(Delivery { frame, reply: None, ack: Ack::none() }).expect("the server reads its link");
             }
@@ -383,7 +383,7 @@ async fn a_spent_deadline_is_answered_timeout_with_no_handler_run() {
             "a streamed request whose `deadline-ms` is {value:?} was not answered `timeout`: {settled:?}"
         );
 
-        let settled = running.deliver(Frame::Evt { pattern: EVENT.to_owned(), headers: deadline(value), data: Data::new(b"7".as_slice()) }).await;
+        let settled = running.deliver(Frame::evt(EVENT, deadline(value), Data::new(b"7".as_slice()))).await;
         assert_eq!(settled.ack, Some(false), "an event whose `deadline-ms` is {value:?} was not rejected: {settled:?}");
     }
     assert_eq!(running.runs.count(), 0, "handlers that ran for calls whose budget was spent");
@@ -404,7 +404,7 @@ async fn a_spent_or_unreadable_deadline_is_answered_before_admission() {
         let sent = held.send(frame).map_err(BoxError::from);
         Box::pin(async move { sent })
     });
-    let stall = Frame::Req { id: 1, pattern: STALL.to_owned(), headers: deadline("60000"), data: Data::new(b"null".as_slice()) };
+    let stall = Frame::req(1, STALL, deadline("60000"), Data::new(b"null".as_slice()));
     running.deliveries.send(Delivery { frame: stall, reply: Some(reply.clone()), ack: Ack::none() }).expect("the server reads its link");
     tokio::time::timeout(PATIENCE, async {
         while running.runs.count() == 0 {
@@ -414,20 +414,20 @@ async fn a_spent_or_unreadable_deadline_is_answered_before_admission() {
     .await
     .expect("the held call's handler ran");
 
-    let settled = running.deliver(Frame::Req { id: 2, pattern: UNARY.to_owned(), headers: deadline("1"), data: Data::new(b"null".as_slice()) }).await;
+    let settled = running.deliver(Frame::req(2, UNARY, deadline("1"), Data::new(b"null".as_slice()))).await;
     assert!(
-        matches!(settled.frames.as_slice(), [Frame::Err { id: 2, error }] if error.kind == ErrorKind::Unavailable),
+        matches!(settled.frames.as_slice(), [Frame::Err { id: 2, error, .. }] if error.kind == ErrorKind::Unavailable),
         "the server's one slot is not held: {settled:?}"
     );
-    let settled = running.deliver(Frame::Req { id: 3, pattern: UNARY.to_owned(), headers: deadline("0"), data: Data::new(b"null".as_slice()) }).await;
+    let settled = running.deliver(Frame::req(3, UNARY, deadline("0"), Data::new(b"null".as_slice()))).await;
     assert!(
-        matches!(settled.frames.as_slice(), [Frame::Err { id: 3, error }] if error.kind == ErrorKind::Timeout),
+        matches!(settled.frames.as_slice(), [Frame::Err { id: 3, error, .. }] if error.kind == ErrorKind::Timeout),
         "a spent deadline at a full server: {settled:?}"
     );
-    let settled = running.deliver(Frame::Req { id: 4, pattern: UNARY.to_owned(), headers: deadline("x"), data: Data::new(b"null".as_slice()) }).await;
+    let settled = running.deliver(Frame::req(4, UNARY, deadline("x"), Data::new(b"null".as_slice()))).await;
     refused(&settled, 4, "an unreadable deadline at a full server");
 
-    running.deliveries.send(Delivery { frame: Frame::Cancel { id: 1 }, reply: Some(reply), ack: Ack::none() }).expect("the server reads its link");
+    running.deliveries.send(Delivery { frame: Frame::cancel(1), reply: Some(reply), ack: Ack::none() }).expect("the server reads its link");
     running.stop().await;
 }
 
@@ -436,9 +436,9 @@ async fn a_spent_or_unreadable_deadline_is_answered_before_admission() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_one_millisecond_deadline_runs_the_handler() {
     let running = Running::start().await;
-    let settled = running.deliver(Frame::Req { id: 1, pattern: STALL.to_owned(), headers: deadline("1"), data: Data::new(b"null".as_slice()) }).await;
+    let settled = running.deliver(Frame::req(1, STALL, deadline("1"), Data::new(b"null".as_slice()))).await;
     assert!(
-        matches!(settled.frames.as_slice(), [Frame::Err { id: 1, error }] if error.kind == ErrorKind::Timeout),
+        matches!(settled.frames.as_slice(), [Frame::Err { id: 1, error, .. }] if error.kind == ErrorKind::Timeout),
         "a call whose `deadline-ms` is 1 was not answered `timeout`: {settled:?}"
     );
     assert_eq!(running.runs.count(), 1, "the handler of a call with a millisecond left");

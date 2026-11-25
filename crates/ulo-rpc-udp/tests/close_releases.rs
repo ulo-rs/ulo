@@ -42,7 +42,7 @@ async fn close_returns_with_the_socket_closed() {
     let caller = StdUdpSocket::bind("127.0.0.1:0").expect("a loopback port");
     caller.connect(addr).expect("the caller aims at the server");
     caller.set_read_timeout(Some(Duration::from_secs(5))).expect("a read timeout");
-    let request = |id| Frame::Req { id, pattern: "close_releases.add".to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"1")) };
+    let request = |id| Frame::req(id, "close_releases.add", CallHeaders::new(), Data::new(Bytes::from_static(b"1")));
     caller.send(&Codec::Json.encode_frame(&request(1)).expect("the request encodes")).expect("the request is sent");
     // The delivery's reply path is a sender of the writer's queue, held across `close`: a writer
     // nothing stops would wait on it, and keep the socket.

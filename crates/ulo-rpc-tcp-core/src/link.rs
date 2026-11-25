@@ -1009,7 +1009,7 @@ impl Server {
                 Next::Over(call, len) => {
                     activity.touch();
                     let Some(cancel) = self.over(call, len, &queue, &ids, peer) else { continue };
-                    let delivery = Delivery { frame: Frame::Cancel { id: cancel }, reply: Some(path.clone()), ack: taken(&ids, cancel) };
+                    let delivery = Delivery { frame: Frame::cancel(cancel), reply: Some(path.clone()), ack: taken(&ids, cancel) };
                     if deliveries.send(delivery).await.is_err() {
                         break End::Gone;
                     }
@@ -1028,7 +1028,7 @@ impl Server {
             };
             let Some(frame) = self.inward(frame, &ids) else { continue };
             let ack = match &frame {
-                Frame::Cancel { id } => taken(&ids, *id),
+                Frame::Cancel { id, .. } => taken(&ids, *id),
                 _ => Ack::none(),
             };
             let delivery = Delivery { frame, reply: Some(path.clone()), ack };
@@ -1053,7 +1053,7 @@ impl Server {
         let orphaned = lock(&ids).drain();
         let count = orphaned.len();
         for id in orphaned {
-            let _ = deliveries.send(Delivery { frame: Frame::Cancel { id }, reply: None, ack: Ack::none() }).await;
+            let _ = deliveries.send(Delivery { frame: Frame::cancel(id), reply: None, ack: Ack::none() }).await;
         }
         // Released once their `cancel`s are queued, so the inbound stream cannot end before them.
         self.state.held.modify(|held| *held = held.saturating_sub(count));
@@ -1095,14 +1095,14 @@ impl Server {
     fn inward(&self, frame: Frame, ids: &Mutex<Ids>) -> Option<Frame> {
         let mut ids = lock(ids);
         Some(match frame {
-            Frame::Req { id, pattern, headers, data } => {
-                Frame::Req { id: ids.open(id, &self.state.next_id), pattern, headers, data }
+            Frame::Req { id, pattern, headers, data, .. } => {
+                Frame::req(ids.open(id, &self.state.next_id), pattern, headers, data)
             }
-            Frame::Open { id, pattern, headers } => Frame::Open { id: ids.open(id, &self.state.next_id), pattern, headers },
-            Frame::Evt { pattern, headers, data } => Frame::Evt { pattern, headers, data },
-            Frame::In { id, data } => Frame::In { id: ids.server(id)?, data },
-            Frame::InEnd { id } => Frame::InEnd { id: ids.server(id)? },
-            Frame::Cancel { id } => Frame::Cancel { id: ids.cancel(id)? },
+            Frame::Open { id, pattern, headers, .. } => Frame::open(ids.open(id, &self.state.next_id), pattern, headers),
+            Frame::Evt { pattern, headers, data, .. } => Frame::evt(pattern, headers, data),
+            Frame::In { id, data, .. } => Frame::input(ids.server(id)?, data),
+            Frame::InEnd { id, .. } => Frame::in_end(ids.server(id)?),
+            Frame::Cancel { id, .. } => Frame::cancel(ids.cancel(id)?),
             _ => return None,
         })
     }
@@ -1132,9 +1132,9 @@ fn over_limit_answer(id: u64, len: u64, limit: u64) -> Frame {
     let error = ErrorBody::new(
         ErrorKind::BadRequest,
         format!("a frame of {len} bytes is over the server's `max_frame` of {limit} bytes"),
-        Details::new().with(Detail::ErrorInfo { reason: "payload_too_large".to_owned(), domain: DOMAIN.to_owned(), metadata: BTreeMap::new() }),
+        Details::new().with(Detail::error_info("payload_too_large", DOMAIN, BTreeMap::new())),
     );
-    Frame::Err { id, error }
+    Frame::err(id, error)
 }
 
 /// The encoded size of the largest answer to a frame over `limit`: the largest `id` and the
@@ -1258,7 +1258,7 @@ fn refuse(delivery: Delivery, runtime: &Arc<dyn Runtime>) {
     let Some(reply) = delivery.reply else { return };
     let error = ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new());
     drop(runtime.spawn(Box::pin(async move {
-        if let Err(error) = reply.send(Frame::Err { id, error }).await {
+        if let Err(error) = reply.send(Frame::err(id, error)).await {
             tracing::debug!(%error, "the TCP link could not refuse a request that arrived after the drain");
         }
     })));
@@ -1432,10 +1432,10 @@ fn queue_reply(queue: &ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: &M
 /// A reply frame under the caller's id.
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
         other => other,
     }
 }

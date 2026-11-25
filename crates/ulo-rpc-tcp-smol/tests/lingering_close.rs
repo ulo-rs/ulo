@@ -109,7 +109,7 @@ struct Writing {
 
 impl Writing {
     fn start(stream: &TcpStream) -> Writing {
-        Writing::flood(stream, &Frame::Cancel { id: u64::MAX })
+        Writing::flood(stream, &Frame::cancel(u64::MAX))
     }
 
     /// Writes `frame` over and over.
@@ -234,7 +234,7 @@ async fn listening(clock: &ScriptedTimer) -> (App<ulo::Connected>, Tcp, ulo_rpc:
 }
 
 fn request(id: u64) -> Frame {
-    Frame::Req { id, pattern: ECHO.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) }
+    Frame::req(id, ECHO, CallHeaders::new(), Data::new(b"1".as_slice()))
 }
 
 /// Sends [`answers`] requests and queues an answer to each at the server, none of them read yet,
@@ -249,7 +249,7 @@ async fn queue_answers(peer: &mut TcpStream, inbound: &mut ulo_rpc::link::Inboun
         let delivery = within("a request", inbound.next()).await.expect("a delivery");
         let id = delivery.frame.id().expect("a request's id");
         // Queued at the call; the send's wait is dropped unpolled.
-        drop(delivery.reply.expect("a request's reply path").send(Frame::Res { id, data: answer.clone() }));
+        drop(delivery.reply.expect("a request's reply path").send(Frame::res(id, answer.clone())));
     }
     count
 }
@@ -616,7 +616,7 @@ async fn run_a_client_connection_opened_after_a_close_outlives_that_close_s_grac
     let delivery = within("a request", inbound.next()).await.expect("a delivery");
     let id = delivery.frame.id().expect("a request's id");
     let reply = delivery.reply.expect("a request's reply path");
-    reply.send(Frame::Res { id, data: Data::new(b"2".as_slice()) }).await.expect("the answer is queued");
+    reply.send(Frame::res(id, Data::new(b"2".as_slice()))).await.expect("the answer is queued");
     let answered = within("a reply", second.replies.next()).await;
     assert!(matches!(answered, Some(Frame::Res { id: 1, .. })), "the second connection read {answered:?}");
     drop(first);
@@ -644,7 +644,7 @@ async fn run_a_flood_the_server_keeps_pace_with_does_not_hold_the_close() {
             counted.fetch_add(1, Ordering::Relaxed);
         }
     }));
-    let event = Frame::Evt { pattern: ECHO.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    let event = Frame::evt(ECHO, CallHeaders::new(), Data::new(b"1".as_slice()));
     let writing = Writing::flood(&peer, &event);
     gate("the server delivers the peer's events", || delivered.load(Ordering::Relaxed) > 10_000).await;
 

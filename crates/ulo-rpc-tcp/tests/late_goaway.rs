@@ -138,7 +138,7 @@ async fn a_connection_registered_after_the_drain_began_receives_goaway() {
 
     let mut holding = handshake(TcpStream::connect(addr).await.expect("the holding connection opens")).await;
     let started = running().notified();
-    let hold = Frame::Req { id: 1, pattern: HOLD.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let hold = Frame::req(1, HOLD, CallHeaders::new(), Data::new(b"null".as_slice()));
     write_frame(&mut holding, &hold).await;
     tokio::time::timeout(PATIENCE, started).await.expect("the held call reached its handler");
 

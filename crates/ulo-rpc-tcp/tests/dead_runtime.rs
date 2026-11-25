@@ -130,7 +130,7 @@ fn writing(stream: &TcpStream) -> (Arc<AtomicU64>, mpsc::Receiver<io::Error>) {
     let mut stream = stream.try_clone().expect("the peer's socket clones");
     let mut batch = Vec::new();
     for _ in 0..512 {
-        let bytes = Codec::Json.encode_frame(&Frame::Cancel { id: u64::MAX }).expect("the cancel encodes");
+        let bytes = Codec::Json.encode_frame(&Frame::cancel(u64::MAX)).expect("the cancel encodes");
         batch.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
         batch.extend_from_slice(&bytes);
     }
@@ -162,7 +162,7 @@ async fn a_client_whose_runtime_has_shut_down_drops_its_connection_at_once_witho
     let handed: Arc<dyn Runtime> = Arc::new(Tokio::from_handle(doomed.handle().clone()));
     let client = Tcp::new(addr);
     let outbound = client.connect(&handed).await.expect("the client connects");
-    let request = Frame::Req { id: 1, pattern: HELD.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    let request = Frame::req(1, HELD, CallHeaders::new(), Data::new(b"1".as_slice()));
     (outbound.send)(Pattern::from(HELD), request, Some(ReplyTo { id: 1 })).await.expect("the request is written");
     let mut peer = None;
     gate("the call reaches the server", || {

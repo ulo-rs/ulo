@@ -739,14 +739,14 @@ async fn a_server_s_queue_holds_exactly_its_limit() {
         lock(&recording).push(frame);
         Box::pin(async { Ok(()) })
     });
-    let item = |n: u64| delivery(Frame::In { id: 1, data: Data::new(n.to_string()) }, None);
-    let opened = Frame::Open { id: 1, pattern: IGNORE.to_owned(), headers: CallHeaders::new() };
+    let item = |n: u64| delivery(Frame::input(1, Data::new(n.to_string())), None);
+    let opened = Frame::open(1, IGNORE, CallHeaders::new());
     deliveries.send(delivery(opened, Some(reply))).expect("the server reads its link");
     for n in 0..u64::from(LIMIT) {
         deliveries.send(item(n)).expect("the server reads its link");
     }
     // A unary call after the items is answered once every item before it has been routed.
-    let echo = Frame::Req { id: 2, pattern: ECHO.to_owned(), headers: CallHeaders::new(), data: Data::new("3") };
+    let echo = Frame::req(2, ECHO, CallHeaders::new(), Data::new("3"));
     let echo_sent = Arc::clone(&sent);
     let echo_reply = ReplyPath::new(move |frame| {
         lock(&echo_sent).push(frame);
@@ -764,7 +764,7 @@ async fn a_server_s_queue_holds_exactly_its_limit() {
     let ended = Arc::clone(&sent);
     eventually("the overflow's answer", || lock(&ended).iter().any(|frame| frame.id() == Some(1))).await;
     deliveries.send(item(u64::from(LIMIT) + 1)).expect("the server reads its link");
-    deliveries.send(delivery(Frame::InEnd { id: 1 }, None)).expect("the server reads its link");
+    deliveries.send(delivery(Frame::in_end(1), None)).expect("the server reads its link");
     eventually("the handler's end", || seen.dropped().is_some()).await;
     assert_eq!(seen.dropped(), Some(Some(CancelReason::Explicit)), "how the handler's execution ended");
     let answers: Vec<Frame> = lock(&sent).iter().filter(|frame| frame.id() == Some(1)).cloned().collect();
@@ -821,7 +821,7 @@ impl Feeding {
             lock(&recording).push(frame);
             Box::pin(async { Ok(()) })
         });
-        let opened = Frame::Open { id: 1, pattern: pattern.to_owned(), headers: CallHeaders::new() };
+        let opened = Frame::open(1, pattern, CallHeaders::new());
         self.deliveries.send(delivery(opened, Some(reply))).expect("the server reads its link");
     }
 
@@ -835,7 +835,7 @@ impl Feeding {
     /// spaces JSON allows.
     fn wide_items(&self, items: std::ops::Range<u64>, width: usize) {
         for n in items {
-            let item = Frame::In { id: 1, data: Data::new(format!("{n:>width$}")) };
+            let item = Frame::input(1, Data::new(format!("{n:>width$}")));
             self.deliveries.send(delivery(item, None)).expect("the server reads its link");
         }
     }
@@ -944,7 +944,7 @@ async fn a_server_s_queue_holds_exactly_its_byte_bound() {
         lock(&echoed).push(frame);
         Box::pin(async { Ok(()) })
     });
-    let echo = Frame::Req { id: 2, pattern: ECHO.to_owned(), headers: CallHeaders::new(), data: Data::new("3") };
+    let echo = Frame::req(2, ECHO, CallHeaders::new(), Data::new("3"));
     feeding.deliveries.send(delivery(echo, Some(reply))).expect("the server reads its link");
     eventually("the unary call's answer", || feeding.answers().iter().any(|frame| frame.id() == Some(2))).await;
     assert!(feeding.answers().iter().all(|frame| frame.id() != Some(1)), "the call was answered under its byte bound: {:?}", feeding.answers());

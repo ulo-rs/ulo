@@ -117,7 +117,7 @@ impl Writing {
         let mut stream = stream.try_clone().expect("the peer's socket clones");
         let mut batch = Vec::new();
         for _ in 0..512 {
-            let bytes = Codec::Json.encode_frame(&Frame::Cancel { id: u64::MAX }).expect("the cancel encodes");
+            let bytes = Codec::Json.encode_frame(&Frame::cancel(u64::MAX)).expect("the cancel encodes");
             batch.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
             batch.extend_from_slice(&bytes);
         }

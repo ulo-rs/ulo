@@ -348,7 +348,7 @@ async fn a_connection_lost_while_its_cancel_is_held_leaves_the_cancelled_call_cl
     let (addr, handle, serving) = serving(&race).await;
     let mut peer = within("the connection", TcpStream::connect(addr)).await.expect("the server accepts a connection");
     for (id, pattern) in [(1, TICKS), (2, "cancel_race.idle")] {
-        let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+        let request = Frame::req(id, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
         write_frame(&mut peer, &request).await;
     }
     let mut first = Vec::new();
@@ -360,7 +360,7 @@ async fn a_connection_lost_while_its_cancel_is_held_leaves_the_cancelled_call_cl
     }
     first.sort_unstable();
     assert_eq!(first, [1, 2], "the calls whose first item arrived");
-    write_frame(&mut peer, &Frame::Cancel { id: 1 }).await;
+    write_frame(&mut peer, &Frame::cancel(1)).await;
     within("the cancelled call's reply sent", race.0.wait_for(|steps| steps.waiting || steps.replied)).await;
     drop(peer);
 

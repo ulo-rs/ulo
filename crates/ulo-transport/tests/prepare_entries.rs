@@ -59,7 +59,7 @@ fn a_link_failure_alone_is_written_as_its_text() {
 #[test]
 fn a_reason_given_to_a_failure_is_its_entrys_and_a_nested_entrys_reason_passes_on() {
     let inner = PrepareError::new([], |_| "the stage refused".to_owned())
-        .with_entries(vec![PrepareEntry::new([]).scoped(["/health/*".to_owned()]).because(Unreached::HealthOnly { service: "grpc.health.v1.Health" })]);
+        .with_entries(vec![PrepareEntry::new([]).scoped(["/health/*".to_owned()]).because(Unreached::health_only("grpc.health.v1.Health"))]);
     let mut failures = Failures::new();
     failures.push(Failure::plain("no route").scoped(["/typo".to_owned()]).because(Unreached::NoRoute));
     failures.push(Failure::plain("max_inflight is zero"));
@@ -67,7 +67,7 @@ fn a_reason_given_to_a_failure_is_its_entrys_and_a_nested_entrys_reason_passes_o
 
     let error = failures.into_error();
     let reasons: Vec<_> = error.entries().iter().map(PrepareEntry::reason).collect();
-    assert_eq!(reasons, [Some(Unreached::NoRoute), None, Some(Unreached::HealthOnly { service: "grpc.health.v1.Health" })]);
+    assert_eq!(reasons, [Some(Unreached::NoRoute), None, Some(Unreached::health_only("grpc.health.v1.Health"))]);
 }
 
 /// Planted break: `HealthOnly`'s clause naming a fixed service rather than its field.
@@ -75,7 +75,7 @@ fn a_reason_given_to_a_failure_is_its_entrys_and_a_nested_entrys_reason_passes_o
 fn each_reason_writes_the_clause_its_refusal_ends_with() {
     assert_eq!(Unreached::NoRoute.to_string(), "matches no route's path");
     assert_eq!(
-        Unreached::HealthOnly { service: "acme.Health" }.to_string(),
+        Unreached::health_only("acme.Health").to_string(),
         "matches only `acme.Health`'s paths among those the server answers, and that health service runs no scoped entry, so \
          the entry would never run"
     );

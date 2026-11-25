@@ -119,25 +119,25 @@ async fn a_streamed_reply_longer_than_the_channel_arrives_whole() {
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
 
-    let request = Frame::Req { id: 1, pattern: LONG.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, LONG, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(LONG), request, None).await.expect("the request is published");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
     let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
     let sending = tokio::spawn(async move {
         for n in 0..ITEMS {
-            path.send(Frame::Item { id, data: Data::new(Bytes::from(n.to_string())) }).await.unwrap_or_else(|error| panic!("item {n} was not sent: {error}"));
+            path.send(Frame::item(id, Data::new(Bytes::from(n.to_string())))).await.unwrap_or_else(|error| panic!("item {n} was not sent: {error}"));
         }
-        path.send(Frame::End { id }).await.expect("the end is sent");
+        path.send(Frame::end(id)).await.expect("the end is sent");
     });
 
     let mut received = 0u32;
     loop {
         match tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten() {
-            Some(Frame::Item { id: 1, data }) => {
+            Some(Frame::Item { id: 1, data, .. }) => {
                 assert_eq!(data.as_bytes(), received.to_string().as_bytes(), "item {received} arrived out of place");
                 received += 1;
             }
-            Some(Frame::End { id: 1 }) => break,
+            Some(Frame::End { id: 1, .. }) => break,
             other => panic!("after {received} of {ITEMS} items the caller read {other:?}"),
         }
     }
@@ -165,7 +165,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
-    let request = Frame::Req { id: 1, pattern: BLOCKED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, BLOCKED, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(BLOCKED), request, None).await.expect("the request is published");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
     let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
@@ -176,7 +176,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     let sending = tokio::spawn(async move {
         loop {
             let n = counted.load(Ordering::SeqCst);
-            if let Err(error) = path.send(Frame::Item { id, data: Data::new(Bytes::from(n.to_string())) }).await {
+            if let Err(error) = path.send(Frame::item(id, Data::new(Bytes::from(n.to_string())))).await {
                 return error.to_string();
             }
             counted.fetch_add(1, Ordering::SeqCst);
@@ -206,14 +206,14 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     let mut received = 0u64;
     let terminal = loop {
         match tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten() {
-            Some(Frame::Item { id: 1, data }) => {
+            Some(Frame::Item { id: 1, data, .. }) => {
                 assert_eq!(data.as_bytes(), received.to_string().as_bytes(), "item {received} arrived out of place");
                 received += 1;
             }
             other => break other,
         }
     };
-    let unavailable = |frame: &Frame| matches!(frame, Frame::Err { id: 1, error } if error.kind == ErrorKind::Unavailable && error.message == SHUTDOWN_MESSAGE && error.details.is_empty());
+    let unavailable = |frame: &Frame| matches!(frame, Frame::Err { id: 1, error, .. } if error.kind == ErrorKind::Unavailable && error.message == SHUTDOWN_MESSAGE && error.details.is_empty());
     assert!(terminal.as_ref().is_some_and(unavailable), "after {received} items the caller read {terminal:?}, not the close's `unavailable`");
     assert_eq!(received, last, "the items the caller read, against those queued before the close");
     let after = tokio::time::timeout(Duration::from_secs(1), replies.next()).await.ok().flatten();
@@ -245,7 +245,7 @@ async fn a_server_acknowledges_nothing_after_its_disconnect() {
     relay.pause();
     server.close().await.expect("the server's link closes");
     for id in 1..=3 {
-        let request = Frame::Req { id, pattern: LATE.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+        let request = Frame::req(id, LATE, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
         (outbound.send)(Pattern::from(LATE), request, None).await.expect("the request is published");
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -432,7 +432,7 @@ async fn client_close_writes_what_was_queued_before_it() {
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
-    let event = Frame::Evt { pattern: EVENT.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"7")) };
+    let event = Frame::evt(EVENT, CallHeaders::new(), Data::new(Bytes::from_static(b"7")));
     let mut send = (outbound.send)(Pattern::from(EVENT), event, None);
     // One poll queues the publish; the rest of the send waits for the event loop to write it.
     assert!((&mut send).now_or_never().is_none(), "the event loop wrote the publish before it could run");
@@ -493,7 +493,7 @@ async fn a_client_reads_until_the_broker_closes_so_the_broker_reads_its_disconne
     let client = Mqtt::url(format!("mqtt://{}", relay.addr));
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let publishes = || relay.written().iter().filter(|&&kind| kind == PUBLISH).count();
-    let event = |n: usize| Frame::Evt { pattern: UNREAD.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from(n.to_string())) };
+    let event = |n: usize| Frame::evt(UNREAD, CallHeaders::new(), Data::new(Bytes::from(n.to_string())));
 
     relay.hold_replies();
     for n in 0..BEFORE {
@@ -541,7 +541,7 @@ async fn drain_delivers_the_cancel_that_releases_the_last_call() {
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
-    let request = Frame::Req { id: 1, pattern: HELD.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, HELD, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(HELD), request, None).await.expect("the request is published");
     let held = match next_frame(&mut inbound).await {
         Some(Frame::Req { id, .. }) => id,
@@ -549,10 +549,10 @@ async fn drain_delivers_the_cancel_that_releases_the_last_call() {
     };
 
     server.drain().await;
-    (outbound.send)(Pattern::from(HELD), Frame::Cancel { id: 1 }, None).await.expect("the cancel is published");
+    (outbound.send)(Pattern::from(HELD), Frame::cancel(1), None).await.expect("the cancel is published");
     assert_eq!(
         next_frame(&mut inbound).await,
-        Some(Frame::Cancel { id: held }),
+        Some(Frame::cancel(held)),
         "the cancel of the call the draining server held was not delivered",
     );
     client.close().await.expect("the client's link closes");
@@ -574,7 +574,7 @@ async fn drain_returns_once_the_broker_stops_routing_to_the_server() {
     let mut replies = outbound.replies;
 
     tokio::time::timeout(PATIENCE, server.drain()).await.expect("the drain returns once the broker has confirmed it");
-    let request = Frame::Req { id: 1, pattern: DRAINED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, DRAINED, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(DRAINED), request, None).await.expect("the request is published");
 
     let reply = tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten();
@@ -583,7 +583,7 @@ async fn drain_returns_once_the_broker_stops_routing_to_the_server() {
             && error.details.iter().any(|detail| matches!(detail, Detail::ErrorInfo { reason, .. } if reason == "no_destination"))
     };
     assert!(
-        matches!(&reply, Some(Frame::Err { id: 1, error }) if no_destination(error)),
+        matches!(&reply, Some(Frame::Err { id: 1, error, .. }) if no_destination(error)),
         "a request published once the drain returned was not answered `no_destination`, got: {reply:?}",
     );
     assert!(inbound.next().now_or_never().is_none_or(|delivery| delivery.is_none()), "the drained server received the request");
@@ -633,7 +633,7 @@ async fn the_broker_holds_back_no_request_for_flow_control() {
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
 
     for id in 1..=SENT as u64 {
-        let request = Frame::Req { id, pattern: FLOODED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+        let request = Frame::req(id, FLOODED, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
         (outbound.send)(Pattern::from(FLOODED), request, None).await.expect("the request is published");
     }
     let mut received = 0;
@@ -982,7 +982,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
         let relay = Relay::start(broker.server).await;
         let server = prepared(Mqtt::url(format!("mqtt://{}", relay.addr())).group(if drained { "held_drained" } else { "held" })).await;
         let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
-        let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+        let request = Frame::req(id, pattern, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
         (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
         let delivery = tokio::time::timeout(PATIENCE, inbound.next())
             .await

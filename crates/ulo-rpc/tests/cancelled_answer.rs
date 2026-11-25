@@ -235,7 +235,7 @@ fn replies() -> (ReplyPath, mpsc::UnboundedReceiver<Frame>) {
 }
 
 fn request(id: u64, pattern: &str) -> Frame {
-    Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) }
+    Frame::req(id, pattern, CallHeaders::new(), Data::new(b"null".as_slice()))
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -244,11 +244,11 @@ async fn a_handler_answering_once_its_caller_cancels_is_answered_on_the_reply_pa
     let (path, mut frames) = replies();
     running.deliver(request(1, OBSERVE), Some(path.clone()));
     within("the handler entering", running.probe.0.entered.notified()).await;
-    running.deliver(Frame::Cancel { id: 1 }, Some(path));
+    running.deliver(Frame::cancel(1), Some(path));
 
     let frame = within("the answer", frames.recv()).await.expect("a frame on the reply path");
     match frame {
-        Frame::Res { id, data } => {
+        Frame::Res { id, data, .. } => {
             assert_eq!(id, 1, "the answer names the cancelled call");
             let answer: String = serde_json::from_slice(data.as_bytes()).expect("a JSON string");
             assert_eq!(answer, format!("observed {:?}", Some(CancelReason::ClientCancelled)));
@@ -264,8 +264,8 @@ async fn a_stream_whose_items_are_always_ready_ends_at_its_next_item_once_cancel
     let (path, mut frames) = replies();
     running.deliver(request(1, ENDLESS), Some(path.clone()));
     let first = within("the first item", frames.recv()).await.expect("a frame on the reply path");
-    assert!(matches!(&first, Frame::Item { id: 1, data } if data.as_bytes() == b"7"), "{first:?}");
-    running.deliver(Frame::Cancel { id: 1 }, Some(path));
+    assert!(matches!(&first, Frame::Item { id: 1, data, .. } if data.as_bytes() == b"7"), "{first:?}");
+    running.deliver(Frame::cancel(1), Some(path));
 
     within("the stream's drop", async {
         while !running.probe.0.stream_dropped.load(Ordering::SeqCst) {
@@ -304,13 +304,13 @@ fn items_then_shutdown(written: &[Frame], n: u64) {
     let numbers: Vec<Option<u64>> = items
         .iter()
         .map(|frame| match frame {
-            Frame::Item { id: 1, data } => serde_json::from_slice(data.as_bytes()).ok(),
+            Frame::Item { id: 1, data, .. } => serde_json::from_slice(data.as_bytes()).ok(),
             _ => None,
         })
         .collect();
     assert_eq!(numbers, (1..=n).map(Some).collect::<Vec<_>>(), "the items written before the stream ended: {written:?}");
     match last {
-        Frame::Err { id, error } => {
+        Frame::Err { id, error, .. } => {
             assert_eq!(*id, 1, "the refusal names the call");
             assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE), "{error:?}");
         }
@@ -336,7 +336,7 @@ async fn an_item_ready_in_the_poll_the_cancellation_wakes_is_written_and_none_af
     let (path, mut frames) = replies();
     running.deliver(request(1, GATED), Some(path));
     let first = within("the first item", frames.recv()).await.expect("a frame on the reply path");
-    assert!(matches!(&first, Frame::Item { id: 1, data } if data.as_bytes() == b"1"), "{first:?}");
+    assert!(matches!(&first, Frame::Item { id: 1, data, .. } if data.as_bytes() == b"1"), "{first:?}");
     within("the stream waiting at its gate", running.probe.0.waiting.notified()).await;
     // One task on one thread: the call's next poll finds both the cancellation and the item.
     let exec = lock(&running.probe.0.exec).clone().expect("the handler kept its execution");
@@ -365,7 +365,7 @@ async fn a_cancels_ack_is_settled_once_its_call_is_cancelled() {
     let ack = Ack::new(move |accepted| {
         let _ = settle.send((accepted, exec.cancel_reason()));
     });
-    running.deliveries.send(Delivery { frame: Frame::Cancel { id: 1 }, reply: Some(path), ack }).expect("the server reads its inbound stream");
+    running.deliveries.send(Delivery { frame: Frame::cancel(1), reply: Some(path), ack }).expect("the server reads its inbound stream");
 
     let settlement = within("the `cancel`'s settlement", settled.recv()).await.expect("the `cancel`'s `Ack` settled");
     assert_eq!(settlement, (true, Some(CancelReason::ClientCancelled)), "the settlement and the call's reason as it was settled");
@@ -381,13 +381,13 @@ async fn an_always_ready_stream_ends_at_its_next_item_once_its_deadline_passes()
     let (path, mut frames) = replies();
     let mut headers = CallHeaders::new();
     headers.insert("deadline-ms", "50");
-    running.deliver(Frame::Req { id: 1, pattern: ENDLESS.to_owned(), headers, data: Data::new(b"null".as_slice()) }, Some(path));
+    running.deliver(Frame::req(1, ENDLESS, headers, Data::new(b"null".as_slice())), Some(path));
 
     let written = written_until(&running.probe.0.stream_dropped, &mut frames).await;
     let (last, items) = written.split_last().unwrap_or_else(|| panic!("nothing was written"));
-    assert!(items.iter().all(|frame| matches!(frame, Frame::Item { id: 1, data } if data.as_bytes() == b"7")), "{items:?}");
+    assert!(items.iter().all(|frame| matches!(frame, Frame::Item { id: 1, data, .. } if data.as_bytes() == b"7")), "{items:?}");
     match last {
-        Frame::Err { id, error } => {
+        Frame::Err { id, error, .. } => {
             assert_eq!(*id, 1, "the refusal names the call");
             assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Timeout, "the call's deadline passed"), "{error:?}");
         }

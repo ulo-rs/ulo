@@ -597,7 +597,7 @@ fn with_details(code: Code, message: &str, details: &Details) -> Status {
             Detail::FieldViolations(list) => {
                 violations.extend(list.iter().map(|violation| FieldViolation::new(&violation.field, &violation.description)));
             }
-            Detail::ErrorInfo { reason, domain, metadata } => {
+            Detail::ErrorInfo { reason, domain, metadata, .. } => {
                 if info.is_none() {
                     info = Some((reason, domain, metadata));
                 }

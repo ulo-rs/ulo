@@ -121,7 +121,7 @@ async fn a_close_cut_short_answers_only_the_calls_still_unanswered() {
     let mut paths = std::collections::HashMap::new();
     for caller in [1u64, 2] {
         let data = Data::new(Bytes::from(caller.to_string()));
-        let request = Frame::Req { id: caller, pattern: HELD.to_owned(), headers: CallHeaders::new(), data };
+        let request = Frame::req(caller, HELD, CallHeaders::new(), data);
         (outbound.send)(Pattern::from(HELD), request, None).await.expect("the request is published");
     }
     for _ in 0..2 {
@@ -131,8 +131,8 @@ async fn a_close_cut_short_answers_only_the_calls_still_unanswered() {
     }
     let (answered, answered_path) = paths.remove(&b"1"[..]).expect("the first call");
     let (streaming, streaming_path) = paths.remove(&b"2"[..]).expect("the second call");
-    answered_path.send(Frame::Res { id: answered, data: Data::new(Bytes::from_static(b"7")) }).await.expect("the answer is queued");
-    streaming_path.send(Frame::Item { id: streaming, data: Data::new(Bytes::from_static(b"8")) }).await.expect("the item is queued");
+    answered_path.send(Frame::res(answered, Data::new(Bytes::from_static(b"7")))).await.expect("the answer is queued");
+    streaming_path.send(Frame::item(streaming, Data::new(Bytes::from_static(b"8")))).await.expect("the item is queued");
 
     assert!(server.close().now_or_never().is_none(), "the close ended in its first poll");
     drop((answered_path, streaming_path, inbound, server));
@@ -144,10 +144,10 @@ async fn a_close_cut_short_answers_only_the_calls_still_unanswered() {
     let unavailable = ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new());
     let first: Vec<&Frame> = read.iter().filter(|frame| frame.id() == Some(1)).collect();
     let second: Vec<&Frame> = read.iter().filter(|frame| frame.id() == Some(2)).collect();
-    assert_eq!(first, [&Frame::Res { id: 1, data: Data::new(Bytes::from_static(b"7")) }], "what the caller read for the call answered before the close");
+    assert_eq!(first, [&Frame::res(1, Data::new(Bytes::from_static(b"7")))], "what the caller read for the call answered before the close");
     assert_eq!(
         second,
-        [&Frame::Item { id: 2, data: Data::new(Bytes::from_static(b"8")) }, &Frame::Err { id: 2, error: unavailable }],
+        [&Frame::item(2, Data::new(Bytes::from_static(b"8"))), &Frame::err(2, unavailable)],
         "what the caller read for the stream the close cut"
     );
     assert_eq!(read.len(), 3, "the caller read frames for no call it made: {read:?}");
@@ -168,19 +168,19 @@ async fn a_close_cut_short_still_answers_the_call_it_held() {
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
 
-    let request = Frame::Req { id: 1, pattern: HELD.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, HELD, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(HELD), request, None).await.expect("the request is published");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
     let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
 
     assert!(server.close().now_or_never().is_none(), "the close ended in its first poll");
-    let late = path.send(Frame::Res { id, data: Data::new(Bytes::from_static(b"7")) }).await;
+    let late = path.send(Frame::res(id, Data::new(Bytes::from_static(b"7")))).await;
     drop((path, inbound, server));
 
     let answer = tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten();
     assert_eq!(
         answer,
-        Some(Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+        Some(Frame::err(1, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()))),
         "what the caller read for the call the cut close held"
     );
     assert_eq!(
@@ -209,25 +209,25 @@ async fn a_streamed_reply_longer_than_the_channel_arrives_whole() {
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
 
-    let request = Frame::Req { id: 1, pattern: LONG.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, LONG, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(LONG), request, None).await.expect("the request is published");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
     let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
     let sending = tokio::spawn(async move {
         for n in 0..ITEMS {
-            path.send(Frame::Item { id, data: Data::new(Bytes::from(n.to_string())) }).await.unwrap_or_else(|error| panic!("item {n} was not sent: {error}"));
+            path.send(Frame::item(id, Data::new(Bytes::from(n.to_string())))).await.unwrap_or_else(|error| panic!("item {n} was not sent: {error}"));
         }
-        path.send(Frame::End { id }).await.expect("the end is sent");
+        path.send(Frame::end(id)).await.expect("the end is sent");
     });
 
     let mut received = 0u32;
     loop {
         match tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten() {
-            Some(Frame::Item { id: 1, data }) => {
+            Some(Frame::Item { id: 1, data, .. }) => {
                 assert_eq!(data.as_bytes(), received.to_string().as_bytes(), "item {received} arrived out of place");
                 received += 1;
             }
-            Some(Frame::End { id: 1 }) => break,
+            Some(Frame::End { id: 1, .. }) => break,
             other => panic!("after {received} of {ITEMS} items the caller read {other:?}"),
         }
     }
@@ -252,7 +252,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
-    let request = Frame::Req { id: 1, pattern: BLOCKED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, BLOCKED, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(BLOCKED), request, None).await.expect("the request is published");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
     let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
@@ -263,7 +263,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     let sending = tokio::spawn(async move {
         loop {
             let n = counted.load(Ordering::SeqCst);
-            if let Err(error) = path.send(Frame::Item { id, data: Data::new(Bytes::from(n.to_string())) }).await {
+            if let Err(error) = path.send(Frame::item(id, Data::new(Bytes::from(n.to_string())))).await {
                 return error.to_string();
             }
             counted.fetch_add(1, Ordering::SeqCst);
@@ -293,7 +293,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     let mut received = 0u64;
     let terminal = loop {
         match tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten() {
-            Some(Frame::Item { id: 1, data }) => {
+            Some(Frame::Item { id: 1, data, .. }) => {
                 assert_eq!(data.as_bytes(), received.to_string().as_bytes(), "item {received} arrived out of place");
                 received += 1;
             }
@@ -302,7 +302,7 @@ async fn a_stream_waiting_on_a_full_channel_when_close_runs_ends_with_close_s_on
     };
     assert_eq!(
         terminal,
-        Some(Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+        Some(Frame::err(1, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()))),
         "the terminal frame the caller read after {received} items"
     );
     assert_eq!(received, last, "the items the caller read, against those queued before the close");
@@ -327,7 +327,7 @@ async fn a_terminal_frame_queued_after_waiting_ends_its_call() {
     let client = broker.link();
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
-    let request = Frame::Req { id: 1, pattern: ENDED.to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"null")) };
+    let request = Frame::req(1, ENDED, CallHeaders::new(), Data::new(Bytes::from_static(b"null")));
     (outbound.send)(Pattern::from(ENDED), request, None).await.expect("the request is published");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.ok().flatten().expect("the request reaches the server");
     let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
@@ -335,13 +335,13 @@ async fn a_terminal_frame_queued_after_waiting_ends_its_call() {
     relay.pause();
     let mut sent = 0u64;
     let blocked = loop {
-        let mut send = path.send(Frame::Item { id, data: Data::new(Bytes::from(sent.to_string())) });
+        let mut send = path.send(Frame::item(id, Data::new(Bytes::from(sent.to_string()))));
         if tokio::time::timeout(Duration::from_millis(500), &mut send).await.is_err() {
             break send;
         }
         sent += 1;
     };
-    let mut ending = path.send(Frame::End { id });
+    let mut ending = path.send(Frame::end(id));
     assert!((&mut ending).now_or_never().is_none(), "the end found room in a full channel");
     relay.resume();
     blocked.await.expect("the item that waited is queued");
@@ -355,7 +355,7 @@ async fn a_terminal_frame_queued_after_waiting_ends_its_call() {
             other => break other,
         }
     };
-    assert_eq!((received, terminal), (sent + 1, Some(Frame::End { id: 1 })), "the items the caller read, and the frame after them");
+    assert_eq!((received, terminal), (sent + 1, Some(Frame::end(1))), "the items the caller read, and the frame after them");
     let after = tokio::time::timeout(Duration::from_secs(1), replies.next()).await.ok().flatten();
     assert_eq!(after, None, "the caller read a frame after the stream's end");
     client.close().await.expect("the client's link closes");

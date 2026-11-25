@@ -58,7 +58,7 @@ fn flooding_peer(stop: Arc<AtomicBool>, written: Arc<AtomicU64>) -> (std::net::S
         stream.read_exact(&mut prefix).expect("the call's frame arrives");
         let mut frame = vec![0u8; u32::from_be_bytes(prefix) as usize];
         stream.read_exact(&mut frame).expect("the call's frame arrives whole");
-        let bytes = Codec::Json.encode_frame(&Frame::Res { id: u64::MAX, data: Data::new(b"1".as_slice()) }).expect("the frame encodes");
+        let bytes = Codec::Json.encode_frame(&Frame::res(u64::MAX, Data::new(b"1".as_slice()))).expect("the frame encodes");
         let mut batch = Vec::new();
         for _ in 0..512 {
             batch.extend_from_slice(&(bytes.len() as u32).to_be_bytes());

@@ -823,7 +823,7 @@ pub(crate) const SHAPE_UNSUPPORTED: &str = "shape_unsupported";
 
 /// The `ErrorInfo` detail carrying `reason`, under this transport's domain.
 pub(crate) fn reason(reason: &str) -> Detail {
-    Detail::ErrorInfo { reason: reason.to_owned(), domain: DOMAIN.to_owned(), metadata: Default::default() }
+    Detail::error_info(reason, DOMAIN, Default::default())
 }
 
 /// `opts` with the context `headers` carry, under `TraceMode::On`. A `tracestate` with no

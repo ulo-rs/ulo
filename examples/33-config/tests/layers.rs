@@ -93,7 +93,7 @@ async fn a_bad_file_reports_every_problem_with_its_file_and_line() {
             "greeting = \"hi\"\n[http]\nhost = \"h\"\nport = \"eighty\"\n[database]\nurl = \"mysql://app:{SENTINEL}@db/app\"\npool_size = -3\ntimeout_secs = \"soon\"\n"
         ),
     );
-    let at = |line, column| Some(Origin::File { path: file.to_string_lossy().as_ref().into(), line, column });
+    let at = |line, column| Some(Origin::file(file.to_string_lossy(), line, column));
     let (report, mut problems) = wiring_problems(&dir);
     problems.sort_by(|a, b| a.0.cmp(&b.0));
     assert_eq!(
@@ -135,8 +135,8 @@ async fn deny_unread_refuses_a_misspelled_key_naming_its_source() {
     assert_eq!(
         found,
         [
-            ("http.prot".to_owned(), Some(Origin::File { path: dotenv.to_string_lossy().as_ref().into(), line: 2, column: 0 })),
-            ("pool".to_owned(), Some(Origin::Variable { name: "APP_POOL".into() })),
+            ("http.prot".to_owned(), Some(Origin::file(dotenv.to_string_lossy(), 2, 0))),
+            ("pool".to_owned(), Some(Origin::variable("APP_POOL"))),
         ]
     );
 }

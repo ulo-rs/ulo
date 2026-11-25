@@ -157,7 +157,7 @@ fn request(id: u64) -> (Delivery, mpsc::UnboundedReceiver<Frame>) {
         let sent = frames.send(frame).map_err(BoxError::from);
         Box::pin(async move { sent })
     });
-    let frame = Frame::Req { id, pattern: "shed.hold".to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let frame = Frame::req(id, "shed.hold", CallHeaders::new(), Data::new(b"null".as_slice()));
     (Delivery { frame, reply: Some(reply), ack: Ack::new(|_| {}) }, written)
 }
 

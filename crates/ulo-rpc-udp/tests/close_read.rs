@@ -51,12 +51,7 @@ async fn close_answers_the_requests_its_socket_already_holds() {
     caller.set_read_timeout(Some(PATIENCE)).expect("a read timeout");
     // Blocking sends with no await between them: the receive task cannot run before `close`.
     for id in 1..=LEFT {
-        let request = Frame::Req {
-            id,
-            pattern: "close_read.add".to_owned(),
-            headers: CallHeaders::new(),
-            data: Data::new(Bytes::from_static(b"1")),
-        };
+        let request = Frame::req(id, "close_read.add", CallHeaders::new(), Data::new(Bytes::from_static(b"1")));
         let bytes = Codec::Json.encode_frame(&request).expect("the request encodes");
         caller.send(&bytes).expect("the request is sent");
     }
@@ -72,7 +67,7 @@ async fn close_answers_the_requests_its_socket_already_holds() {
             Err(error) => panic!("{} of {LEFT} requests left in the socket at close were answered; the next read failed: {error}", refused.len()),
         };
         match Codec::Json.decode_frame(&datagram[..len]) {
-            Ok(Frame::Err { id, error }) if error.kind == ErrorKind::Unavailable && error.message == ulo_transport::SHUTDOWN_MESSAGE => {
+            Ok(Frame::Err { id, error, .. }) if error.kind == ErrorKind::Unavailable && error.message == ulo_transport::SHUTDOWN_MESSAGE => {
                 refused.push(id)
             }
             other => panic!("a request left in the socket at close was not refused `unavailable`, \"{}\", got: {other:?}", ulo_transport::SHUTDOWN_MESSAGE),

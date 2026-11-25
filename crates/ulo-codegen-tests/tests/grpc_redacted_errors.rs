@@ -37,7 +37,7 @@ impl Leaks {
             "handler" => {
                 let metadata = BTreeMap::from([("key".to_owned(), SECRET.to_owned())]);
                 CallError::new(ErrorKind::NotFound, format!("key {SECRET} refused"))
-                    .with_details(Details::new().with(Detail::ErrorInfo { reason: "refused".to_owned(), domain: "d".to_owned(), metadata }))
+                    .with_details(Details::new().with(Detail::error_info("refused", "d", metadata)))
             }
             "status" => ulo_grpc::from_status(tonic::Status::failed_precondition(format!("key {SECRET} refused"))),
             "status details" => {

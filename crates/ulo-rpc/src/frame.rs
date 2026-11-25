@@ -32,22 +32,79 @@ use crate::transport::CallHeaders;
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Frame {
+    #[non_exhaustive]
     Req { id: u64, pattern: String, headers: CallHeaders, data: Data },
+    #[non_exhaustive]
     Evt { pattern: String, headers: CallHeaders, data: Data },
+    #[non_exhaustive]
     Res { id: u64, data: Data },
+    #[non_exhaustive]
     Err { id: u64, error: ErrorBody },
+    #[non_exhaustive]
     Item { id: u64, data: Data },
+    #[non_exhaustive]
     End { id: u64 },
+    #[non_exhaustive]
     Open { id: u64, pattern: String, headers: CallHeaders },
+    #[non_exhaustive]
     In { id: u64, data: Data },
+    #[non_exhaustive]
     InEnd { id: u64 },
+    #[non_exhaustive]
     Cancel { id: u64 },
     /// Reserved: no link sends it, and every link honours the grammar that names it.
+    #[non_exhaustive]
     Credit { id: u64, n: u64 },
     Goaway,
 }
 
 impl Frame {
+    pub fn req(id: u64, pattern: impl Into<String>, headers: CallHeaders, data: Data) -> Self {
+        Frame::Req { id, pattern: pattern.into(), headers, data }
+    }
+
+    pub fn evt(pattern: impl Into<String>, headers: CallHeaders, data: Data) -> Self {
+        Frame::Evt { pattern: pattern.into(), headers, data }
+    }
+
+    pub fn res(id: u64, data: Data) -> Self {
+        Frame::Res { id, data }
+    }
+
+    pub fn err(id: u64, error: ErrorBody) -> Self {
+        Frame::Err { id, error }
+    }
+
+    pub fn item(id: u64, data: Data) -> Self {
+        Frame::Item { id, data }
+    }
+
+    pub fn end(id: u64) -> Self {
+        Frame::End { id }
+    }
+
+    pub fn open(id: u64, pattern: impl Into<String>, headers: CallHeaders) -> Self {
+        Frame::Open { id, pattern: pattern.into(), headers }
+    }
+
+    /// The `in` frame: one item of a client stream.
+    #[doc(alias = "in")]
+    pub fn input(id: u64, data: Data) -> Self {
+        Frame::In { id, data }
+    }
+
+    pub fn in_end(id: u64) -> Self {
+        Frame::InEnd { id }
+    }
+
+    pub fn cancel(id: u64) -> Self {
+        Frame::Cancel { id }
+    }
+
+    pub fn credit(id: u64, n: u64) -> Self {
+        Frame::Credit { id, n }
+    }
+
     /// The frame's `t`: `"req"`, `"evt"`, `"res"`, ...
     pub fn kind(&self) -> &'static str {
         match self {

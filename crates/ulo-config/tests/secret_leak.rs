@@ -171,7 +171,7 @@ mod beyond_the_values {
         let error = read::<Holder>(&config, "");
         let problem = error.problems().iter().find(|p| p.flattened()).expect("a marked problem");
         assert_eq!(problem.path(), "db");
-        assert!(matches!(problem.origin(), Some(ulo_config::Origin::Explicit { key }) if key.starts_with("db.")));
+        assert!(matches!(problem.origin(), Some(ulo_config::Origin::Explicit { key, .. }) if key.starts_with("db.")));
     }
 
     #[derive(Debug, Deserialize)]

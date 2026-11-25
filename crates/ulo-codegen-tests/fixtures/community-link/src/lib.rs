@@ -182,7 +182,7 @@ impl Client {
         let routes: Vec<Route> = lock(&self.routes).drain().map(|(_, route)| route).collect();
         for route in routes {
             if let Some(instance) = route.instance.upgrade() {
-                drop(instance.deliver(Delivery { frame: Frame::Cancel { id: route.id }, reply: None, ack: Ack::none() }));
+                drop(instance.deliver(Delivery { frame: Frame::cancel(route.id), reply: None, ack: Ack::none() }));
                 instance.finish(route.id);
             }
         }
@@ -218,7 +218,7 @@ impl Client {
                     Ok(())
                 })
             }
-            Frame::In { id, .. } | Frame::InEnd { id } | Frame::Cancel { id } => {
+            Frame::In { id, .. } | Frame::InEnd { id, .. } | Frame::Cancel { id, .. } => {
                 let cancel = matches!(frame, Frame::Cancel { .. });
                 let route = {
                     let mut routes = lock(&self.routes);
@@ -270,16 +270,16 @@ fn reply_path(client: Weak<Client>, client_id: u64, instance: Weak<Instance>, se
 /// `frame` under the id `id`; a frame carrying none is answered as it stands.
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Req { pattern, headers, data, .. } => Frame::Req { id, pattern, headers, data },
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
-        Frame::Open { pattern, headers, .. } => Frame::Open { id, pattern, headers },
-        Frame::In { data, .. } => Frame::In { id, data },
-        Frame::InEnd { .. } => Frame::InEnd { id },
-        Frame::Cancel { .. } => Frame::Cancel { id },
-        Frame::Credit { n, .. } => Frame::Credit { id, n },
+        Frame::Req { pattern, headers, data, .. } => Frame::req(id, pattern, headers, data),
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
+        Frame::Open { pattern, headers, .. } => Frame::open(id, pattern, headers),
+        Frame::In { data, .. } => Frame::input(id, data),
+        Frame::InEnd { .. } => Frame::in_end(id),
+        Frame::Cancel { .. } => Frame::cancel(id),
+        Frame::Credit { n, .. } => Frame::credit(id, n),
         other => other,
     }
 }

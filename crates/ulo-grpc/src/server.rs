@@ -381,7 +381,7 @@ fn health_only(refused: Failure) -> Failure {
     if !shares_path(scope, &format!("/{service}/{{method}}")) {
         return refused;
     }
-    unreached_scope(location, scope.clone(), Unreached::HealthOnly { service })
+    unreached_scope(location, scope.clone(), Unreached::health_only(service))
 }
 
 fn shape_name(shape: Shape) -> &'static str {

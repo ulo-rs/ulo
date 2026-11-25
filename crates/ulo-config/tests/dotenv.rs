@@ -142,7 +142,7 @@ fn a_missing_dotenv_file_is_a_failure_unless_optional() {
     let required = Config::builder().source(DotEnv::file(&absent)).load();
     let problems = located::<serde_json::Value>(&required, "");
     assert_eq!(problems.len(), 1);
-    assert_eq!(problems[0].origin(), Some(&Origin::File { path: text(&absent).as_str().into(), line: 0, column: 0 }));
+    assert_eq!(problems[0].origin(), Some(&Origin::file(text(&absent).as_str(), 0, 0)));
 
     let optional = Config::builder().source(DotEnv::file(&absent).optional()).source(ulo_config::Values::new().set("k", "v")).load();
     assert_eq!(tree(&optional), json!({ "k": "v" }));

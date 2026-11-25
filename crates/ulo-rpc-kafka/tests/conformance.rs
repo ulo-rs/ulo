@@ -190,7 +190,7 @@ async fn close_commits_off_the_runtime_thread_polling_it() {
     let client = broker.client_link(&[]);
     let handle = app.handle();
     let outbound = client.connect(handle.runtime().expect("the app has a runtime")).await.expect("the client's link connects");
-    let request = Frame::Req { id: 1, pattern: PATTERN.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let request = Frame::req(1, PATTERN, CallHeaders::new(), Data::new(b"null".as_slice()));
     (outbound.send)(Pattern::from(PATTERN), request, Some(ReplyTo { id: 1 })).await.expect("the request is produced");
     let delivery = tokio::time::timeout(Duration::from_secs(60), inbound.next())
         .await
@@ -344,7 +344,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connections() {
         let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
         let mut deliveries = Vec::new();
         for id in [first, first + 1] {
-            let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            let request = Frame::req(id, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
             send(Pattern::from(pattern), request, Some(ReplyTo { id })).await.expect("the request is produced");
             let delivery = tokio::time::timeout(Duration::from_secs(60), inbound.next())
                 .await
@@ -355,7 +355,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connections() {
             };
             if id == first {
                 let reply = delivery.reply.clone().expect("a request carries its reply path");
-                reply.send(Frame::Res { id: local, data: Data::new(b"2".as_slice()) }).await.expect("the reply is produced");
+                reply.send(Frame::res(local, Data::new(b"2".as_slice()))).await.expect("the reply is produced");
                 let answer = tokio::time::timeout(Duration::from_secs(30), replies.next()).await.ok().flatten();
                 assert!(matches!(answer, Some(Frame::Res { id: answered, .. }) if answered == first), "the server's answer did not reach the client: {answer:?}");
             }
@@ -442,7 +442,7 @@ fn closing_and_dropping_links_does_not_stall_the_thread() {
             server.prepare(&app.handle()).await.expect("the server's link prepares");
             let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
             doing("answering a call");
-            let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            let request = Frame::req(id, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
             send(Pattern::from(pattern), request, Some(ReplyTo { id })).await.expect("the request is produced");
             let delivery = tokio::time::timeout(Duration::from_secs(60), inbound.next())
                 .await
@@ -452,7 +452,7 @@ fn closing_and_dropping_links_does_not_stall_the_thread() {
                 panic!("the server received something other than the request: {:?}", delivery.frame);
             };
             let reply = delivery.reply.clone().expect("a request carries its reply path");
-            reply.send(Frame::Res { id: local, data: Data::new(b"2".as_slice()) }).await.expect("the reply is produced");
+            reply.send(Frame::res(local, Data::new(b"2".as_slice()))).await.expect("the reply is produced");
             let answer = tokio::time::timeout(Duration::from_secs(30), replies.next()).await.ok().flatten();
             assert!(matches!(answer, Some(Frame::Res { id: answered, .. }) if answered == id), "the server's answer did not reach the client: {answer:?}");
             // The delivery's acknowledgment holds the group's consumer.
@@ -474,7 +474,7 @@ fn closing_and_dropping_links_does_not_stall_the_thread() {
         // polling thread polls a tenth of a second at a time, returns from a poll once it has
         // served an event and polls again, so a drop joining it now waits for most of a fresh
         // poll, where an idle producer's drop could come anywhere in one.
-        let event = Frame::Evt { pattern: "link.stall.dropped".to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+        let event = Frame::evt("link.stall.dropped", CallHeaders::new(), Data::new(b"null".as_slice()));
         send(Pattern::from("link.stall.dropped"), event, None).await.expect("the event is produced");
         doing("dropping the client");
         client.probe().attach(|_| {}, || 0);

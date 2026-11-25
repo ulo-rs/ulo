@@ -245,7 +245,8 @@ impl<E: Classify> From<E> for CallError { /* keeps `e` as the source */ }
 #[non_exhaustive]
 pub enum Detail {
     FieldViolations(Vec<FieldViolation>),      // google.rpc.BadRequest
-    ErrorInfo { reason: String, domain: String, metadata: BTreeMap<String, String> },
+    #[non_exhaustive]
+    ErrorInfo { reason: String, domain: String, metadata: BTreeMap<String, String> },   // built by Detail::error_info
     RetryAfter(Duration),                      // google.rpc.RetryInfo; HTTP Retry-After
     Help(Vec<Link>),
     Json(serde_json::Value),                   // anything else; gRPC carries it as a google.protobuf.Value packed in an Any

@@ -122,7 +122,7 @@ fn call(deliveries: &mpsc::UnboundedSender<Delivery>, id: u64, pattern: &str) ->
         let sent = frames.send(frame).map_err(BoxError::from);
         Box::pin(async move { sent })
     });
-    let frame = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let frame = Frame::req(id, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
     deliveries.send(Delivery { frame, reply: Some(reply), ack: Ack::none() }).expect("the server reads its link");
     replies
 }
@@ -164,21 +164,21 @@ async fn a_streamed_reply_keeps_its_execution_until_its_last_item_and_finished_c
 
     for id in 1..=3u64 {
         let mut replies = call(&deliveries, id, "end.unary");
-        assert_eq!(frame(&mut replies).await, Frame::Res { id, data: Data::new(b"1".as_slice()) });
+        assert_eq!(frame(&mut replies).await, Frame::res(id, Data::new(b"1".as_slice())));
         until("the unary call's `Audit` dropping as its reply finished", || probe.0.dropped.load(Ordering::SeqCst) == id as usize).await;
     }
 
     let mut replies = call(&deliveries, 4, "end.streamed");
-    assert_eq!(frame(&mut replies).await, Frame::Item { id: 4, data: Data::new(b"1".as_slice()) });
+    assert_eq!(frame(&mut replies).await, Frame::item(4, Data::new(b"1".as_slice())));
     tokio::time::timeout(PATIENCE, probe.0.waiting.notified()).await.expect("the stream reached its gate");
     assert_eq!(probe.0.dropped.load(Ordering::SeqCst), 3, "the streamed call's instance lives while its reply runs");
     probe.0.gate.notify_one();
     assert_eq!(
         frame(&mut replies).await,
-        Frame::Item { id: 4, data: Data::new(b"2".as_slice()) },
+        Frame::item(4, Data::new(b"2".as_slice())),
         "the stream's lookup after the handler returned answered its own instance"
     );
-    assert_eq!(frame(&mut replies).await, Frame::End { id: 4 });
+    assert_eq!(frame(&mut replies).await, Frame::end(4));
     until("the streamed call's `Audit` dropping with its reply", || probe.0.dropped.load(Ordering::SeqCst) == 4).await;
 
     drop(deliveries);

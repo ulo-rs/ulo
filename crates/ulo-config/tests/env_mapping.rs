@@ -125,8 +125,8 @@ fn an_environment_value_is_text_a_typed_read_parses() {
     assert_eq!(
         sorted(pairs(problems.iter())),
         sorted(vec![
-            ("port".to_owned(), Some(Origin::Variable { name: "APP_PORT".into() })),
-            ("debug".to_owned(), Some(Origin::Variable { name: "APP_DEBUG".into() })),
+            ("port".to_owned(), Some(Origin::variable("APP_PORT"))),
+            ("debug".to_owned(), Some(Origin::variable("APP_DEBUG"))),
         ]),
         "an out-of-range number and a non-boolean, each naming its variable"
     );

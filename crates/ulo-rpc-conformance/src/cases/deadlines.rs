@@ -1266,9 +1266,9 @@ impl<L: Link> Link for Stamped<L> {
         Ok(Outbound {
             send: Box::new(move |on, frame, reply_to| {
                 let frame = match frame {
-                    Frame::Req { id, pattern, headers, data } => Frame::Req { id, pattern, headers: stamped(&headers, value), data },
-                    Frame::Open { id, pattern, headers } => Frame::Open { id, pattern, headers: stamped(&headers, value) },
-                    Frame::Evt { pattern, headers, data } => Frame::Evt { pattern, headers: stamped(&headers, value), data },
+                    Frame::Req { id, pattern, headers, data, .. } => Frame::req(id, pattern, stamped(&headers, value), data),
+                    Frame::Open { id, pattern, headers, .. } => Frame::open(id, pattern, stamped(&headers, value)),
+                    Frame::Evt { pattern, headers, data, .. } => Frame::evt(pattern, stamped(&headers, value), data),
                     other => other,
                 };
                 send(on, frame, reply_to)

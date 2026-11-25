@@ -578,9 +578,9 @@ impl ServerSide {
         if channel == CONTROL {
             let sender = deliveries.as_ref()?;
             let delivery = match frame {
-                Frame::In { id, data } => self.calls.get(&id.to_string()).map(|(local, path)| (Frame::In { id: local, data }, path)),
-                Frame::InEnd { id } => self.calls.get(&id.to_string()).map(|(local, path)| (Frame::InEnd { id: local }, path)),
-                Frame::Cancel { id } => self.calls.release(&id.to_string()).map(|(local, path)| (Frame::Cancel { id: local }, path)),
+                Frame::In { id, data, .. } => self.calls.get(&id.to_string()).map(|(local, path)| (Frame::input(local, data), path)),
+                Frame::InEnd { id, .. } => self.calls.get(&id.to_string()).map(|(local, path)| (Frame::in_end(local), path)),
+                Frame::Cancel { id, .. } => self.calls.release(&id.to_string()).map(|(local, path)| (Frame::cancel(local), path)),
                 _ => None,
             };
             if let Some((frame, path)) = delivery {
@@ -591,7 +591,7 @@ impl ServerSide {
         match frame {
             Frame::Evt { headers, data, .. } => {
                 if let Some(sender) = deliveries.as_ref() {
-                    let frame = Frame::Evt { pattern: channel.to_owned(), headers, data };
+                    let frame = Frame::evt(channel, headers, data);
                     let _ = sender.send(Delivery { frame, reply: None, ack: Ack::none() });
                 }
                 None
@@ -604,7 +604,7 @@ impl ServerSide {
                 };
                 let Some(sender) = deliveries.as_ref() else { return Some((id, reply)) };
                 let (local, path) = self.hold(id, reply.clone());
-                let frame = Frame::Req { id: local, pattern: channel.to_owned(), headers, data };
+                let frame = Frame::req(local, channel, headers, data);
                 if sender.send(Delivery { frame, reply: Some(path), ack: Ack::none() }).is_ok() {
                     return None;
                 }
@@ -619,7 +619,7 @@ impl ServerSide {
                 };
                 let Some(sender) = deliveries.as_ref() else { return Some((id, reply)) };
                 let (local, path) = self.hold(id, reply.clone());
-                let frame = Frame::Open { id: local, pattern: channel.to_owned(), headers };
+                let frame = Frame::open(local, channel, headers);
                 if sender.send(Delivery { frame, reply: Some(path), ack: Ack::none() }).is_ok() {
                     return None;
                 }
@@ -639,7 +639,7 @@ impl ServerSide {
     /// the stream ended; dropping it would leave the caller to its own `Timeout`.
     async fn refuse(&self, wire: u64, reply: &str, channel: &str) {
         let error = ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new());
-        let refused = match self.codec.encode_frame(&Frame::Err { id: wire, error }) {
+        let refused = match self.codec.encode_frame(&Frame::err(wire, error)) {
             Ok(bytes) => write(&self.writes, reply.to_owned(), bytes).await,
             Err(error) => Err(BoxError::from(error)),
         };
@@ -726,21 +726,21 @@ impl ClientSide {
     async fn send(&self, pattern: Pattern, frame: Frame) -> Result<(), BoxError> {
         let mut publisher = lock(&self.publisher).clone().ok_or(CLOSED)?;
         match frame {
-            Frame::Req { id, pattern: named, headers, data } => {
-                let frame = Frame::Req { id: self.wire(id), pattern: named, headers: self.with_reply(headers), data };
+            Frame::Req { id, pattern: named, headers, data, .. } => {
+                let frame = Frame::req(self.wire(id), named, self.with_reply(headers), data);
                 self.request(&mut publisher, &pattern, &frame).await
             }
-            Frame::Open { id, pattern: named, headers } => {
-                let frame = Frame::Open { id: self.wire(id), pattern: named, headers: self.with_reply(headers) };
+            Frame::Open { id, pattern: named, headers, .. } => {
+                let frame = Frame::open(self.wire(id), named, self.with_reply(headers));
                 self.request(&mut publisher, &pattern, &frame).await
             }
             evt @ Frame::Evt { .. } => {
                 publish(&mut publisher, pattern.as_str(), &self.codec.encode_frame(&evt)?).await?;
                 Ok(())
             }
-            Frame::In { id, data } => self.control(&mut publisher, &Frame::In { id: self.wire(id), data }).await,
-            Frame::InEnd { id } => self.control(&mut publisher, &Frame::InEnd { id: self.wire(id) }).await,
-            Frame::Cancel { id } => self.control(&mut publisher, &Frame::Cancel { id: self.wire(id) }).await,
+            Frame::In { id, data, .. } => self.control(&mut publisher, &Frame::input(self.wire(id), data)).await,
+            Frame::InEnd { id, .. } => self.control(&mut publisher, &Frame::in_end(self.wire(id))).await,
+            Frame::Cancel { id, .. } => self.control(&mut publisher, &Frame::cancel(self.wire(id))).await,
             other => Err(format!("a client does not send a `{}` frame", other.kind()).into()),
         }
     }
@@ -813,10 +813,10 @@ fn split_reply(headers: CallHeaders) -> (CallHeaders, Option<String>) {
 
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
         other => other,
     }
 }

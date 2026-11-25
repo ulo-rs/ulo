@@ -52,7 +52,7 @@ fn a_server_that_reads_nothing_holds_the_sender_back_until_it_reads() {
     let client = Loopback::on(&hub).connect(&runtime).now_or_never().unwrap().unwrap();
     let mut cx = Context::from_waker(noop_waker_ref());
 
-    let event = || Frame::Evt { pattern: "p".to_owned(), headers: CallHeaders::new(), data: Data::new(Vec::new()) };
+    let event = || Frame::evt("p", CallHeaders::new(), Data::new(Vec::new()));
     let mut held = None;
     for sent in 0..100_000 {
         let mut send = (client.send)(pattern.clone(), event(), None);
