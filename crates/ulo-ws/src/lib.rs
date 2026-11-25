@@ -83,7 +83,7 @@ pub use connection::{ConnId, Connection, Handshake, Refusal, Switch};
 pub use envelope::{Frame, MessageId, Payload};
 pub use gateway::{
     AfterInit, ConnectRefused, DisconnectReason, Gateway, GatewayConfig, GatewayRef, GatewaySettings,
-    OnConnect, OnDisconnect, Overflow, Port, Refuse,
+    OnConnect, OnDisconnect, Overflow, Port, Refuse, call_error,
 };
 pub use handler::{GatewayHooks, WsHandler};
 pub use module::WsModule;
