@@ -24,8 +24,9 @@
 //!    then is answered by the reflection service for its own paths and UNIMPLEMENTED for the rest,
 //!    so a caller an entry refuses is refused alike whether or not the method exists, and lists
 //!    no service through reflection.
-//! 7. An error no handler claims rendered as a status: a `tonic::Status` as it stands,
-//!    DEADLINE_EXCEEDED when the deadline cancelled the call, any other error by its kind.
+//! 7. An error no handler claims rendered as a status: a `tonic::Status` with its code and
+//!    metadata as built and its text redacted, DEADLINE_EXCEEDED when the deadline cancelled the
+//!    call, any other error by its kind.
 //! 8. A response a pre-dispatch entry answered with an HTTP status other than 200 translated by
 //!    the gRPC specification's HTTP-to-status table.
 //! 9. Every response, each refusal above included, given `grpc-accept-encoding` naming the

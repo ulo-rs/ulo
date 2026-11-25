@@ -40,6 +40,11 @@
 //! a generated client names tonic's types from here: `ulo_grpc::tonic::Request`,
 //! `ulo_grpc::tonic::Status`, `ulo_grpc::tonic::transport::Channel`.
 //!
+//! A status's message and the text in its details are passed through the app's redaction as they
+//! are sent, whether a `CallError` or a bare `tonic::Status` carries them: a registered `Secret`
+//! reaches the caller as `[redacted]`, and [`from_status`] is no exception. A value that must reach
+//! the caller verbatim goes in the status's metadata, which is sent as written, never in a message.
+//!
 //! Message compression is gzip ([`Encoding`]): the server decompresses a gzip request unless
 //! [`Server::accept_encodings`] says otherwise, and compresses a reply in gzip only when
 //! [`Server::send_encodings`] lists it and the caller's `grpc-accept-encoding` does too. A reply
@@ -107,7 +112,7 @@ pub use metadata::{MetadataEntry, MetadataError};
 pub use method::{Method, Shape};
 pub use pre_dispatch::PreDispatch;
 pub use server::Server;
-pub use status::{WithGrpcCode, code_for, code_for_http, from_status, to_status};
+pub use status::{WithGrpcCode, call_error, code_for, code_for_http, from_status, to_status};
 pub use transport::{Grpc, GrpcCx, GrpcMetadata, IntoGrpcItem, IntoGrpcReply, IntoGrpcStream, PeerAddr, Reply, Response};
 /// What [`GrpcCx::tls`] answers, HTTP's own types: a guard authorising by client certificate names
 /// them from here.

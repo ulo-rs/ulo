@@ -459,6 +459,45 @@ impl ConnectRefused {
     }
 }
 
+/// The `CallError` for an error an error handler holds as a `BoxError`: a [`ConnectRefused`] as an
+/// error of its kind (`Forbidden` for one [`ConnectRefused::code`] built, which names none), so a
+/// rebuilt error closes as the refusal would have; anything else as `CallError::from_boxed`
+/// recognises it. A refusal by kind, whose reason is the kind and `: ` before the message, gives
+/// that message back, `not_found: no room` the message `no room`, as a message's error envelope
+/// already names the kind; any other refusal's reason is the message and its close code is kept.
+/// An error handler that rebuilds an error calls this rather than `from_boxed`, which names no
+/// ulo-ws type and answers a boxed refusal `Internal`. The refusal stays the error's source.
+///
+/// ```
+/// use ulo_ws::{CloseCode, ConnectRefused, ErrorKind, WithCloseCode};
+///
+/// let code = CloseCode::new(4403).expect("an application's code");
+/// let refused = ConnectRefused::code(code, "not a member").expect("a reason within 123 bytes");
+/// let call = ulo_ws::call_error(Box::new(refused));
+/// assert_eq!(call.kind(), ErrorKind::Forbidden);
+/// assert_eq!(call.close_code(), Some(code));
+/// ```
+pub fn call_error(err: BoxError) -> CallError {
+    match err.downcast::<ConnectRefused>() {
+        Ok(refused) => {
+            let by_kind = refused.kind.and_then(|kind| {
+                let prefix = format!("{kind}: ");
+                [refused.reason.strip_prefix(prefix.as_str()), Some("")]
+                    .into_iter()
+                    .flatten()
+                    .find(|message| by_kind_whole(kind, message) == (refused.close_code, refused.reason.clone()))
+                    .map(|message| CallError::new(kind, message.to_owned()))
+            });
+            let call = by_kind.unwrap_or_else(|| {
+                CallError::new(refused.kind.unwrap_or(ErrorKind::Forbidden), refused.reason.clone())
+                    .__with_close_code(refused.close_code.get())
+            });
+            call.with_source(*refused)
+        }
+        Err(err) => CallError::from_boxed(err),
+    }
+}
+
 /// A refusal by the error's kind, as [`ConnectRefused::kind`] refuses with its message, or with the
 /// close code [`WithCloseCode`](crate::WithCloseCode) set on it and its message alone as the
 /// reason. A stored code no [`CloseCode`] accepts, which only the doc-hidden store can write, is
