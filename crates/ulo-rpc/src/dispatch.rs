@@ -42,7 +42,7 @@ use crate::handler::{HandlerFn, Kind};
 use crate::codec::Codec;
 use crate::frame::{Data, ErrorBody, Frame};
 use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Pattern, ReplyPath};
-use crate::queue::{self, Feed, Halted, Overflow};
+use crate::queue::{self, Cut, Feed, Halted, Overflow};
 use crate::trace;
 use crate::transport::{Body, CallHeaders, CxInner, LinkInfo, NoHandler, Reply, Rpc, RpcCx};
 
@@ -862,13 +862,19 @@ struct Registered {
 
 /// A streamed request whose `in_end` had not arrived when its call ended is cut rather than
 /// ended: a task the handler handed it to reads its end as a failure, not as a complete request.
+/// The execution's cancel reason says who ended the call: a caller whose `cancel` arrived, or
+/// whom the link lost, left; anything else is the server's own end.
 impl Drop for Registered {
     fn drop(&mut self) {
         let mut calls = self.shared.calls();
         if calls.get(&self.id).is_some_and(|live| live.serial == self.serial)
-            && let Some(Live { inbound: Some(feed), .. }) = calls.remove(&self.id)
+            && let Some(Live { inbound: Some(feed), exec, .. }) = calls.remove(&self.id)
         {
-            feed.cut_with_call();
+            let cut = match exec.cancel_reason() {
+                Some(reason @ (CancelReason::ClientCancelled | CancelReason::Disconnected)) => Cut::Departed(reason),
+                _ => Cut::Ended,
+            };
+            feed.cut_with_call(cut);
         }
     }
 }

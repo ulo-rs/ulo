@@ -11,6 +11,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -91,9 +92,9 @@ struct SeenState {
     produced: AtomicU64,
     ignoring: AtomicU64,
     dropped: Mutex<Option<Option<CancelReason>>>,
-    /// What the task reading `queue.handed`'s request read last before its loop ended: `None`
-    /// until it ends, `Some(true)` when an item failed.
-    handed: Mutex<Option<bool>>,
+    /// How the task reading `queue.handed`'s request saw it end: `None` until it ends, then the
+    /// failure its last item carried, with its kind, `Some(None)` for a clean end.
+    handed: Mutex<Option<Option<(ErrorKind, String)>>>,
     /// Raised once `queue.handed` has handed its request over.
     handed_over: Notify,
     /// How the task reading `queue.early`'s request saw it end: `None` until it ends, then the
@@ -180,11 +181,11 @@ impl Queues {
         let seen = (*self.seen).clone();
         tokio::spawn(async move {
             let mut items = items;
-            let mut failed = false;
+            let mut last = None;
             while let Some(item) = items.next().await {
-                failed = item.is_err();
+                last = item.err().map(|failed| (failed.classify(), failed.to_string()));
             }
-            *lock(&seen.0.handed) = Some(failed);
+            *lock(&seen.0.handed) = Some(last);
         });
         self.seen.0.handed_over.notify_one();
         std::future::pending().await
@@ -504,7 +505,8 @@ async fn a_request_read_on_another_task_ends_failing_at_its_overflow() {
     assert_eq!(answer.expect_err("the overflow ends the call").reason(), Some("overflow"));
     let seen = running.seen.clone();
     eventually("the reading task's end", || lock(&seen.0.handed).is_some()).await;
-    assert_eq!(*lock(&running.seen.0.handed), Some(true), "the reading task saw its request end cleanly");
+    let ended = lock(&running.seen.0.handed).clone().flatten();
+    assert_eq!(ended.map(|(kind, _)| kind), Some(ErrorKind::Unavailable), "the reading task saw its request end cleanly");
     running.stop().await;
 }
 
@@ -522,6 +524,30 @@ async fn a_request_read_on_another_task_ends_failing_when_its_call_ends_first() 
     eventually("the reading task's end", || lock(&seen.0.early).is_some()).await;
     let ended = lock(&running.seen.0.early).clone().flatten();
     assert_eq!(ended.as_deref(), Some("`payload` was cut short: its call ended before the caller's last item"), "how the reading task saw its request end");
+    running.stop().await;
+}
+
+/// A request handed to another task ends there `Cancelled` when the caller's connection closes
+/// before `in_end`: the link lost the caller, which is not the server ending the call. The caller
+/// is a plain socket writing `open` and one `in`, then closing. Planted break: the call's
+/// registration cutting the request `Ended` whatever its execution was cancelled with.
+#[tokio::test]
+async fn a_request_read_on_another_task_ends_cancelled_when_its_caller_s_connection_closes() {
+    let running = start(Count::Default).await;
+    let mut socket = std::net::TcpStream::connect(running.addr).expect("the server accepts");
+    for frame in [Frame::open(1, HANDED, CallHeaders::new()), Frame::input(1, Data::new("0"))] {
+        let bytes = Codec::Json.encode_frame(&frame).expect("the frame encodes");
+        let len = u32::try_from(bytes.len()).expect("a frame under 4 GiB");
+        socket.write_all(&len.to_be_bytes()).expect("the prefix is written");
+        socket.write_all(&bytes).expect("the frame is written");
+    }
+    tokio::time::timeout(PATIENCE, running.seen.0.handed_over.notified()).await.expect("the handler handed its request over in time");
+    drop(socket);
+    let seen = running.seen.clone();
+    eventually("the reading task's end", || lock(&seen.0.handed).is_some()).await;
+    let ended = lock(&running.seen.0.handed).clone().flatten();
+    let expected = (ErrorKind::Cancelled, "`payload` was cut short: the caller went away: the link lost it".to_owned());
+    assert_eq!(ended, Some(expected), "how the reading task saw its request end");
     running.stop().await;
 }
 
@@ -802,11 +828,25 @@ impl Feeding {
 
     /// A server over a [`Fed`] link configured by `configure`.
     async fn start_with(configure: impl FnOnce(ulo_rpc::Server<Fed>) -> ulo_rpc::Server<Fed>) -> Feeding {
+        Feeding::start_app(configure, None).await
+    }
+
+    /// [`start`](Self::start) on an app whose drain window is `drain`.
+    async fn start_draining(drain: Duration) -> Feeding {
+        Feeding::start_app(|server| server.max_queued_items(Count::Max(LIMIT)), Some(drain)).await
+    }
+
+    async fn start_app(configure: impl FnOnce(ulo_rpc::Server<Fed>) -> ulo_rpc::Server<Fed>, drain: Option<Duration>) -> Feeding {
         let (deliveries, mut inbound) = mpsc::unbounded_channel::<Delivery>();
         let drained = Arc::new(Notify::new());
         let link = Fed { inbound: Mutex::new(Some(Box::pin(stream::poll_fn(move |cx| inbound.poll_recv(cx))))), drained: Arc::clone(&drained) };
         let seen = Seen::default();
-        let app = serving(configure(ulo_rpc::Server::new(link)), seen.clone()).await.map_err(Box::new).expect("the server binds");
+        let mut builder = App::builder(Root(seen.clone())).runtime(Tokio::current());
+        if let Some(drain) = drain {
+            builder = builder.drain_timeout(drain);
+        }
+        let app = async { builder.wire()?.connect().await?.bind(configure(ulo_rpc::Server::new(link))).listen().await };
+        let app = app.await.map_err(|error: StartupError| Box::new(error)).expect("the server binds");
         let handle = app.handle();
         let serving = tokio::spawn(async move {
             let _ = app.serve(std::future::pending::<Signal>()).await;
@@ -814,15 +854,39 @@ impl Feeding {
         Feeding { deliveries, sent: Arc::default(), seen, handle, drained, serving }
     }
 
-    /// Opens call 1 on `pattern`.
-    fn open(&self, pattern: &str) {
+    /// A reply path recording every frame into [`answers`](Self::answers).
+    fn reply(&self) -> ReplyPath {
         let recording = Arc::clone(&self.sent);
-        let reply = ReplyPath::new(move |frame| {
+        ReplyPath::new(move |frame| {
             lock(&recording).push(frame);
             Box::pin(async { Ok(()) })
-        });
-        let opened = Frame::open(1, pattern, CallHeaders::new());
-        self.deliveries.send(delivery(opened, Some(reply))).expect("the server reads its link");
+        })
+    }
+
+    /// Opens call 1 on `pattern`.
+    fn open(&self, pattern: &str) {
+        self.open_with(pattern, CallHeaders::new());
+    }
+
+    /// Opens call 1 on `pattern` carrying `headers`.
+    fn open_with(&self, pattern: &str, headers: CallHeaders) {
+        let opened = Frame::open(1, pattern, headers);
+        self.deliveries.send(delivery(opened, Some(self.reply()))).expect("the server reads its link");
+    }
+
+    /// Opens call 1 on `queue.handed`, sends it one item and waits for its handler to hand the
+    /// request over.
+    async fn hand_over(&self, headers: CallHeaders) {
+        self.open_with(HANDED, headers);
+        self.items(0..1);
+        tokio::time::timeout(PATIENCE, self.seen.0.handed_over.notified()).await.expect("the handler handed its request over in time");
+    }
+
+    /// How the task reading `queue.handed`'s request saw it end, once it has.
+    async fn handed(&self) -> Option<(ErrorKind, String)> {
+        let seen = self.seen.clone();
+        eventually("the reading task's end", || lock(&seen.0.handed).is_some()).await;
+        lock(&self.seen.0.handed).clone().flatten()
     }
 
     /// Sends call 1 the items `items`, with no await between them, so the server routes them all
@@ -1048,6 +1112,59 @@ async fn a_request_cut_short_by_its_byte_bound_ends_failing_with_overflowed_byte
         "the reader read the byte overflow once, as an `Unavailable` failure"
     );
     feeding.stop().await;
+}
+
+/// What a reader on another task reads last when the server ended its request's call before
+/// `in_end`.
+const CALL_ENDED: &str = "`payload` was cut short: its call ended before the caller's last item";
+
+/// A request handed to another task ends there `Cancelled` when its caller leaves before
+/// `in_end`, by its `cancel`, delivered with its reply path, or by a link that lost it, delivering
+/// `cancel` with none, and the source says which; a call its caller left is answered nothing.
+/// Planted break: the call's registration cutting the request `Ended` whatever its execution was
+/// cancelled with.
+#[tokio::test]
+async fn a_request_read_on_another_task_ends_cancelled_when_its_caller_leaves() {
+    for (sent_cancel, how) in [(true, "it sent `cancel`"), (false, "the link lost it")] {
+        let feeding = Feeding::start().await;
+        feeding.hand_over(CallHeaders::new()).await;
+        let reply = sent_cancel.then(|| feeding.reply());
+        feeding.deliveries.send(delivery(Frame::cancel(1), reply)).expect("the server reads its link");
+        let expected = (ErrorKind::Cancelled, format!("`payload` was cut short: the caller went away: {how}"));
+        assert_eq!(feeding.handed().await, Some(expected), "a caller that left ({how})");
+        assert!(feeding.answers().is_empty(), "a call its caller left was answered ({how}): {:?}", feeding.answers());
+        feeding.stop().await;
+    }
+}
+
+/// A request handed to another task ends there `CallEnded`, `Unavailable`, when the server ends
+/// its call before `in_end`: at the call's deadline, answered `timeout`, and at the drain's end,
+/// answered `unavailable`. The handler answering first is the TCP test above. Planted break:
+/// every cancellation before `in_end` read as the caller leaving.
+#[tokio::test]
+async fn a_request_read_on_another_task_ends_call_ended_when_the_server_ends_its_call() {
+    let feeding = Feeding::start().await;
+    let mut headers = CallHeaders::new();
+    headers.insert("deadline-ms", "50");
+    feeding.hand_over(headers).await;
+    assert_eq!(feeding.handed().await, Some((ErrorKind::Unavailable, CALL_ENDED.to_owned())), "at the call's deadline");
+    eventually("the call's answer", || !feeding.answers().is_empty()).await;
+    let answers = feeding.answers();
+    let [Frame::Err { error, .. }] = answers.as_slice() else { panic!("the call's one answer is an `err`: {answers:?}") };
+    assert_eq!(error.kind, ErrorKind::Timeout, "{error:?}");
+    feeding.stop().await;
+
+    let feeding = Feeding::start_draining(Duration::from_millis(50)).await;
+    feeding.hand_over(CallHeaders::new()).await;
+    let handle = feeding.handle.clone();
+    let closing = tokio::spawn(async move { handle.close(Signal::new("test")).await });
+    assert_eq!(feeding.handed().await, Some((ErrorKind::Unavailable, CALL_ENDED.to_owned())), "at the drain's end");
+    eventually("the call's answer", || !feeding.answers().is_empty()).await;
+    let answers = feeding.answers();
+    let [Frame::Err { error, .. }] = answers.as_slice() else { panic!("the call's one answer is an `err`: {answers:?}") };
+    assert_eq!(error.kind, ErrorKind::Unavailable, "{error:?}");
+    feeding.stop().await;
+    let _ = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time");
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

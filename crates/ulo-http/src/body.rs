@@ -53,6 +53,12 @@ impl HttpBody {
     /// `BrokenPipe` or `NotConnected` down the error's `source()` chain, as hyper's errors carry
     /// one: the body extractors then fail `ExtractError::Cancelled`, kind `Cancelled`, where any
     /// other read error is `Malformed`.
+    ///
+    /// Every one of those kinds anywhere in the chain reads as the caller leaving, so a layer the
+    /// host puts between the connection and this body, a decompressor among them, wraps its own
+    /// failures in an error of its own whose chain carries none of them: a gzip stream cut short
+    /// that a decoder reports as `UnexpectedEof` would otherwise read as `Cancelled` rather than
+    /// `Malformed`. A read error of the connection beneath the layer is passed on as it is.
     pub fn new<B>(body: B) -> Self
     where
         B: http_body::Body<Data = Bytes> + Send + 'static,

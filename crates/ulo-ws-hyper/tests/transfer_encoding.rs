@@ -240,6 +240,16 @@ async fn all_cases(app: &Served) {
     cases(app, app.own, "/own", "standalone").await;
     cases(app, app.http, "/shared", "HTTP").await;
 
+    // The standalone port switches only a handshake whose `Upgrade` lists `websocket`, which the
+    // head check refuses beside `Transfer-Encoding`, so it needs no guard on the 101 the HTTP
+    // server's port has for an application's own upgrade handler.
+    let own = app.own.to_string();
+    for upgrade in ["h2c", "websocketx"] {
+        let request = handshake("/own", &own, "Transfer-Encoding: chunked\r\n", "0\r\n\r\n").replace("Upgrade: websocket", &format!("Upgrade: {upgrade}"));
+        let [answer] = app.answers(app.own, &request, 1).await.try_into().unwrap_or_else(|answers: Vec<String>| panic!("{answers:?}"));
+        assert!(!answer.starts_with("HTTP/1.1 101 "), "`Upgrade: {upgrade}` with `Transfer-Encoding` on the standalone port switched: {answer:?}");
+    }
+
     let authority = app.http.to_string();
     let chunked = app.answers(app.http, &posts(&authority, "Transfer-Encoding: chunked\r\n"), 2).await;
     for answer in &chunked {

@@ -31,7 +31,9 @@ pub trait UpgradeHandler: Send + Sync + 'static {
     fn paths(&self, app: &AppHandle) -> Vec<Cow<'static, str>>;
 
     /// Answers one upgrade request: the 101 response, after which the handler awaits
-    /// `req.upgrade` for the connection's I/O, or a refusal.
+    /// `req.upgrade` for the connection's I/O, or a refusal. A 101 to an HTTP/1.x request carrying
+    /// `Transfer-Encoding` is not sent: the server answers 400 with `Connection: close` in its
+    /// place (RFC 9112 §6.1), and `req.upgrade` yields no connection.
     fn upgrade(&self, req: Request) -> BoxFuture<'static, Response>;
 
     /// Builds what can fail without a connection: a gateway's handlers through
