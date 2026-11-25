@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use ulo::{App, AppBuilder, Dep, Module, ModuleDef, ModuleIdentity, Secret, controller, handlers};
+use ulo::{App, AppBuilder, Dep, Secret, controller, handlers, module};
 use ulo_config::{Config, ConfigModule, Defaults, DotEnv, Env, File, Values};
 use ulo_http::Json;
 
@@ -119,7 +119,14 @@ impl SettingsController {
     }
 }
 
-/// Holds the `Config` because `ConfigModule` reads its sections at registration.
+/// Holds the `Config` because `ConfigModule` reads its sections at registration. A `Config` is
+/// not `Eq + Hash`, so the module is identified by its type, which makes it a module registered
+/// once.
+#[module(
+    identity = type,
+    imports = [ConfigModule::<AppConfig>::new(&self.config).deny_unread()],
+    controllers = [SettingsController],
+)]
 pub struct AppModule {
     config: Config,
 }
@@ -127,17 +134,6 @@ pub struct AppModule {
 impl AppModule {
     pub fn new(config: Config) -> Self {
         AppModule { config }
-    }
-}
-
-impl Module for AppModule {
-    fn identity(&self) -> ModuleIdentity {
-        ModuleIdentity::of_type::<Self>()
-    }
-
-    fn register(&self, m: &mut ModuleDef<'_>) {
-        m.import(ConfigModule::<AppConfig>::new(&self.config).deny_unread());
-        m.controller::<SettingsController>();
     }
 }
 

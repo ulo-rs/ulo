@@ -364,6 +364,36 @@ impl CallError {
         self.close_code
     }
 
+    /// The first `E` in `error`, wherever it sits: `error` itself, or down its `source()` chain,
+    /// which reaches the source of a `CallError` and the original of a [`Redacted`](ulo::Redacted),
+    /// and inside the core's own errors, as a constructor's error inside a `LookupError`.
+    /// A `GuardRejected` arrives bare and a [`Classify`] error arrives inside a `CallError`, and
+    /// this answers for both.
+    ///
+    /// The walk stops at 32 levels, as `ulo::is_panic` and `ulo::is_permanent` do.
+    ///
+    /// ```
+    /// use ulo::BoxError;
+    /// use ulo_transport::CallError;
+    ///
+    /// #[derive(Debug)]
+    /// struct Gone;
+    /// impl std::fmt::Display for Gone {
+    ///     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    ///         f.write_str("gone")
+    ///     }
+    /// }
+    /// impl std::error::Error for Gone {}
+    ///
+    /// let inside: BoxError = Box::new(CallError::from_boxed(Box::new(Gone)));
+    /// assert!(CallError::find::<Gone>(&inside).is_some());
+    /// let bare: BoxError = Box::new(Gone);
+    /// assert!(CallError::find::<Gone>(&bare).is_some());
+    /// ```
+    pub fn find<E: Error + 'static>(error: &BoxError) -> Option<&E> {
+        ulo::__private::find_error::<E>(error)
+    }
+
     /// The domain error this was built from, by type: `err.downcast_ref::<CallError>()?.source_as::<UserError>()`.
     pub fn source_as<E: Error + 'static>(&self) -> Option<&E> {
         self.source.as_deref().and_then(|source| source.downcast_ref::<E>())
@@ -515,6 +545,59 @@ mod tests {
 
     use super::*;
     use crate::details::Detail;
+
+    #[derive(Debug)]
+    struct Marker;
+
+    impl fmt::Display for Marker {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("marker")
+        }
+    }
+
+    impl Error for Marker {}
+
+    /// An error keeping `0` as its `source()`.
+    #[derive(Debug)]
+    struct Layer(BoxError);
+
+    impl fmt::Display for Layer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("layer")
+        }
+    }
+
+    impl Error for Layer {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&*self.0)
+        }
+    }
+
+    fn layered(levels: usize) -> BoxError {
+        let inner: BoxError = Box::new(CallError::new(ErrorKind::NotFound, "gone").with_source(Marker));
+        (0..levels).fold(inner, |inner, _| Box::new(Layer(inner)) as BoxError)
+    }
+
+    /// A bare error and one inside a `CallError` are both found by type; a type on neither is not.
+    #[test]
+    fn find_reaches_a_bare_error_and_one_inside_a_call_error() {
+        let bare: BoxError = Box::new(Marker);
+        assert!(CallError::find::<Marker>(&bare).is_some());
+        assert!(CallError::find::<Original>(&bare).is_none());
+        let inside = layered(0);
+        assert!(CallError::find::<Marker>(&inside).is_some());
+        assert!(CallError::find::<CallError>(&inside).is_some());
+        assert!(CallError::find::<Original>(&inside).is_none());
+    }
+
+    /// The `CallError` is one level above the marker: with 30 layers over the `CallError` the
+    /// marker sits at depth 31 and is found, with 31 layers it sits at depth 32 and is not.
+    /// Planted break: a bound of 33 fails the second assertion.
+    #[test]
+    fn find_stops_at_the_depth_bound() {
+        assert!(CallError::find::<Marker>(&layered(MAX_DEPTH - 2)).is_some());
+        assert!(CallError::find::<Marker>(&layered(MAX_DEPTH - 1)).is_none());
+    }
 
     #[derive(Debug)]
     struct Original;

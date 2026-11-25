@@ -1041,6 +1041,100 @@ fn redacted_panicked(redacted: &Redacted, depth: usize) -> bool {
     depth < MAX_DEPTH && panic_in(redacted.original(), depth)
 }
 
+/// The first `E` on `error`'s chain: the error itself, then each `source()`, and for a
+/// [`Redacted`] its original and that original's own chain, since `Redacted::source` answers
+/// `None`. The core's own types are read by their structure, as `is_panic` and `is_permanent`
+/// read them, because their `source()` is transparent or `None` and skips the error they hold:
+/// a constructor's error inside a `LookupError` or a `ConnectError`, a server's `prepare` error
+/// in `StartupError::Configure`, a transport's error in `Bind` or in a `ShutdownError`. A
+/// `Panicked` reason is a message, not an error, and a connect failure's `teardown` is not read.
+/// The bound is theirs.
+pub(crate) fn find_in<'e, E: Error + 'static>(error: &'e (dyn Error + 'static), depth: usize) -> Option<&'e E> {
+    if depth >= MAX_DEPTH {
+        return None;
+    }
+    if let Some(found) = error.downcast_ref::<E>() {
+        return Some(found);
+    }
+    match find_recognized(error, depth) {
+        Some(found) => found,
+        None => error.source().and_then(|cause| find_in(cause, depth + 1)),
+    }
+}
+
+/// `Some` for the types whose held errors `source()` does not reach, holding what their fields
+/// yield; `None` for any other type, whose `source()` is walked.
+fn find_recognized<'e, E: Error + 'static>(error: &'e (dyn Error + 'static), depth: usize) -> Option<Option<&'e E>> {
+    if let Some(redacted) = error.downcast_ref::<Redacted>() {
+        return Some(find_redacted(redacted, depth + 1));
+    }
+    if let Some(lookup) = error.downcast_ref::<LookupError>() {
+        return Some(find_lookup(lookup, depth));
+    }
+    if let Some(construct) = error.downcast_ref::<ConstructError>() {
+        return Some(match construct {
+            ConstructError::Dependency(lookup) => find_lookup(lookup, depth),
+            ConstructError::Failed(inner) => find_in(&**inner, depth + 1),
+        });
+    }
+    if let Some(connect) = error.downcast_ref::<ConnectError>() {
+        return Some(find_connect(connect, depth));
+    }
+    if let Some(LoadError::Connect { error, .. }) = error.downcast_ref::<LoadError>() {
+        return Some(find_connect(error, depth));
+    }
+    if let Some(startup) = error.downcast_ref::<StartupError>() {
+        return match startup {
+            StartupError::Connect { error, .. } => Some(find_connect(error, depth)),
+            StartupError::Configure(errors) => Some(find_configure(errors, depth)),
+            StartupError::Bind { source, .. } => Some(find_redacted(source, depth + 1)),
+            StartupError::Wiring(_) => None,
+        };
+    }
+    if let Some(errors) = error.downcast_ref::<ConfigureErrors>() {
+        return Some(find_configure(errors, depth));
+    }
+    if let Some(shutdown) = error.downcast_ref::<ShutdownError>() {
+        return Some(shutdown.failures.iter().find_map(|failure| match failure {
+            ShutdownFailure::Hook { reason, .. } => find_reason(reason, depth),
+            ShutdownFailure::Close { reason, .. } => find_reason(reason, depth),
+            ShutdownFailure::Serve { end: ServeEnd::Errored(redacted), .. } => find_redacted(redacted, depth + 1),
+            _ => None,
+        }));
+    }
+    None
+}
+
+fn find_redacted<E: Error + 'static>(redacted: &Redacted, depth: usize) -> Option<&E> {
+    find_in(redacted.original(), depth)
+}
+
+fn find_configure<E: Error + 'static>(errors: &ConfigureErrors, depth: usize) -> Option<&E> {
+    errors.iter().find_map(|entry| find_redacted(&entry.source, depth + 1))
+}
+
+fn find_lookup<E: Error + 'static>(error: &LookupError, depth: usize) -> Option<&E> {
+    match error {
+        LookupError::Construct { reason, .. } => find_reason(reason, depth),
+        _ => None,
+    }
+}
+
+fn find_connect<E: Error + 'static>(error: &ConnectError, depth: usize) -> Option<&E> {
+    match error {
+        ConnectError::Construct { reason, .. }
+        | ConnectError::Readiness { reason, .. }
+        | ConnectError::Hook { reason, .. } => find_reason(reason, depth),
+    }
+}
+
+fn find_reason<E: Error + 'static>(reason: &FailureReason, depth: usize) -> Option<&E> {
+    match reason {
+        FailureReason::Errored(redacted) => find_redacted(redacted, depth + 1),
+        _ => None,
+    }
+}
+
 /// `Some` when `error` is one of the core's types that can carry a panic, holding whether it
 /// does; `None` for any other type.
 fn recognized(error: &(dyn Error + 'static), depth: usize) -> Option<bool> {
@@ -1206,6 +1300,47 @@ mod wrapped_before_redaction {
     fn past_the_depth_bound_neither_predicate_finds_its_error() {
         assert!(!is_panic_of(start(panic(), MAX_DEPTH)));
         assert!(!is_permanent(&start(Box::new(Permanent::new(fmt::Error)), MAX_DEPTH)));
+    }
+
+    fn found_under(levels: usize, redact: bool) -> bool {
+        let inner: BoxError = Box::new(Permanent::new(fmt::Error));
+        let wrapped = (0..levels).fold(inner, |inner, _| Box::new(Wrapping(inner)) as BoxError);
+        let root: BoxError = if redact { Box::new(Redacted::from_parts(wrapped, "text".into())) } else { wrapped };
+        crate::__private::find_error::<Permanent>(&root).is_some()
+    }
+
+    /// `find_error` reads what `is_permanent` reads: a `Permanent` behind the core's own types,
+    /// whose `source()` skips it, is found wherever `is_permanent` finds it.
+    /// Planted break: `find_recognized` answering `None` for every type fails this test and the
+    /// one below.
+    #[test]
+    fn find_reads_the_core_types_as_is_permanent_does() {
+        let permanent = || Box::new(Permanent::new(fmt::Error)) as BoxError;
+        let startup = start(permanent(), 1);
+        assert!(is_permanent(&startup));
+        let startup: BoxError = Box::new(startup);
+        let lookup: BoxError = Box::new(LookupError::Construct {
+            key: Key::of::<u8, ()>().name(BindingKind::Single),
+            reason: Box::new(FailureReason::Errored(Redacted::from_parts(permanent(), "text".into()))),
+        });
+        let failed: BoxError = Box::new(ConstructError::Failed(permanent()));
+        for (name, error) in [("startup", &startup), ("lookup", &lookup), ("construct", &failed)] {
+            assert!(crate::__private::find_error::<Permanent>(error).is_some(), "{name}");
+        }
+    }
+
+    /// `find_error` reads a `Redacted`'s original, which `source()` does not reach, and shares the
+    /// bound: the target at depth 31 is found and at depth 32 is not, with and without a `Redacted`
+    /// at the root. Planted break: `find_in` following `source()` alone, which fails the redacted
+    /// cases; a bound other than `MAX_DEPTH` fails the edge.
+    #[test]
+    fn find_walks_a_redacted_original_to_the_same_bound() {
+        assert!(found_under(0, true));
+        assert!(found_under(1, true));
+        assert!(found_under(MAX_DEPTH - 2, true), "the redaction takes one level");
+        assert!(!found_under(MAX_DEPTH - 1, true));
+        assert!(found_under(MAX_DEPTH - 1, false));
+        assert!(!found_under(MAX_DEPTH, false));
     }
 }
 

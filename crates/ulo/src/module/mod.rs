@@ -161,6 +161,8 @@ impl Hash for ModuleIdentity {
 pub struct ModuleSettings {
     entries: Vec<Setting>,
     repeats: Vec<Repeat>,
+    /// Set by `#[module(identity = type)]` on a struct with fields: the module is registered once.
+    unshared: bool,
 }
 
 #[derive(Clone)]
@@ -198,6 +200,18 @@ impl ModuleSettings {
             None => self.entries.push(Setting { name, value: format!("{value:?}"), at }),
         }
         self
+    }
+
+    /// Marks the module as one whose fields are not its identity, so a second registration of its
+    /// type is refused as `WiringError::RegisteredTwice`. Written by `#[module(identity = type)]`.
+    #[doc(hidden)]
+    pub fn __unshared(mut self) -> Self {
+        self.unshared = true;
+        self
+    }
+
+    pub(crate) fn unshared(&self) -> bool {
+        self.unshared
     }
 
     /// Each name written a second time, in the order the repeats were written.

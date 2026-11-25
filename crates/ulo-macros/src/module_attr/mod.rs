@@ -2,7 +2,10 @@
 //!
 //! A unit struct is identified by type (`ModuleIdentity::of_type::<Self>()`); a struct with
 //! fields is a configured module, identified by value (`ModuleIdentity::of_value(self)`, which
-//! needs `Eq + Hash + Clone`). Every field's secrets are registered with `m.secret(..)`, decided
+//! needs `Eq + Hash + Clone`). `identity = type` identifies a struct with fields by its type
+//! too, for fields that are not `Eq + Hash + Clone`; such a module marks its `settings()` so a
+//! second registration is refused (`WiringError::RegisteredTwice`), since the second's fields would
+//! otherwise go unused. Every field's secrets are registered with `m.secret(..)`, decided
 //! by the field's type through the probe in `ulo::__private::secret_field`: a `Secret<_>` field
 //! however its type is spelled, and an `Option`, `Vec` or map over one. A secret inside another
 //! type the field holds is not reached. A field behind a `#[cfg]` is probed under that `cfg`; on a
@@ -55,12 +58,19 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &Token
     let name = &item.ident;
     let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
 
-    let identity = if item.fields.is_empty() {
+    let identity = if item.fields.is_empty() || args.identity_type {
         quote!(#ulo::ModuleIdentity::of_type::<Self>())
     } else {
         let this = quote!(self);
         quote_spanned!(name.span()=> #ulo::ModuleIdentity::of_value(#this))
     };
+    let settings = (args.identity_type && !item.fields.is_empty()).then(|| {
+        quote! {
+            fn settings(&self) -> #ulo::ModuleSettings {
+                #ulo::ModuleSettings::new().__unshared()
+            }
+        }
+    });
     let global = args.global.then(|| quote!(#m.global();));
     let secrets = secret_fields(&item)?;
     let imports = args.imports.iter().map(|import| {
@@ -98,6 +108,8 @@ pub(crate) fn expand_struct(args: ModuleArgs, item: ItemStruct, original: &Token
             fn identity(&self) -> #ulo::ModuleIdentity {
                 #identity
             }
+
+            #settings
 
             #[allow(unused_variables)]
             fn register(&self, #m: &mut #ulo::ModuleDef<'_>) {

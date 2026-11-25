@@ -51,24 +51,32 @@ pub(crate) enum Site {
     Import { importer: Import, at: &'static Location<'static> },
 }
 
-/// A second registration of `module` with settings other than the first's.
+/// A second registration of `module` with settings other than the first's, or of a module whose
+/// fields are not its identity.
 pub(crate) struct Differing {
     pub(crate) module: Import,
     pub(crate) first: Site,
     pub(crate) second: Site,
+    /// The module is `#[module(identity = type)]` with fields, so any second registration is
+    /// refused and `settings` is empty.
+    pub(crate) unshared: bool,
     /// Each differing setting as `(name, first value, second value)`.
     pub(crate) settings: Vec<(&'static str, Option<String>, Option<String>)>,
 }
 
 impl Differing {
-    /// `None` when the settings agree. `first` belongs to the registration holding the identity.
+    /// `None` when the settings agree and the module may be registered twice. `first` belongs to
+    /// the registration holding the identity.
     pub(crate) fn of(
         module: Import,
         first: (&ModuleSettings, Site),
         second: (&ModuleSettings, Site),
     ) -> Option<Differing> {
+        if first.0.unshared() || second.0.unshared() {
+            return Some(Differing { module, first: first.1, second: second.1, unshared: true, settings: Vec::new() });
+        }
         let settings = first.0.differences(second.0);
-        (!settings.is_empty()).then_some(Differing { module, first: first.1, second: second.1, settings })
+        (!settings.is_empty()).then_some(Differing { module, first: first.1, second: second.1, unshared: false, settings })
     }
 
     /// The report entry. `names` are the registry's by node, and `base` holds the modules an
@@ -83,6 +91,9 @@ impl Differing {
             Site::Load { at } => ModuleSite::Load { at },
             Site::Import { importer, at } => ModuleSite::Import { importer: name(importer), at },
         };
+        if self.unshared {
+            return WiringError::RegisteredTwice { module: name(self.module), first: site(self.first), second: site(self.second) };
+        }
         WiringError::DifferingSettings {
             module: name(self.module),
             first: site(self.first),

@@ -4,11 +4,13 @@ use syn::{Expr, Ident, Token, Type, bracketed};
 
 use crate::module_attr::providers::{ProviderEntry, Qualifier, parse_qualifier};
 
-/// `#[module(global, imports = [..], providers = [..], controllers = [..], exports = [..])]`,
-/// each key at most once, in any order.
+/// `#[module(global, identity = type, imports = [..], providers = [..], controllers = [..],
+/// exports = [..])]`, each key at most once, in any order.
 #[derive(Default)]
 pub(crate) struct ModuleArgs {
     pub(crate) global: bool,
+    /// `identity = type`: the module is identified by its type, whatever its fields hold.
+    pub(crate) identity_type: bool,
     pub(crate) imports: Vec<Expr>,
     pub(crate) providers: Vec<ProviderEntry>,
     pub(crate) controllers: Vec<Type>,
@@ -35,6 +37,13 @@ impl Parse for ModuleArgs {
             seen.push(name.clone());
             match name.as_str() {
                 "global" => args.global = true,
+                "identity" => {
+                    input.parse::<Token![=]>()?;
+                    args.identity_type = input.parse::<Token![type]>().is_ok();
+                    if !args.identity_type {
+                        return Err(syn::Error::new(input.span(), "`identity` takes `type`: `identity = type` identifies the module by its type alone"));
+                    }
+                }
                 "imports" => args.imports = list::<Expr>(input)?,
                 "providers" => args.providers = list::<ProviderEntry>(input)?,
                 "controllers" => args.controllers = list::<Type>(input)?,
@@ -42,7 +51,7 @@ impl Parse for ModuleArgs {
                 _ => {
                     return Err(syn::Error::new(
                         key.span(),
-                        "expected `global`, `imports`, `providers`, `controllers` or `exports`",
+                        "expected `global`, `identity`, `imports`, `providers`, `controllers` or `exports`",
                     ));
                 }
             }
