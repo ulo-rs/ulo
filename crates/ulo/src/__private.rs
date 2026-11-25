@@ -919,3 +919,10 @@ pub mod controller_entry {
     }
     impl<T: ?Sized> UnmarkedArm<T> for &Probe<T> {}
 }
+
+/// The first `E` on an error's chain, through a `Redacted`'s original and the core's own error
+/// types, to the depth bound
+/// `is_panic` and `is_permanent` use. Behind `ulo_transport::CallError::find`.
+pub fn find_error<E: std::error::Error + 'static>(error: &BoxError) -> Option<&E> {
+    crate::error::find_in(&**error, 0)
+}

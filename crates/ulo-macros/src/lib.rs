@@ -89,6 +89,28 @@ pub fn construct(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// a module written with `ModuleDef`, or read it through configuration, which registers each
 /// secret as it reads it.
 ///
+/// `identity = type` identifies a struct with fields by its type, as a unit struct is, for a
+/// module whose fields are `Clone` but not `Eq + Hash`, such as one holding a `ulo_config::Config`.
+/// The module is registered once: a second `import` or `load` of its type is refused as
+/// `WiringError::RegisteredTwice` naming both sites, since its fields are not what makes two
+/// registrations the same. A module imported from several places gives itself an identity
+/// (`Eq + Hash + Clone` fields, or `Module::settings`) and is written without the option. On a
+/// struct without fields it changes nothing. Any value but `type` is a compile error.
+///
+/// ```
+/// use ulo::{App, module};
+///
+/// #[derive(Clone)]
+/// struct Settings(u8); // not `Eq + Hash`
+///
+/// #[module(identity = type)]
+/// struct AppModule {
+///     settings: Settings,
+/// }
+///
+/// assert!(App::builder(AppModule { settings: Settings(1) }).wire().is_ok());
+/// ```
+///
 /// Provider entries: `Type` (`provide::<Type>()`), `Type as dyn Trait` (`also_as`), `expr?`
 /// (`try_value`), `expr` (`value`), `with = |..| ..` (`with`, or `try_with` when the closure's
 /// output is a `Result`), `with(<scope>) = |..| ..` (`singleton`, `execution` or `transient`, or
