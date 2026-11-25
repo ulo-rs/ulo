@@ -128,21 +128,60 @@ and the `against` line in `ci/semver-breaks.txt` no longer matches it, so its en
 The first change that breaks a public item replaces the file with entries for the breaks since the
 new release and sets `against` to it.
 
-## Publishing a crate for the first time
+## Publishing
 
-`cargo publish --workspace` packages every publishable crate, verifies each against the others at
-the version being released, and uploads them in the order of their normal and build dependencies,
-each after the crates it pins. A crate checked alone, `cargo package -p <crate>` or
-`cargo publish --dry-run -p <crate>`, resolves its `=` pins on crates.io instead, and fails while a
-crate it pins is not on crates.io at that version. Dev-dependencies name no version, and Cargo
-strips them from the published manifest, so they impose no order; `ulo-rpc-conformance` and
-`ulo-rpc-tcp` are each a dev-dependency of the other, and so are `ulo-runtime-conformance` and
-`ulo-runtime-smol`. `ulo-runtime-conformance` is first published after `ulo` and `ulo-transport`,
-the two crates it pins, and `cargo publish --workspace` orders it so.
+`scripts/publish.py` publishes a release. It reads the publishable crates and their order from
+`cargo metadata` and asks crates.io's sparse index which names and versions exist. On release day,
+once the release pull request is merged:
 
-crates.io limits how many new crate names one account creates: a burst of a few, then about one
-every ten minutes. A release adding more names than the burst spaces them or waits out the limit
-when crates.io answers 429.
+```sh
+git tag -a v<version> -m v<version> <release commit>
+git worktree add --detach ../ulo-release v<version>    # a checkout with no untracked files
+cd ../ulo-release
+python3 scripts/publish.py plan                 # reads only: order, new and existing names, wall time
+python3 scripts/publish.py publish --dry-run    # packages and verifies every crate still to publish
+python3 scripts/publish.py publish              # uploads, and tags each leaf
+git push origin $(git tag --points-at HEAD)     # the core tag and the leaf tags, nothing else
+```
+
+The script refuses a tree with any change or untracked file, which `git status --porcelain` lists,
+so it runs in a checkout made for the release rather than one holding other work.
+
+**Plan.** Prints the crates still to publish in upload order, marks each name new or existing, and
+the wall time the limits below impose. It publishes and tags nothing.
+
+**Publish.** Requires a clean tree and a HEAD that the core tag `v<version>` names, so the release
+commit is tagged first. A crate is uploaded once every publishable workspace crate it depends on,
+through a normal or build dependency, is on crates.io, and a name crates.io already has goes before
+a new name that is ready at the same time. Cargo strips a dev-dependency that names no version from
+the published manifest, so it imposes no order; `ulo-rpc-conformance` and `ulo-rpc-tcp` are each a
+dev-dependency of the other, and so are `ulo-runtime-conformance` and `ulo-runtime-smol`. A
+dev-dependency that names a version stays in the manifest and is resolved on crates.io, so it orders
+like a normal one: `ulo-grpc` names `ulo-runtime-tokio`'s. `--dry-run` runs one
+`cargo publish --workspace --dry-run`, excluding the crates already on crates.io at their version:
+Cargo packages the rest together and resolves their `=` pins on each other, so every crate still to
+publish is built and verified. It needs the clean tree and not the tag.
+
+**The new-name limit.** crates.io lets an account create five new names at once and then one every
+ten minutes; a new version of an existing name has a burst of thirty and then one per minute
+(https://crates.io/docs/rate-limits). A release with many new names therefore takes hours by
+design, and `plan` prints the figure. When
+crates.io answers 429 the script sleeps until the time the answer names plus 30 seconds and retries
+the same crate.
+
+**Rerun.** The registry is the state. After any interruption, a network failure or Ctrl-C, running
+the same command resumes: a crate on crates.io at its version, or one Cargo reports as already
+uploaded, is skipped. Any other failure stops the run with Cargo's output.
+
+**Tags.** The core tag `v<version>` is created by hand on the release commit before publishing; the
+script checks it. Each crate outside the `core` group of `release-plz.toml` gets an annotated
+`<crate>-v<version>` tag at HEAD once it is on crates.io, created by the script and local. A crate
+an earlier run uploaded is tagged only when its published `.crate` records HEAD as the commit it was
+packaged from; the run names the commit it records otherwise. Pushing the tags is the last step.
+
+`cargo publish --workspace` also uploads in dependency order, but stops at the first 429 and has no
+resume. A crate checked alone, `cargo package -p <crate>`, resolves its `=` pins on crates.io
+instead of in the workspace.
 
 crates.io makes the account that publishes a new crate its only owner. Once a new crate is
 published, the publishers team is added as an owner:
