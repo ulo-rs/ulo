@@ -13,6 +13,10 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Create a project from a template: `ulo new <name> --transport http --db sqlx-postgres`
+    ///
+    /// Under a Cargo workspace, the project is added to the nearest workspace root's `members`, as
+    /// `cargo new` does, unless they already match it or its `exclude` covers it; when that manifest
+    /// cannot be parsed or edited the project carries an empty `[workspace]` table instead.
     New(commands::new::NewArgs),
     /// Write a module, provider, controller, gateway or resolver as a new file and print the line
     /// that registers it; no existing file is edited
