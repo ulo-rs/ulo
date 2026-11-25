@@ -43,11 +43,11 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 /// Per request, in order:
 /// 1. Over the server's in-flight bound: 503 with `Retry-After`.
 /// 2. An HTTP/1.x request carrying two `Host` lines, or `Content-Length` beside
-///    `Transfer-Encoding`: 400 as a problem document with `Connection: close`, answered directly,
-///    no execution opened (RFC 9112 §3.2, §6.3). hyper drops the `Content-Length` of a request
-///    carrying both as it parses the head, so on hyper and the hosts built on it such a request
-///    arrives with its `Transfer-Encoding` alone, its body read by it, and hyper closes the
-///    connection after the answer.
+///    `Transfer-Encoding`, or a WebSocket handshake carrying `Transfer-Encoding`: 400 as a problem
+///    document with `Connection: close`, answered directly, no execution opened (RFC 9112 §3.2,
+///    §6.3). hyper drops the `Content-Length` of a request carrying both as it parses the head, so
+///    on hyper and the hosts built on it such a request arrives with its `Transfer-Encoding`
+///    alone, its body read by it, and hyper closes the connection after the answer.
 /// 3. `Execution::open` at the root module. Refused during the drain: 503 with `Retry-After` and
 ///    `Connection: close`, answered directly, no pre-dispatch stage.
 /// 4. The inputs `RequestHead` and `ClientAddr` seeded, as the client sent them; the
@@ -85,7 +85,11 @@ use crate::upgrade::{ServingConfig, UpgradeHandler};
 ///    answer after which the client reads the next response as this one's. A handler, a
 ///    pre-dispatch entry or an error handler answering one, or an upgrade handler answering a 1xx
 ///    other than 101, gets the internal-error 500 problem document in its place, logged at
-///    `error` with the route and the handler routing matched. `100 Continue` is the backend's
+///    `error` with the route and the handler routing matched. An upgrade handler's 101 to an
+///    HTTP/1.x request carrying `Transfer-Encoding`, whatever protocol it switches to, gets the 400
+///    of step 2 in its place, with `Connection: close`: RFC 9112 §6.1 has the connection close
+///    after the answer to such a request, and a 101 hands it over with the body unread. The same
+///    request answered with anything else keeps its framing. `100 Continue` is the backend's
 ///    answer to `Expect`, never a handler's. The request's upgrade future, whoever takes it,
 ///    yields the connection only when the response handed to the backend is that 101; after any
 ///    other answer the connection a backend hands over is dropped, which closes it.
@@ -243,6 +247,8 @@ impl ServiceInner {
             req.upgrade = Some(gated(pending, Arc::clone(&tracking)));
         }
         let method = req.head.method.clone();
+        let version = req.head.version;
+        let framed = framed_by_transfer_encoding(version, &req.head.headers);
         let call_span = span::call(&self.app, &exec, span::Kind::Server, <Http as Transport>::KEY, method.as_str(), None);
         call_span.record(span::HTTP_REQUEST_METHOD, method.as_str());
         let path = req.head.extensions.get::<OriginalPath>().map_or_else(|| req.head.uri.path(), OriginalPath::as_str);
@@ -278,6 +284,11 @@ impl ServiceInner {
         };
         if response.status().is_informational() && !(response.status() == StatusCode::SWITCHING_PROTOCOLS && tracking.switched.load(Ordering::Acquire)) {
             response = interim_refused(response.status(), &tracking, &self.config);
+        } else if response.status() == StatusCode::SWITCHING_PROTOCOLS && framed {
+            // The upgrade future is left unhanded, so the connection closes after the 400.
+            let why = "an upgrade request carries `Transfer-Encoding`";
+            tracing::debug!(reason = why, "an upgrade handler's 101 was replaced: answered 400 and the connection closed");
+            response = refused_and_closed(why, version, &self.config);
         } else if response.status() == StatusCode::SWITCHING_PROTOCOLS {
             tracking.handed.store(true, Ordering::Release);
         }
@@ -753,13 +764,25 @@ pub(crate) fn ambiguous(version: Version, headers: &HeaderMap, config: &HttpConf
         return None;
     };
     tracing::debug!(reason = why, "a request was refused before routing: answered 400 and the connection closed");
+    Some(refused_and_closed(why, version, config))
+}
+
+/// The 400 problem document with detail `why`, `Connection: close`, the request's `version` and
+/// `Routing::Unrouted`.
+fn refused_and_closed(why: &str, version: Version, config: &HttpConfig) -> Response {
     let mut refused = render::problem(&CallError::new(ErrorKind::BadRequest, why), config);
     refused.headers_mut().insert(CONNECTION, HeaderValue::from_static("close"));
     // hyper reads the response's version to decide the connection's persistence: an HTTP/1.1
     // answer to an HTTP/1.0 request asking for `keep-alive` has its `close` replaced.
     *refused.version_mut() = version;
     refused.extensions_mut().insert(Routing::Unrouted);
-    Some(refused)
+    refused
+}
+
+/// Whether an HTTP/1.x request's body is framed by `Transfer-Encoding`: a 101 to it would hand the
+/// connection over with the body unread. HTTP/2 carries no `Transfer-Encoding`.
+fn framed_by_transfer_encoding(version: Version, headers: &HeaderMap) -> bool {
+    version <= Version::HTTP_11 && headers.contains_key(TRANSFER_ENCODING)
 }
 
 /// Whether an `Upgrade` line lists `websocket`, ignoring case (RFC 9110 §7.8).

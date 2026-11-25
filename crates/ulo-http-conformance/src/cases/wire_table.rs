@@ -317,7 +317,9 @@ pub async fn content_length_beside_transfer_encoding_refused<H: Host>(mode: Mode
 /// never switches protocols, `Content-Length` beside it or not and `websocket` among other
 /// `Upgrade` tokens or alone: a handshake has no body, and a 101 hands the connection over with
 /// the body's bytes unread. Where the host takes upgrades the connection closes after the 400 and
-/// the request pipelined behind it is not answered. A host declared without `upgrades` switches
+/// the request pipelined behind it is not answered. An upgrade to `h2c` or `websocketx` carrying
+/// `Transfer-Encoding`, which the suite's echo answers 101, never switches either: where the host
+/// takes upgrades it is answered the same way. A host declared without `upgrades` switches
 /// nothing and frames the body itself, and actix answers a request it has already read behind the
 /// 400, so there the pipelined request is not held.
 pub async fn handshake_with_transfer_encoding_refused<H: Host>(mode: Mode) {
@@ -339,6 +341,23 @@ pub async fn handshake_with_transfer_encoding_refused<H: Host>(mode: Mode) {
         assert_eq!(status_of(&raw), Some(400), "{what}: {}", text(&raw));
         assert!(has_header(&raw, "connection", "close"), "{what}: the 400 does not carry `Connection: close`: {}", text(&raw));
         if H::limits().upgrades() {
+            assert_eq!(responses(&raw), 1, "{what}: the pipelined request was answered on the same connection: {}", text(&raw));
+        }
+    }
+    // An upgrade to another protocol passes the head check and reaches the suite's echo, which
+    // answers any upgrade 101: the service replaces that 101 with the same 400 and close (F702).
+    for (what, upgrade) in [("`Upgrade: h2c`", "h2c"), ("`Upgrade: websocketx`", "websocketx")] {
+        let what = format!("{what} with `Transfer-Encoding: chunked`");
+        let request = format!(
+            "POST {} HTTP/1.1\r\nhost: {}\r\nconnection: Upgrade\r\nupgrade: {upgrade}\r\ntransfer-encoding: chunked\r\n\r\n0\r\n\r\n",
+            host.target("/echo"),
+            host.authority(),
+        ) + &pipelined;
+        let raw = exchange(&host, request.as_bytes(), &what).await;
+        assert_ne!(status_of(&raw), Some(101), "{what}: the request switched protocols: {}", text(&raw));
+        if H::limits().upgrades() {
+            assert_eq!(status_of(&raw), Some(400), "{what}: {}", text(&raw));
+            assert!(has_header(&raw, "connection", "close"), "{what}: the 400 does not carry `Connection: close`: {}", text(&raw));
             assert_eq!(responses(&raw), 1, "{what}: the pipelined request was answered on the same connection: {}", text(&raw));
         }
     }

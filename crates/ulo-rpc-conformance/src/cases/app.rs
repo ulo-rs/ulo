@@ -67,6 +67,8 @@ pub(crate) const DEADLINE: &str = "conformance.deadline";
 pub(crate) const DEADLINE_STREAM: &str = "conformance.deadline_stream";
 pub(crate) const DEADLINE_SUM: &str = "conformance.deadline_sum";
 pub(crate) const IGNORE: &str = "conformance.ignore";
+pub(crate) const PARK: &str = "conformance.park";
+pub(crate) const PARK_AND_ANSWER: &str = "conformance.park_and_answer";
 
 /// A payload no codec reads: not UTF-8, so no JSON text, and a lone CBOR break code, so no CBOR
 /// item. A reply carrying it fails the link's frame encoding.
@@ -145,6 +147,8 @@ pub(crate) struct ProbeState {
     slow: Mutex<Vec<SlowRun>>,
     /// Each call the deadline handlers took, in the order they took them.
     seen: Mutex<Vec<Seen>>,
+    /// The streamed request a parking handler left for the scenario to read on a task of its own.
+    parked: Mutex<Option<Inbound<i64>>>,
 }
 
 /// A call one of the deadline handlers took: its [`MARK`], the deadline its server computed for
@@ -253,6 +257,16 @@ impl Probe {
     /// Every call the deadline handlers took so far.
     pub(crate) fn seen(&self) -> Vec<Seen> {
         lock(&self.0.seen).clone()
+    }
+
+    /// The streamed request a parking handler left, once one has; taken, so a second read answers
+    /// `None`.
+    pub(crate) fn take_parked(&self) -> Option<Inbound<i64>> {
+        lock(&self.0.parked).take()
+    }
+
+    fn park(&self, items: Inbound<i64>) {
+        *lock(&self.0.parked) = Some(items);
     }
 
     fn see(&self, exec: &ExecutionRef, headers: &CallHeaders) {
@@ -622,6 +636,23 @@ impl StreamController {
         let _items = items;
         let _recorder = Recorder { exec, probe: (*self.probe).clone(), stream: false };
         std::future::pending().await
+    }
+
+    /// Leaves its streamed request for the scenario to read and answers nothing, returning when its
+    /// execution is cancelled or its server drains.
+    #[ulo_rpc::message("conformance.park")]
+    async fn park(&self, items: Inbound<i64>, exec: ExecutionRef) -> Result<i64, Refusal> {
+        self.probe.park(items);
+        select(pin!(exec.cancelled()), pin!(exec.draining())).await;
+        Ok(0)
+    }
+
+    /// Leaves its streamed request for the scenario to read and answers `0` at once, before the
+    /// caller's last item.
+    #[ulo_rpc::message("conformance.park_and_answer")]
+    async fn park_and_answer(&self, items: Inbound<i64>) -> Result<i64, Refusal> {
+        self.probe.park(items);
+        Ok(0)
     }
 
     /// Ticks until the server drains, then ends cleanly.

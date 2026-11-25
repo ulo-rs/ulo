@@ -255,6 +255,8 @@ macro_rules! conformance_suite {
             client_stream_in_order => streams::client_stream_in_order,
             bidi_stream => streams::bidi_stream,
             cancel_mid_stream => cancel::mid_stream,
+            a_parked_request_ends_cancelled_when_its_caller_cancels => cancel::parked_request_after_cancel,
+            a_parked_request_ends_unavailable_when_its_handler_answers_first => cancel::parked_request_after_the_answer,
             a_reply_stream_its_caller_does_not_read_ends_overflow => queues::reply_overflow,
             a_streamed_request_its_handler_does_not_read_ends_overflow => queues::request_overflow,
             deadline_ms_fires_deadline => deadlines::deadline_ms,

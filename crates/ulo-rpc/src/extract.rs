@@ -1,6 +1,8 @@
 //! The RPC extractors: [`Payload<T>`] and [`Inbound<T>`], each consuming the call's payload, a bare
 //! `Bytes` read as `Payload<Bytes>` is, and `CallHeaders` (in `transport`).
 
+use std::error::Error;
+use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -9,12 +11,12 @@ use futures_core::Stream;
 use futures_core::stream::BoxStream;
 use futures_util::StreamExt;
 use serde::de::DeserializeOwned;
-use ulo::BoxError;
+use ulo::{BoxError, CancelReason};
 use ulo_transport::{ExtractError, FieldViolation, FromCall, Validate};
 
 use crate::codec::Codec;
 use crate::frame::Data;
-use crate::queue::Overflow;
+use crate::queue::{Cut, Overflow};
 use crate::transport::{Body, Rpc, RpcCx};
 
 /// The name an extraction failure gives the payload.
@@ -102,9 +104,15 @@ fn fits_as_json(codec: Codec, data: &Data, error: &BoxError) -> bool {
 /// whatever task reads it; the call is answered `unavailable` with the reason `overflow` whatever
 /// the handler returns. An item over `max_queued_bytes` on its own ends the request with
 /// [`ExtractError::TooLarge`] naming the bound, and the call is answered `bad_request` with the
-/// reason `payload_too_large`. A request still being read on another task when its call ends,
-/// its handler having answered before `in_end`, yields there the items that had arrived, then
-/// [`ExtractError::CallEnded`].
+/// reason `payload_too_large`. A request still being read on another task when its call ends
+/// before `in_end` yields there the items that had arrived, then [`ExtractError::Cancelled`] when
+/// the caller left, its `cancel` arriving or the link losing it, and [`ExtractError::CallEnded`]
+/// when the server ended the call: its handler answered, its deadline passed or the drain ended
+/// it.
+///
+/// A link that ends a call on its own account reports it as a `cancel`, so a TCP link refusing an
+/// item over its frame bound, or a broker link whose reply frame failed to publish, also reads
+/// `Cancelled` here.
 pub struct Inbound<T> {
     pub(crate) items: BoxStream<'static, Result<T, ExtractError>>,
 }
@@ -128,8 +136,11 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Inbound<T> {
                         }
                         Some(Overflow::Bytes { limit, .. }) => ExtractError::overflowed_bytes(PAYLOAD, limit),
                         Some(Overflow::TooLarge { limit, .. }) => ExtractError::too_large(PAYLOAD, limit),
-                        None if receiver.cut_with_call() => ExtractError::call_ended(PAYLOAD),
-                        None => return None,
+                        None => match receiver.cut_with_call() {
+                            Some(Cut::Ended) => ExtractError::call_ended(PAYLOAD),
+                            Some(Cut::Departed(reason)) => ExtractError::cancelled(PAYLOAD, cx.app().redact(Box::new(Departed(reason)))),
+                            None => return None,
+                        },
                     };
                     return Some((Err(failed), None));
                 };
@@ -142,6 +153,22 @@ impl<T: DeserializeOwned + Send + 'static> FromCall<Rpc> for Inbound<T> {
         Ok(Inbound { items: Box::pin(items) })
     }
 }
+
+/// How the caller of a call whose streamed request was cut left: the source of the request's
+/// `Cancelled`.
+#[derive(Debug)]
+struct Departed(CancelReason);
+
+impl fmt::Display for Departed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            CancelReason::ClientCancelled => f.write_str("it sent `cancel`"),
+            _ => f.write_str("the link lost it"),
+        }
+    }
+}
+
+impl Error for Departed {}
 
 impl<T> Stream for Inbound<T> {
     type Item = Result<T, ExtractError>;

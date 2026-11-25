@@ -203,16 +203,19 @@ pub enum ExtractError {
     /// `TooLarge`, which no read makes room for.
     #[non_exhaustive]
     OverflowedBytes { param: &'static str, limit: u64 },
-    /// A streamed body still being read when its call ended, before the caller's last item: a
-    /// handler answered and left the body to a task of its own. The stream yields the items that
-    /// had arrived, then this as its last item, so that task does not take the part it read for
-    /// the whole. It classifies as `Unavailable`; the call has been answered already.
+    /// A streamed body still being read when the server ended its call, before the caller's last
+    /// item: a handler answered and left the body to a task of its own, or the call's deadline or
+    /// the drain ended it. The stream yields the items that had arrived, then this as its last
+    /// item, so that task does not take the part it read for the whole. It classifies as
+    /// `Unavailable`. A caller that left first ends the stream with `Cancelled` instead.
     #[non_exhaustive]
     CallEnded { param: &'static str },
     /// The caller went away while `param` was read: it reset the stream, closed the connection or
-    /// cancelled the call before the last byte arrived. Not a fault in what it sent, so it
+    /// cancelled the call before the last byte arrived, or, for an RPC streamed request read on a
+    /// task of its own, sent `cancel` or was lost by its link. Not a fault in what it sent, so it
     /// classifies as `Cancelled`, which no counter of bad requests or of the server's own
-    /// unavailability reads. `source` is the transport's read error, redacted as `Malformed`'s is.
+    /// unavailability reads. `source` is the transport's read error, or on RPC how the caller
+    /// left, redacted as `Malformed`'s is.
     #[non_exhaustive]
     Cancelled { param: &'static str, source: Redacted },
 }
