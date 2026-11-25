@@ -1186,11 +1186,11 @@ impl ServerSide {
             drop(counted);
         });
         match (reply, kind.as_deref()) {
-            (None, None) => self.deliver(Delivery { frame: Frame::Evt { pattern, headers: call_headers, data }, reply: None, ack }),
+            (None, None) => self.deliver(Delivery { frame: Frame::evt(pattern, call_headers, data), reply: None, ack }),
             (Some(reply), None) => {
                 let key = correlation.clone().unwrap_or_else(|| reply.clone());
                 let (id, path) = self.hold(key, reply, correlation);
-                self.deliver(Delivery { frame: Frame::Req { id, pattern, headers: call_headers, data }, reply: Some(path), ack });
+                self.deliver(Delivery { frame: Frame::req(id, pattern, call_headers, data), reply: Some(path), ack });
             }
             (Some(reply), Some(OPEN)) => {
                 let key = correlation.clone().unwrap_or_else(|| reply.clone());
@@ -1200,7 +1200,7 @@ impl ServerSide {
                 if let Err(error) = write(&self.writes, reply.clone(), correlation.clone(), Some(OPENED), Bytes::new()).await {
                     tracing::warn!(%error, pattern, "the Kafka link could not acknowledge a streamed request");
                 }
-                self.deliver(Delivery { frame: Frame::Open { id, pattern, headers: call_headers }, reply: Some(path), ack });
+                self.deliver(Delivery { frame: Frame::open(id, pattern, call_headers), reply: Some(path), ack });
             }
             (_, Some(kind)) => {
                 tracing::warn!(pattern, kind, "the Kafka link dropped a record of an unknown kind");
@@ -1215,10 +1215,10 @@ impl ServerSide {
         let frame = match header(headers, KIND).as_deref() {
             Some(IN) => self.calls.get(&key).map(|(id, path)| {
                 let data = Data::new(record.payload().map(Bytes::copy_from_slice).unwrap_or_default());
-                (Frame::In { id, data }, path)
+                (Frame::input(id, data), path)
             }),
-            Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::InEnd { id }, path)),
-            Some(CANCEL) => self.calls.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
+            Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::in_end(id), path)),
+            Some(CANCEL) => self.calls.release(&key).map(|(id, path)| (Frame::cancel(id), path)),
             _ => None,
         };
         if let Some((frame, path)) = frame {
@@ -1579,19 +1579,19 @@ impl ClientSide {
                 let queued = self.produce_request(&pattern, id, &headers, Some(OPEN), &[]).await;
                 self.settle(queued, Some(id), answer, delivering);
             }
-            Frame::In { id, data } => {
+            Frame::In { id, data, .. } => {
                 if data.len() as u64 > MAX_MESSAGE {
                     let _ = answer.send(Err(Box::new(FrameTooLarge { size: data.len() as u64, limit: MAX_MESSAGE })));
                     return;
                 }
-                self.control(id, Frame::In { id, data }, delivering).await;
+                self.control(id, Frame::input(id, data), delivering).await;
                 let _ = answer.send(Ok(()));
             }
-            Frame::InEnd { id } => {
-                self.control(id, Frame::InEnd { id }, delivering).await;
+            Frame::InEnd { id, .. } => {
+                self.control(id, Frame::in_end(id), delivering).await;
                 let _ = answer.send(Ok(()));
             }
-            Frame::Cancel { id } => {
+            Frame::Cancel { id, .. } => {
                 let call = lock(&self.calls).remove(&id);
                 match call {
                     Some(ClientCall::Unary) => {
@@ -1599,7 +1599,7 @@ impl ClientSide {
                         self.settle(queued, None, answer, delivering);
                     }
                     Some(ClientCall::Streaming { opened: true, .. }) => {
-                        self.produce_held(id, Frame::Cancel { id }, delivering).await;
+                        self.produce_held(id, Frame::cancel(id), delivering).await;
                         let _ = answer.send(Ok(()));
                     }
                         // The server takes the `open` and holds the call, so the `cancel` follows once it
@@ -1695,7 +1695,7 @@ impl ClientSide {
             }
             Some(ClientCall::Cancelled) => {
                 calls.remove(&id);
-                VecDeque::from([Frame::Cancel { id }])
+                VecDeque::from([Frame::cancel(id)])
             }
             _ => VecDeque::new(),
         }
@@ -1931,10 +1931,10 @@ fn call_headers<H: Headers>(headers: Option<&H>) -> CallHeaders {
 /// local id.
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
         other => other,
     }
 }

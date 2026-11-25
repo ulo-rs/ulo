@@ -495,11 +495,11 @@ impl Hub {
 
     async fn request(&self, headers: &[(&str, &str)]) -> Vec<Frame> {
         let id = self.ids.fetch_add(1, Ordering::SeqCst) as u64;
-        self.deliver(Frame::Req { id, pattern: "in.req".into(), headers: call_headers(headers), data: Data::new(b"null".as_slice()) }).await
+        self.deliver(Frame::req(id, "in.req", call_headers(headers), Data::new(b"null".as_slice()))).await
     }
 
     async fn event(&self, headers: &[(&str, &str)]) {
-        self.deliver(Frame::Evt { pattern: "in.evt".into(), headers: call_headers(headers), data: Data::new(b"7".as_slice()) }).await;
+        self.deliver(Frame::evt("in.evt", call_headers(headers), Data::new(b"7".as_slice()))).await;
     }
 
     async fn stop(self) {
@@ -994,7 +994,7 @@ mod real {
         let emitter = context(&hub.rec);
 
         let Some(Frame::Evt { headers, data, .. }) = hub.wire.sent().into_iter().next() else { panic!("the handler emitted no event") };
-        hub.deliver(Frame::Evt { pattern: "in.evt".into(), headers, data }).await;
+        hub.deliver(Frame::evt("in.evt", headers, data)).await;
         hub.rec.until_seen(2).await;
         let handler = hub.rec.last_seen().expect("the event's handler carried a context");
         assert_eq!(handler.trace_id(), TRACE_ID, "the same trace");

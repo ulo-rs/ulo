@@ -223,13 +223,13 @@ fn echo(id: u64) -> String {
 }
 
 fn is_payload_too_large(frame: &Frame, call: u64) -> bool {
-    let Frame::Err { id, error } = frame else { return false };
+    let Frame::Err { id, error, .. } = frame else { return false };
     let reason = error.details.iter().any(|detail| matches!(detail, Detail::ErrorInfo { reason, .. } if reason == "payload_too_large"));
     *id == call && error.kind == ErrorKind::BadRequest && reason
 }
 
 fn is_echo(frame: &Frame, call: u64) -> bool {
-    matches!(frame, Frame::Res { id, data } if *id == call && data.as_bytes() == b"3")
+    matches!(frame, Frame::Res { id, data, .. } if *id == call && data.as_bytes() == b"3")
 }
 
 /// Fields in an order of the caller's own, `id` ahead of the payload and `t` after it: the

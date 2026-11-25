@@ -173,6 +173,7 @@ pub enum Unreached {
     /// The only service the server answers whose paths the scope matches is `service`, a health
     /// service, which runs no scoped entry (transports DESIGN §6.2). The transport names the
     /// service.
+    #[non_exhaustive]
     HealthOnly { service: &'static str },
     /// A scoped entry names no route pattern.
     EmptyScope,
@@ -200,6 +201,13 @@ impl fmt::Display for Unreached {
                 f.write_str("holds a `\\`, raw or as `%5C`, and a request path holding one is refused with 400 before routing")
             }
         }
+    }
+}
+
+impl Unreached {
+    /// The scope matches only `service`, a health service the transport answers.
+    pub fn health_only(service: &'static str) -> Self {
+        Unreached::HealthOnly { service }
     }
 }
 

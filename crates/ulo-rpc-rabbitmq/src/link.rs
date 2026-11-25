@@ -977,7 +977,7 @@ impl ServerSide {
             let mut table = self.calls.close();
             for (_, call) in table.held.drain() {
                 let error = ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new());
-                match self.codec.encode_frame(&Frame::Err { id: call.id, error }) {
+                match self.codec.encode_frame(&Frame::err(call.id, error)) {
                     Ok(bytes) => drop(write(&self.writes, call.reply, call.correlation, None, bytes)),
                     Err(error) => tracing::debug!(%error, "the RabbitMQ link could not encode the shutdown answer of a call it held at `close`"),
                 }
@@ -1041,13 +1041,13 @@ impl ServerSide {
         });
         let data = Data::new(delivery.data);
         match (reply_to, kind.as_deref()) {
-            (None, None) => self.deliver(Delivery { frame: Frame::Evt { pattern, headers: call_headers, data }, reply: None, ack }),
+            (None, None) => self.deliver(Delivery { frame: Frame::evt(pattern, call_headers, data), reply: None, ack }),
             (Some(reply), None) => {
                 let key = correlation.clone().unwrap_or_else(|| reply.clone());
                 // A request delivered once `close` has closed the table is left unsettled, and
                 // the broker hands it on once the connection closes.
                 let Some((id, path)) = self.hold(key, reply, correlation) else { return };
-                self.deliver(Delivery { frame: Frame::Req { id, pattern, headers: call_headers, data }, reply: Some(path), ack });
+                self.deliver(Delivery { frame: Frame::req(id, pattern, call_headers, data), reply: Some(path), ack });
             }
             (Some(reply), Some(OPEN)) => {
                 let key = correlation.clone().unwrap_or_else(|| reply.clone());
@@ -1057,7 +1057,7 @@ impl ServerSide {
                 if let Err(error) = write(&self.writes, reply, correlation, Some(OPENED), Bytes::new()).await {
                     tracing::warn!(%error, pattern, "the RabbitMQ link could not acknowledge a streamed request");
                 }
-                self.deliver(Delivery { frame: Frame::Open { id, pattern, headers: call_headers }, reply: Some(path), ack });
+                self.deliver(Delivery { frame: Frame::open(id, pattern, call_headers), reply: Some(path), ack });
             }
             (_, Some(kind)) => {
                 tracing::warn!(pattern, kind, "the RabbitMQ link rejected a message of an unknown kind");
@@ -1069,9 +1069,9 @@ impl ServerSide {
     fn on_control(&self, delivery: AmqpDelivery) {
         let Some(key) = delivery.properties.correlation_id().as_ref().map(|id| id.as_str().to_owned()) else { return };
         let frame = match kind_of(delivery.properties.headers().as_ref()).as_deref() {
-            Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::In { id, data: Data::new(delivery.data) }, path)),
-            Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::InEnd { id }, path)),
-            Some(CANCEL) => self.calls.release(&key).map(|call| (Frame::Cancel { id: call.id }, call.path)),
+            Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::input(id, Data::new(delivery.data)), path)),
+            Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::in_end(id), path)),
+            Some(CANCEL) => self.calls.release(&key).map(|call| (Frame::cancel(call.id), call.path)),
             _ => None,
         };
         if let Some((frame, path)) = frame {
@@ -1370,15 +1370,15 @@ impl ClientSide {
                 let published = self.publish_request(key, id, &headers, Some(OPEN), &[]).await;
                 self.settle(published, Some(id), pattern, answer, confirming);
             }
-            Frame::In { id, data } => {
-                self.control(id, Frame::In { id, data }, confirming).await;
+            Frame::In { id, data, .. } => {
+                self.control(id, Frame::input(id, data), confirming).await;
                 let _ = answer.send(Ok(()));
             }
-            Frame::InEnd { id } => {
-                self.control(id, Frame::InEnd { id }, confirming).await;
+            Frame::InEnd { id, .. } => {
+                self.control(id, Frame::in_end(id), confirming).await;
                 let _ = answer.send(Ok(()));
             }
-            Frame::Cancel { id } => {
+            Frame::Cancel { id, .. } => {
                 let call = lock(&self.calls).remove(&id);
                 match call {
                     Some(ClientCall::Unary) => {
@@ -1386,7 +1386,7 @@ impl ClientSide {
                         self.settle(published, None, pattern, answer, confirming);
                     }
                     Some(ClientCall::Streaming { opened: true, .. }) => {
-                        self.publish_held(id, Frame::Cancel { id }, confirming).await;
+                        self.publish_held(id, Frame::cancel(id), confirming).await;
                         let _ = answer.send(Ok(()));
                     }
                         // The server takes the `open` and holds the call, so the `cancel` follows once it
@@ -1509,7 +1509,7 @@ impl ClientSide {
             }
             Some(ClientCall::Cancelled) => {
                 calls.remove(&id);
-                VecDeque::from([Frame::Cancel { id }])
+                VecDeque::from([Frame::cancel(id)])
             }
             _ => VecDeque::new(),
         }
@@ -1658,10 +1658,10 @@ fn call_headers(headers: Option<&FieldTable>) -> CallHeaders {
 /// its local id.
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
         other => other,
     }
 }
@@ -2132,7 +2132,7 @@ mod tests {
         }
 
         fn unavailable() -> Frame {
-            Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, "shutting down", Details::new()) }
+            Frame::err(1, ErrorBody::new(ErrorKind::Unavailable, "shutting down", Details::new()))
         }
 
         /// The writer stopping at its gate, within 10 s: a publish that never comes fails the
@@ -2248,7 +2248,7 @@ mod tests {
             assert!(late.is_err(), "a reply sent after the close was taken");
             drop(path);
             release.send(()).expect("the writer waits at its gate");
-            let Frame::Err { id, error } = answered(&mut replies).await else { panic!("the caller read an answer other than an `err`") };
+            let Frame::Err { id, error, .. } = answered(&mut replies).await else { panic!("the caller read an answer other than an `err`") };
             assert_eq!((id, error.kind, error.message.as_str()), (1, ErrorKind::Unavailable, SHUTDOWN_MESSAGE), "the answer the caller read");
             until_closed(&status).await;
         }
@@ -2398,7 +2398,7 @@ mod tests {
             let client: Arc<dyn Runtime> = Arc::new(Tokio::current());
             let first = link.connect(&client).await.expect("the first connect");
             let _second = link.connect(&client).await.expect("the second connect");
-            let event = Frame::Evt { pattern: "chk.live".to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"1")) };
+            let event = Frame::evt("chk.live", CallHeaders::new(), Data::new(Bytes::from_static(b"1")));
             let sent = tokio::time::timeout(Duration::from_secs(10), (first.send)(Pattern::from("chk.live"), event, None)).await.expect("the send ends");
             if let Err(error) = sent {
                 assert_ne!(error.to_string(), CLOSED, "the first side was let go when the second was recorded");

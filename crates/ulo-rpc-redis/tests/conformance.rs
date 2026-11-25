@@ -103,7 +103,7 @@ async fn a_request_read_after_the_drain_ended_the_inbound_stream_is_refused() {
     let outbound = client.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
 
-    let request = Frame::Req { id: 1, pattern: DRAINED.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let request = Frame::req(1, DRAINED, CallHeaders::new(), Data::new(b"null".as_slice()));
     (outbound.send)(Pattern::from(DRAINED), request, None).await.expect("the request is published");
     server.drain().await;
 
@@ -116,14 +116,14 @@ async fn a_request_read_after_the_drain_ended_the_inbound_stream_is_refused() {
                 panic!("the server received something other than the request: {:?}", delivery.frame);
             };
             let reply = delivery.reply.expect("a request carries its reply path");
-            reply.send(Frame::Res { id, data: Data::new(b"2".as_slice()) }).await.expect("the reply is published");
+            reply.send(Frame::res(id, Data::new(b"2".as_slice()))).await.expect("the reply is published");
             let answer = tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten();
             assert!(matches!(answer, Some(Frame::Res { id: 1, .. })), "the server's reply did not reach the caller, got: {answer:?}");
         }
         None => {
             let answer = tokio::time::timeout(PATIENCE, replies.next()).await.ok().flatten();
             assert!(
-                matches!(&answer, Some(Frame::Err { id: 1, error }) if error.kind == ErrorKind::Unavailable),
+                matches!(&answer, Some(Frame::Err { id: 1, error, .. }) if error.kind == ErrorKind::Unavailable),
                 "a request read after the inbound stream ended was not refused `unavailable`, got: {answer:?}",
             );
         }
@@ -195,7 +195,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connections() {
         let relay = Relay::start(broker.server).await;
         let server = Redis::url(format!("redis://{}", relay.addr()));
         let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
-        let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+        let request = Frame::req(id, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
         (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
         let delivery = tokio::time::timeout(PATIENCE, inbound.next())
             .await
@@ -333,7 +333,7 @@ async fn fan_out(servers: usize) {
     let link = Redis::url(url.as_str());
     let outbound = link.connect(&client_runtime()).await.expect("the client's link connects");
     let mut replies = outbound.replies;
-    let request = Frame::Req { id: 7, pattern: "fan.request".to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    let request = Frame::req(7, "fan.request", CallHeaders::new(), Data::new(b"1".as_slice()));
     (outbound.send)(Pattern::from("fan.request"), request, None).await.expect("the request is published");
     let mut answered = 0;
     while let Ok(Some(frame)) = tokio::time::timeout(PATIENCE.min(SETTLE * 2), replies.next()).await {

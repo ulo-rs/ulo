@@ -146,7 +146,7 @@ fn a_connection_registered_after_the_drain_began_receives_goaway() {
         let serving = ulo::spawn_with(&OnSmol::runtime(), server.serve(std::future::pending::<Signal>()));
 
         let mut holding = handshake(TcpStream::connect(addr).await.expect("the holding connection opens")).await;
-        let hold = Frame::Req { id: 1, pattern: HOLD.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+        let hold = Frame::req(1, HOLD, CallHeaders::new(), Data::new(b"null".as_slice()));
         write_frame(&mut holding, &hold).await;
         within("the held call reaching its handler", until(&RUNNING)).await;
 

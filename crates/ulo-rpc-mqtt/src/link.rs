@@ -1112,9 +1112,9 @@ impl ServerSide {
             let Some(key) = key else { return };
             let Some(sender) = deliveries.as_ref() else { return };
             let frame = match kind.as_deref() {
-                Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::In { id, data: Data::new(publish.payload) }, path)),
-                Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::InEnd { id }, path)),
-                Some(CANCEL) => self.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
+                Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::input(id, Data::new(publish.payload)), path)),
+                Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::in_end(id), path)),
+                Some(CANCEL) => self.release(&key).map(|(id, path)| (Frame::cancel(id), path)),
                 _ => None,
             };
             if let Some((frame, path)) = frame {
@@ -1127,7 +1127,7 @@ impl ServerSide {
         let reply = properties.response_topic.clone().map(|topic| (topic, properties.correlation_data.clone()));
         match (reply, kind.as_deref()) {
             (None, None) => {
-                let frame = Frame::Evt { pattern: topic, headers, data: Data::new(publish.payload) };
+                let frame = Frame::evt(topic, headers, Data::new(publish.payload));
                 if let Some(sender) = deliveries.as_ref() {
                     let _ = sender.send(Delivery { frame, reply: None, ack: Ack::none() });
                 }
@@ -1136,7 +1136,7 @@ impl ServerSide {
                 let key = key.unwrap_or_else(|| reply.clone());
                 if let Some(sender) = deliveries.as_ref() {
                     let (id, path) = self.hold(key.clone(), reply.clone(), correlation.clone());
-                    let frame = Frame::Req { id, pattern: topic.clone(), headers, data: Data::new(publish.payload) };
+                    let frame = Frame::req(id, topic.clone(), headers, Data::new(publish.payload));
                     if sender.send(Delivery { frame, reply: Some(path), ack: Ack::none() }).is_ok() {
                         return;
                     }
@@ -1163,7 +1163,7 @@ impl ServerSide {
                 if let Err(Unowned::Refused(error)) = self.publish_unowned(reply, Bytes::new(), opened) {
                     tracing::warn!(%error, pattern = topic, "the MQTT link could not acknowledge a streamed request");
                 }
-                let _ = sender.send(Delivery { frame: Frame::Open { id, pattern: topic, headers }, reply: Some(path), ack: Ack::none() });
+                let _ = sender.send(Delivery { frame: Frame::open(id, topic, headers), reply: Some(path), ack: Ack::none() });
             }
             (_, Some(kind)) => {
                 tracing::warn!(pattern = topic, kind, "the MQTT link dropped a request-lane message of an unknown kind");
@@ -1627,16 +1627,16 @@ impl ClientSide {
                 }
                 sent
             }
-            Frame::In { id, data } => {
+            Frame::In { id, data, .. } => {
                 self.fits(CONTROL, data.len())?;
-                self.enqueue(id, Frame::In { id, data });
+                self.enqueue(id, Frame::input(id, data));
                 Ok(())
             }
-            Frame::InEnd { id } => {
-                self.enqueue(id, Frame::InEnd { id });
+            Frame::InEnd { id, .. } => {
+                self.enqueue(id, Frame::in_end(id));
                 Ok(())
             }
-            Frame::Cancel { id } => {
+            Frame::Cancel { id, .. } => {
                 let unary = {
                     let mut calls = lock(&self.calls);
                     match calls.remove(&id) {
@@ -1644,13 +1644,13 @@ impl ClientSide {
                         // The server takes the `open` and holds the call, so the `cancel` follows
                         // once it acknowledges it.
                         Some(ClientCall::Streaming { pattern, gate: Some(gate), queue, until }) => {
-                            let _ = queue.send(Frame::Cancel { id });
+                            let _ = queue.send(Frame::cancel(id));
                             calls.insert(id, ClientCall::Cancelled { pattern, gate });
                             self.expire_cancelled(id, until);
                             false
                         }
                         Some(ClientCall::Streaming { gate: None, queue, .. }) => {
-                            let _ = queue.send(Frame::Cancel { id });
+                            let _ = queue.send(Frame::cancel(id));
                             false
                         }
                         Some(cancelled @ ClientCall::Cancelled { .. }) => {
@@ -1979,18 +1979,18 @@ fn call_headers(properties: &[(String, String)]) -> CallHeaders {
 /// `reason: "no_destination"`, as `RpcClient` maps a `NoDestination` from `send`.
 fn no_destination(id: u64, pattern: &Pattern) -> Frame {
     let mut details = Details::new();
-    details.push(Detail::ErrorInfo { reason: "no_destination".to_owned(), domain: DOMAIN.to_owned(), metadata: BTreeMap::new() });
-    Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, format!("nothing listens on pattern `{pattern}`"), details) }
+    details.push(Detail::error_info("no_destination", DOMAIN, BTreeMap::new()));
+    Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, format!("nothing listens on pattern `{pattern}`"), details))
 }
 
 /// The reply frame with the caller's own `id`, read from the Correlation Data: the server wrote
 /// its local id.
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
         other => other,
     }
 }
@@ -1998,7 +1998,7 @@ fn with_id(frame: Frame, id: u64) -> Frame {
 /// The `unavailable` with the shutdown phrase and no detail, which the core writes for a call the
 /// drain's end abandons and for one it refuses once the drain began.
 fn shutting_down(id: u64) -> Frame {
-    Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }
+    Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()))
 }
 
 fn is_terminal(frame: &Frame) -> bool {
@@ -2449,15 +2449,15 @@ mod tests {
     /// call no terminal frame was queued for: kind `unavailable`, the shutdown phrase, no detail
     /// and so no reason.
     fn abandoned(id: u64) -> Frame {
-        Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()) }
+        Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()))
     }
 
     fn res(id: u64, data: &'static [u8]) -> Frame {
-        Frame::Res { id, data: Data::new(Bytes::from_static(data)) }
+        Frame::res(id, Data::new(Bytes::from_static(data)))
     }
 
     fn item(id: u64, data: &'static [u8]) -> Frame {
-        Frame::Item { id, data: Data::new(Bytes::from_static(data)) }
+        Frame::item(id, Data::new(Bytes::from_static(data)))
     }
 
     fn hold(side: &ServerSide, correlation: &'static str) -> (u64, ReplyPath) {
@@ -2484,7 +2484,7 @@ mod tests {
 
         close_once(&link);
         let late = unanswered_path.send(res(unanswered, b"8")).await;
-        let late_end = streaming_path.send(Frame::End { id: streaming }).await;
+        let late_end = streaming_path.send(Frame::end(streaming)).await;
 
         let mut taken = queued(&mut eventloop);
         assert_eq!(taken.pop(), Some(Queued::Disconnect), "the close's last request is not the DISCONNECT");
@@ -2598,7 +2598,7 @@ mod tests {
         let (link, side, mut eventloop) = unpolled_server(1);
         let (id, path) = hold(&side, "f.1");
         path.send(item(id, b"1")).await.expect("the item is queued");
-        let mut ending = path.send(Frame::End { id });
+        let mut ending = path.send(Frame::end(id));
         assert!((&mut ending).now_or_never().is_none(), "a send to a full channel answered without waiting");
 
         let mut taken = take(&mut eventloop, &side);
@@ -2609,7 +2609,7 @@ mod tests {
         taken.extend(queued(&mut eventloop));
         assert_eq!(
             taken,
-            vec![reply("ulo/rpc/reply/f.1", "f.1", item(id, b"1")), reply("ulo/rpc/reply/f.1", "f.1", Frame::End { id }), Queued::Disconnect],
+            vec![reply("ulo/rpc/reply/f.1", "f.1", item(id, b"1")), reply("ulo/rpc/reply/f.1", "f.1", Frame::end(id)), Queued::Disconnect],
             "what the channel took: the stream and its end, then the DISCONNECT alone"
         );
     }
@@ -2755,7 +2755,7 @@ mod tests {
         let side = client_side(client);
         lock(&link.state).client = Some((Arc::clone(&side), never_ending(&Tokio::current())));
         close_once(&link);
-        let event = Frame::Evt { pattern: "link.late".to_owned(), headers: CallHeaders::new(), data: Data::new(Bytes::from_static(b"1")) };
+        let event = Frame::evt("link.late", CallHeaders::new(), Data::new(Bytes::from_static(b"1")));
         let refused = tokio::time::timeout(Duration::from_secs(5), side.send(Pattern::from("link.late"), event))
             .await
             .expect("a publish sent after `close` waited rather than being refused")

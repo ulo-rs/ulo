@@ -697,7 +697,7 @@ impl ServerSide {
         let headers = call_headers(message.headers.as_ref());
         let (frame, path) = match (message.reply, kind.as_deref()) {
             (None, None) => {
-                let frame = Frame::Evt { pattern, headers, data: Data::new(message.payload) };
+                let frame = Frame::evt(pattern, headers, Data::new(message.payload));
                 let _ = deliveries.send(Delivery { frame, reply: None, ack: Ack::none() });
                 return;
             }
@@ -705,7 +705,7 @@ impl ServerSide {
                 #[cfg(test)]
                 tests::gate::at_hold(&pattern).await;
                 let Some((id, path)) = self.hold(reply.to_string()) else { return self.refuse(reply.to_string(), &pattern) };
-                (Frame::Req { id, pattern, headers, data: Data::new(message.payload) }, path)
+                (Frame::req(id, pattern, headers, Data::new(message.payload)), path)
             }
             (Some(reply), Some(OPEN)) => {
                 let subject = reply.to_string();
@@ -716,7 +716,7 @@ impl ServerSide {
                 if let Err(error) = opened {
                     tracing::warn!(%error, pattern, "the NATS link could not acknowledge a streamed request");
                 }
-                (Frame::Open { id, pattern, headers }, path)
+                (Frame::open(id, pattern, headers), path)
             }
             (reply, Some(kind)) => {
                 tracing::warn!(pattern, kind, reply = reply.is_some(), "the NATS link dropped a request-lane message of an unknown kind");
@@ -729,9 +729,9 @@ impl ServerSide {
     fn on_control(&self, message: Message, deliveries: &mpsc::UnboundedSender<Delivery>) {
         let Some(key) = message.reply.as_ref().map(ToString::to_string) else { return };
         let frame = match kind_of(message.headers.as_ref()).as_deref() {
-            Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::In { id, data: Data::new(message.payload) }, path)),
-            Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::InEnd { id }, path)),
-            Some(CANCEL) => self.release(&key).map(|(id, path)| (Frame::Cancel { id }, path)),
+            Some(IN) => self.calls.get(&key).map(|(id, path)| (Frame::input(id, Data::new(message.payload)), path)),
+            Some(IN_END) => self.calls.get(&key).map(|(id, path)| (Frame::in_end(id), path)),
+            Some(CANCEL) => self.release(&key).map(|(id, path)| (Frame::cancel(id), path)),
             _ => None,
         };
         if let Some((frame, path)) = frame {
@@ -768,7 +768,7 @@ impl ServerSide {
     fn refuse(&self, subject: String, pattern: &str) {
         let refused = self
             .codec
-            .encode_frame(&Frame::Err { id: 0, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) })
+            .encode_frame(&Frame::err(0, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new())))
             .map_err(BoxError::from)
             .and_then(|bytes| queue(&self.client, subject, bytes, Budget::Ignored).map_err(Queued::into_error));
         if let Err(error) = refused {
@@ -958,7 +958,7 @@ impl Replies {
         let mut unsent = Vec::new();
         for (subject, id) in answers.unanswered.drain() {
             let error = ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new());
-            let bytes = match codec.encode_frame(&Frame::Err { id, error }) {
+            let bytes = match codec.encode_frame(&Frame::err(id, error)) {
                 Ok(bytes) => bytes,
                 Err(error) => {
                     tracing::debug!(%error, "the NATS link could not encode the shutdown answer of a call it held at `close`");
@@ -1140,16 +1140,16 @@ impl ClientSide {
                 }
                 sent
             }
-            Frame::In { id, data } => {
+            Frame::In { id, data, .. } => {
                 self.fits(data.len())?;
-                self.enqueue(id, Frame::In { id, data });
+                self.enqueue(id, Frame::input(id, data));
                 Ok(())
             }
-            Frame::InEnd { id } => {
-                self.enqueue(id, Frame::InEnd { id });
+            Frame::InEnd { id, .. } => {
+                self.enqueue(id, Frame::in_end(id));
                 Ok(())
             }
-            Frame::Cancel { id } => {
+            Frame::Cancel { id, .. } => {
                 let unary = {
                     let mut calls = lock(&self.calls);
                     match calls.remove(&id) {
@@ -1157,13 +1157,13 @@ impl ClientSide {
                         // The server takes the `open` and holds the call, so the `cancel` follows
                         // once it acknowledges it.
                         Some(ClientCall::Streaming { pattern, gate: Some(gate), queue, until }) => {
-                            let _ = queue.send(Frame::Cancel { id });
+                            let _ = queue.send(Frame::cancel(id));
                             calls.insert(id, ClientCall::Cancelled { pattern, gate });
                             self.expire_cancelled(id, until);
                             false
                         }
                         Some(ClientCall::Streaming { gate: None, queue, .. }) => {
-                            let _ = queue.send(Frame::Cancel { id });
+                            let _ = queue.send(Frame::cancel(id));
                             false
                         }
                         Some(cancelled @ ClientCall::Cancelled { .. }) => {
@@ -1393,18 +1393,18 @@ fn call_headers(headers: Option<&HeaderMap>) -> CallHeaders {
 /// `reason: "no_destination"`, as `RpcClient` maps a `NoDestination` from `send`.
 fn no_destination(id: u64, pattern: &Pattern) -> Frame {
     let mut details = Details::new();
-    details.push(Detail::ErrorInfo { reason: "no_destination".to_owned(), domain: DOMAIN.to_owned(), metadata: BTreeMap::new() });
-    Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, format!("nothing listens on pattern `{pattern}`"), details) }
+    details.push(Detail::error_info("no_destination", DOMAIN, BTreeMap::new()));
+    Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, format!("nothing listens on pattern `{pattern}`"), details))
 }
 
 /// The reply frame with the caller's own `id`, read from the reply subject: the server wrote its
 /// local id.
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
         other => other,
     }
 }
@@ -2515,7 +2515,7 @@ mod tests {
             let frame = answer.map(|payload| Codec::Json.decode_frame(&payload).expect("the answer decodes"));
             assert_eq!(
                 frame,
-                Some(Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()) }),
+                Some(Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()))),
                 "what the caller read for the call the cut close held"
             );
             let closed = tokio::time::timeout(Duration::from_secs(5), closed.changed()).await;
@@ -2690,7 +2690,7 @@ mod tests {
             let caller = link(&format!("nats://{server}"), test_root::<25>, std::env::temp_dir);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = caller.connect(&runtime).await.expect("the caller's link connects");
-            let request = Frame::Req { id: 1, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            let request = Frame::req(1, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
             (outbound.send)(Pattern::from(pattern), request, None).await.expect("the request is published");
             let delivery = tokio::time::timeout(Duration::from_secs(10), inbound.next()).await.ok().flatten().expect("the request reaches the server");
             let (Frame::Req { id, .. }, Some(path)) = (delivery.frame, delivery.reply) else { panic!("the server received something other than a request") };
@@ -2833,7 +2833,7 @@ mod tests {
             relay.pause();
             const ITEMS: usize = 100;
             for _ in 0..ITEMS {
-                let item = Frame::Item { id, data: Data::new(Bytes::from(vec![b'7'; 256 * 1024])) };
+                let item = Frame::item(id, Data::new(Bytes::from(vec![b'7'; 256 * 1024])));
                 path.send(item).await.expect("an item is queued");
             }
 
@@ -2854,7 +2854,7 @@ mod tests {
             assert_eq!(items, ITEMS, "the items the caller read before the terminal frame");
             assert_eq!(
                 terminal,
-                Some(Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+                Some(Frame::err(1, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()))),
                 "the terminal frame the caller read for the stream the cut close held"
             );
             let closed = disconnected(relay.addr, cut, CUT_GRACE).await;
@@ -2972,7 +2972,7 @@ mod tests {
             };
             assert_eq!(
                 frame,
-                Some(Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+                Some(Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()))),
                 "what the caller read for the held calls {held:?} once the cut close's connection took writes again"
             );
             let closed = tokio::time::timeout(Duration::from_secs(10), closed.changed()).await;
@@ -3030,7 +3030,7 @@ mod tests {
             let mut replies = outbound.replies;
 
             let (stopped, release) = super::gate::stop(LATE);
-            let request = Frame::Req { id: 1, pattern: LATE.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            let request = Frame::req(1, LATE, CallHeaders::new(), Data::new(b"null".as_slice()));
             (outbound.send)(Pattern::from(LATE), request, None).await.expect("the request is published");
             tokio::time::timeout(Duration::from_secs(10), stopped).await.expect("no request lane stopped at the hold").expect("the gate");
 
@@ -3040,7 +3040,7 @@ mod tests {
             let answer = tokio::time::timeout(Duration::from_secs(5), replies.next()).await.ok().flatten();
             assert_eq!(
                 answer,
-                Some(Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()) }),
+                Some(Frame::err(1, ErrorBody::new(ErrorKind::Unavailable, SHUTDOWN_MESSAGE, Details::new()))),
                 "what the caller read for the call that arrived once the close had taken the lock"
             );
             tokio::time::timeout(Duration::from_secs(10), closing).await.expect("the close did not end").expect("the close");
@@ -3116,7 +3116,7 @@ mod tests {
             let client = link(&format!("nats://{server}"), test_root::<14>, std::env::temp_dir);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = client.connect(&runtime).await.expect("the client's link connects");
-            let request = Frame::Req { id: 1, pattern: PATTERN.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            let request = Frame::req(1, PATTERN, CallHeaders::new(), Data::new(b"null".as_slice()));
             (outbound.send)(Pattern::from(PATTERN), request, Some(ReplyTo { id: 1 })).await.expect("the request is published");
             tokio::time::timeout(Duration::from_secs(10), inbound.next())
                 .await
@@ -3154,7 +3154,7 @@ mod tests {
             let client = Nats::url(&url);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = client.connect(&runtime).await.expect("the client's link connects");
-            let request = Frame::Req { id: 1, pattern: PATTERN.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            let request = Frame::req(1, PATTERN, CallHeaders::new(), Data::new(b"null".as_slice()));
             (outbound.send)(Pattern::from(PATTERN), request, Some(ReplyTo { id: 1 })).await.expect("the request is published");
             tokio::time::timeout(boot, inbound.next())
                 .await
@@ -3264,7 +3264,7 @@ mod tests {
             let client = link(&url, test_root::<24>, std::env::temp_dir);
             let runtime = Arc::clone(app.handle().runtime().expect("the app has a runtime"));
             let outbound = client.connect(&runtime).await.expect("the client's link connects");
-            let request = Frame::Req { id: 1, pattern: PATTERN.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+            let request = Frame::req(1, PATTERN, CallHeaders::new(), Data::new(b"null".as_slice()));
             (outbound.send)(Pattern::from(PATTERN), request, Some(ReplyTo { id: 1 })).await.expect("the request is published");
             let held = tokio::time::timeout(Duration::from_secs(10), inbound.next())
                 .await
@@ -4034,7 +4034,7 @@ mod tests {
         const PATTERN: &str = "nats.reconnect";
 
         fn request(id: u64) -> Frame {
-            Frame::Req { id, pattern: PATTERN.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) }
+            Frame::req(id, PATTERN, CallHeaders::new(), Data::new(b"null".as_slice()))
         }
 
         /// F417: a reconnect over `tls://` does not stall the thread either. On one thread beside a

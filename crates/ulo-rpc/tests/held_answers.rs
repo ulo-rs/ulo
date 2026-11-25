@@ -192,7 +192,7 @@ impl Future for Unwoken {
 }
 
 fn request(id: u64, pattern: &str, reply: ReplyPath) -> Delivery {
-    let frame = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    let frame = Frame::req(id, pattern, CallHeaders::new(), Data::new(b"1".as_slice()));
     Delivery { frame, reply: Some(reply), ack: Ack::none() }
 }
 
@@ -289,11 +289,11 @@ async fn idle() {
 }
 
 fn unavailable(id: u64, message: &str, details: Details) -> Frame {
-    Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, message, details) }
+    Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, message, details))
 }
 
 fn unhandled(id: u64) -> Frame {
-    let reason = Detail::ErrorInfo { reason: "pattern_unhandled".to_owned(), domain: "ulo.rpc".to_owned(), metadata: Default::default() };
+    let reason = Detail::error_info("pattern_unhandled", "ulo.rpc", Default::default());
     unavailable(id, &format!("no handler for pattern `{NOWHERE}`"), Details::new().with(reason))
 }
 

@@ -254,7 +254,7 @@ impl Running {
             let sent = frames.send(frame).map_err(BoxError::from);
             Box::pin(async move { sent })
         });
-        let frame = Frame::Req { id: 1, pattern: pattern.to_owned(), headers, data: Data::new(b"null".as_slice()) };
+        let frame = Frame::req(1, pattern, headers, Data::new(b"null".as_slice()));
         self.deliveries.send(Delivery { frame, reply: Some(reply), ack: Ack::none() }).expect("the server reads its link");
         let ended = async {
             let first = reported.recv().await;
@@ -291,7 +291,7 @@ fn data(n: u32) -> Data {
 async fn a_stream_an_interceptor_discards_reports_nothing() {
     let running = Running::start().await;
     let (frames, outcome) = running.call(DISCARDED, CallHeaders::new()).await;
-    assert_eq!(frames, vec![Frame::Res { id: 1, data: data(0) }], "the interceptor's answer was not the reply");
+    assert_eq!(frames, vec![Frame::res(1, data(0))], "the interceptor's answer was not the reply");
     assert_eq!(outcome, None, "the stream the interceptor discarded reported its end");
     running.stop().await;
 }
@@ -300,7 +300,7 @@ async fn a_stream_an_interceptor_discards_reports_nothing() {
 async fn the_stream_replacing_a_discarded_one_reports_its_own_end() {
     let running = Running::start().await;
     let (frames, outcome) = running.call(REPLACED, CallHeaders::new()).await;
-    let expected = vec![Frame::Item { id: 1, data: data(1) }, Frame::Item { id: 1, data: data(2) }, Frame::End { id: 1 }];
+    let expected = vec![Frame::item(1, data(1)), Frame::item(1, data(2)), Frame::end(1)];
     assert_eq!(frames, expected, "the interceptor's stream was not the reply");
     assert_eq!(outcome, Some(StreamOutcome::Completed), "the reply's own end was not what the execution reported");
     running.stop().await;
@@ -310,7 +310,7 @@ async fn the_stream_replacing_a_discarded_one_reports_its_own_end() {
 async fn a_written_stream_reports_completed() {
     let running = Running::start().await;
     let (frames, outcome) = running.call(WRITTEN, CallHeaders::new()).await;
-    assert_eq!(frames.last(), Some(&Frame::End { id: 1 }), "the stream was not written to its end: {frames:?}");
+    assert_eq!(frames.last(), Some(&Frame::end(1)), "the stream was not written to its end: {frames:?}");
     assert_eq!(outcome, Some(StreamOutcome::Completed));
     running.stop().await;
 }
@@ -322,7 +322,7 @@ async fn a_stream_the_error_handlers_answer_after_the_deadline_reports_cut_off()
     headers.insert("deadline-ms", "20");
     let (frames, outcome) = running.call(EXPIRED, headers).await;
     assert!(
-        matches!(frames.as_slice(), [Frame::Err { id: 1, error }] if error.kind == ErrorKind::Timeout),
+        matches!(frames.as_slice(), [Frame::Err { id: 1, error, .. }] if error.kind == ErrorKind::Timeout),
         "the timed-out call was not answered `timeout`: {frames:?}",
     );
     assert_eq!(outcome, Some(StreamOutcome::CutOff(Some(CancelReason::Deadline))), "the stream dropped at the deadline did not report it");
@@ -341,7 +341,7 @@ async fn a_stream_the_link_cannot_carry_reports_nothing() {
         })
     };
     assert!(
-        matches!(frames.as_slice(), [Frame::Err { id: 1, error }]
+        matches!(frames.as_slice(), [Frame::Err { id: 1, error, .. }]
             if error.kind == ErrorKind::Unimplemented && reason(error).as_deref() == Some("shape_unsupported")),
         "the stream the link cannot carry was not answered `unimplemented` with `shape_unsupported`: {frames:?}",
     );

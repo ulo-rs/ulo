@@ -88,7 +88,7 @@ impl Service {
 
 fn info(reason: &str, domain: &str, metadata: &[(&str, &str)]) -> Detail {
     let metadata: BTreeMap<String, String> = metadata.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
-    Detail::ErrorInfo { reason: reason.to_owned(), domain: domain.to_owned(), metadata }
+    Detail::error_info(reason, domain, metadata)
 }
 
 /// The root of an app serving [`Service`], with its [`Hold`] bound.

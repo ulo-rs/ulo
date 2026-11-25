@@ -102,7 +102,7 @@ impl Writing {
         let mut stream = stream.try_clone().expect("the peer's socket clones");
         let mut batch = Vec::new();
         for _ in 0..512 {
-            let bytes = Codec::Json.encode_frame(&Frame::Cancel { id: u64::MAX }).expect("the cancel encodes");
+            let bytes = Codec::Json.encode_frame(&Frame::cancel(u64::MAX)).expect("the cancel encodes");
             batch.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
             batch.extend_from_slice(&bytes);
         }
@@ -219,7 +219,7 @@ async fn listening(clock: &ScriptedTimer) -> (App<ulo::Connected>, Tcp, ulo_rpc:
 }
 
 fn request(id: u64) -> Frame {
-    Frame::Req { id, pattern: ECHO.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) }
+    Frame::req(id, ECHO, CallHeaders::new(), Data::new(b"1".as_slice()))
 }
 
 /// Sends [`answers`] requests and queues an answer to each at the server, none of them read yet,
@@ -234,7 +234,7 @@ async fn queue_answers(peer: &mut TcpStream, inbound: &mut ulo_rpc::link::Inboun
         let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.expect("a request in time").expect("a delivery");
         let id = delivery.frame.id().expect("a request's id");
         // Queued at the call; the send's wait is dropped unpolled.
-        drop(delivery.reply.expect("a request's reply path").send(Frame::Res { id, data: answer.clone() }));
+        drop(delivery.reply.expect("a request's reply path").send(Frame::res(id, answer.clone())));
     }
     count
 }
@@ -539,7 +539,7 @@ async fn a_client_connection_opened_after_a_close_outlives_that_close_s_grace() 
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.expect("a request in time").expect("a delivery");
     let id = delivery.frame.id().expect("a request's id");
     let reply = delivery.reply.expect("a request's reply path");
-    reply.send(Frame::Res { id, data: Data::new(b"2".as_slice()) }).await.expect("the answer is queued");
+    reply.send(Frame::res(id, Data::new(b"2".as_slice()))).await.expect("the answer is queued");
     let answered = tokio::time::timeout(PATIENCE, second.replies.next()).await.expect("a reply in time");
     assert!(matches!(answered, Some(Frame::Res { id: 1, .. })), "the second connection read {answered:?}");
     drop(first);

@@ -372,7 +372,7 @@ fn peer() -> SocketAddr {
 
 fn request(id: u64) -> Vec<u8> {
     Codec::Json
-        .encode_frame(&Frame::Req { id, pattern: "p".into(), headers: Default::default(), data: Data::default() })
+        .encode_frame(&Frame::req(id, "p", Default::default(), Data::default()))
         .expect("a request encodes")
         .to_vec()
 }
@@ -416,7 +416,7 @@ impl Running {
                 let (Frame::Req { id, .. }, Some(reply)) = (delivery.frame, delivery.reply) else { continue };
                 match answer {
                     Answer::Refused => drop(spawner.spawn(Box::pin(async move {
-                        let _ = reply.send(Frame::Err { id, error: refusal() }).await;
+                        let _ = reply.send(Frame::err(id, refusal())).await;
                     }))),
                     Answer::Held => lock(&holding).push((id, reply)),
                 }
@@ -434,7 +434,7 @@ impl Running {
     fn release(&self, manual: &Manual) {
         for (id, reply) in lock(&self.held).drain(..) {
             drop(manual.spawn(Box::pin(async move {
-                let _ = reply.send(Frame::Res { id, data: Data::default() }).await;
+                let _ = reply.send(Frame::res(id, Data::default())).await;
             })));
         }
     }
@@ -697,7 +697,7 @@ mod checker {
     fn refuse(manual: &Manual, delivery: Delivery) {
         let (Frame::Req { id, .. }, Some(reply)) = (delivery.frame, delivery.reply) else { return };
         drop(manual.spawn(Box::pin(async move {
-            let _ = reply.send(Frame::Err { id, error: refusal() }).await;
+            let _ = reply.send(Frame::err(id, refusal())).await;
         })));
     }
 
@@ -837,7 +837,7 @@ mod checker {
         let counted = Arc::clone(&cancelled);
         let running = start_with(&manual, |_| {}, move |manual, delivery| match (delivery.frame, delivery.reply) {
             (Frame::Req { id, .. }, Some(reply)) => drop(manual.spawn(Box::pin(async move {
-                while reply.send(Frame::Item { id, data: Data::default() }).await.is_ok() {}
+                while reply.send(Frame::item(id, Data::default())).await.is_ok() {}
             }))),
             (Frame::Cancel { .. }, None) => {
                 counted.fetch_add(1, AtomicOrdering::SeqCst);
@@ -884,7 +884,7 @@ mod checker {
         let (id, reply) = lock(&held).take().expect("the request reached the server");
         for minute in 1..=5u32 {
             manual.advance(Duration::from_secs(50));
-            let item = reply.send(Frame::Item { id, data: Data::default() });
+            let item = reply.send(Frame::item(id, Data::default()));
             drop(manual.spawn(Box::pin(async move {
                 let _ = item.await;
             })));
@@ -932,7 +932,7 @@ mod checker {
         let manual = Manual::new();
         let cancelled = Arc::new(AtomicUsize::new(0));
         let item = Data::new(format!("\"{}\"", "a".repeat(ITEM)).into_bytes());
-        let running = answering(&manual, move |id| Frame::Item { id, data: item.clone() }, true, &cancelled);
+        let running = answering(&manual, move |id| Frame::item(id, item.clone()), true, &cancelled);
         let (fed, gated) = (Fed::default(), Gated::default());
         running.connect(FedHalf(fed.clone()), gated.clone());
         manual.run();
@@ -966,7 +966,7 @@ mod checker {
             let manual = Manual::new();
             let cancelled = Arc::new(AtomicUsize::new(0));
             let data = Data::new(format!("\"{}\"", "a".repeat(64)).into_bytes());
-            let reply = move |id| if streamed { Frame::Item { id, data: data.clone() } } else { Frame::Res { id, data: data.clone() } };
+            let reply = move |id| if streamed { Frame::item(id, data.clone()) } else { Frame::res(id, data.clone()) };
             let running = answering(&manual, reply, streamed, &cancelled);
             let (fed, gated) = (Fed::default(), Gated::default());
             running.connect(FedHalf(fed.clone()), gated.clone());
@@ -997,13 +997,13 @@ mod checker {
         let manual = Manual::new();
         let cancelled = Arc::new(AtomicUsize::new(0));
         let data = Data::new(format!("\"{}\"", "a".repeat(64)).into_bytes());
-        let running = answering(&manual, move |id| Frame::Res { id, data: data.clone() }, false, &cancelled);
+        let running = answering(&manual, move |id| Frame::res(id, data.clone()), false, &cancelled);
         let (fed, gated) = (Fed::default(), Gated::default());
         running.connect(FedHalf(fed.clone()), gated.clone());
         manual.run();
         fed.push(&framed(&request(1)));
         manual.run();
-        let cancel = Codec::Json.encode_frame(&Frame::Cancel { id: 999 }).expect("a cancel encodes").to_vec();
+        let cancel = Codec::Json.encode_frame(&Frame::cancel(999)).expect("a cancel encodes").to_vec();
         manual.advance(Duration::from_secs(50));
         fed.push(&framed(&cancel));
         manual.run();
@@ -1081,7 +1081,7 @@ mod checker {
         let running = start_with(&manual, |_| {}, move |manual, delivery| match (delivery.frame, delivery.reply) {
             (Frame::Req { id, .. }, Some(reply)) if lock(&holding).is_empty() => lock(&holding).push((id, reply, delivery.ack)),
             (Frame::Req { id, .. }, Some(reply)) => drop(manual.spawn(Box::pin(async move {
-                let _ = reply.send(Frame::Err { id, error: refusal() }).await;
+                let _ = reply.send(Frame::err(id, refusal())).await;
             }))),
             (Frame::Cancel { .. }, _) => {
                 counted.fetch_add(1, AtomicOrdering::SeqCst);
@@ -1093,7 +1093,7 @@ mod checker {
         for id in 2..=3_000 {
             bytes.extend(framed(&request(id)));
         }
-        bytes.extend(framed(&Codec::Json.encode_frame(&Frame::Cancel { id: 1 }).expect("a cancel encodes")));
+        bytes.extend(framed(&Codec::Json.encode_frame(&Frame::cancel(1)).expect("a cancel encodes")));
         fed.push(&bytes);
         running.connect(FedHalf(fed.clone()), gated.clone());
         manual.run();
@@ -1148,7 +1148,7 @@ mod checker {
         manual.advance(Duration::from_secs(600));
         for (id, reply) in lock(&held).drain(..) {
             drop(manual.spawn(Box::pin(async move {
-                let _ = reply.send(Frame::Res { id, data: Data::default() }).await;
+                let _ = reply.send(Frame::res(id, Data::default())).await;
             })));
         }
         manual.run();

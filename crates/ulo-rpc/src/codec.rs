@@ -373,7 +373,7 @@ fn detail_from(entry: serde_json::Value) -> Detail {
                 .and_then(serde_json::Value::as_object)
                 .map(|object| object.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned()))).collect())
                 .unwrap_or_default();
-            Detail::ErrorInfo { reason: text(&entry, "reason"), domain: text(&entry, "domain"), metadata }
+            Detail::error_info(text(&entry, "reason"), text(&entry, "domain"), metadata)
         }
         Some("retry_after") => {
             Detail::RetryAfter(Duration::from_secs(entry.get("seconds").and_then(serde_json::Value::as_u64).unwrap_or(0)))

@@ -294,7 +294,7 @@ mod tests {
     fn req(codec: Codec, id: u64) -> Frame {
         let mut headers = CallHeaders::new();
         headers.insert("deadline-ms", "500");
-        Frame::Req { id, pattern: "orders.place".to_owned(), headers, data: codec.encode("x").expect("a string encodes") }
+        Frame::req(id, "orders.place", headers, codec.encode("x").expect("a string encodes"))
     }
 
     /// Every leading cut of `bytes` long enough to hold `t` and `id`, and the whole.
@@ -310,8 +310,8 @@ mod tests {
         for codec in [Codec::Json, Codec::Cbor] {
             let frames = [
                 (req(codec, 7), Calling::Req, 7),
-                (Frame::Open { id: u64::MAX, pattern: "orders.stream".to_owned(), headers: CallHeaders::new() }, Calling::Open, u64::MAX),
-                (Frame::In { id: 0, data: codec.encode(&[1, 2]).expect("an array encodes") }, Calling::In, 0),
+                (Frame::open(u64::MAX, "orders.stream", CallHeaders::new()), Calling::Open, u64::MAX),
+                (Frame::input(0, codec.encode(&[1, 2]).expect("an array encodes")), Calling::In, 0),
             ];
             for (frame, kind, id) in &frames {
                 let bytes = codec.encode_frame(frame).expect("the frame encodes");
@@ -371,10 +371,10 @@ mod tests {
     /// zero.
     #[test]
     fn a_frame_that_is_no_call_or_an_id_the_scan_does_not_read_names_none() {
-        let evt = Frame::Evt { pattern: "a".to_owned(), headers: CallHeaders::new(), data: Data::default() };
-        let err = Frame::Err { id: 1, error: ErrorBody::new(ErrorKind::Internal, "x", Details::new()) };
+        let evt = Frame::evt("a", CallHeaders::new(), Data::default());
+        let err = Frame::err(1, ErrorBody::new(ErrorKind::Internal, "x", Details::new()));
         for codec in [Codec::Json, Codec::Cbor] {
-            for frame in [&evt, &err, &Frame::Cancel { id: 1 }] {
+            for frame in [&evt, &err, &Frame::cancel(1)] {
                 assert_eq!(call(codec, &codec.encode_frame(frame).unwrap()), None, "{codec:?} {frame:?}");
             }
         }

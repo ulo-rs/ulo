@@ -190,7 +190,7 @@ impl Writing {
         let mut stream = stream.try_clone().expect("the peer's socket clones");
         let mut batch = Vec::new();
         for _ in 0..512 {
-            let bytes = Codec::Json.encode_frame(&Frame::Cancel { id: u64::MAX }).expect("the cancel encodes");
+            let bytes = Codec::Json.encode_frame(&Frame::cancel(u64::MAX)).expect("the cancel encodes");
             batch.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
             batch.extend_from_slice(&bytes);
         }
@@ -326,7 +326,7 @@ async fn run_a_cut_close_holds_a_half_closed_peer_s_connection_for_the_grace() {
     let unread = calls * ANSWER_BYTES as u64;
     assert!(unread > 4 * buffered(&peer), "{unread} bytes of answers do not overfill buffers of {} bytes", buffered(&peer));
     for id in 1..=calls {
-        let request = Frame::Req { id, pattern: ANSWER.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+        let request = Frame::req(id, ANSWER, CallHeaders::new(), Data::new(b"1".as_slice()));
         write_frame(&mut peer, &request).expect("the request is written");
     }
     gate("the server answers every call", || ANSWERED.load(Ordering::SeqCst) == calls).await;
@@ -387,7 +387,7 @@ async fn run_a_client_s_grace_runs_from_the_end_of_a_close_that_took_time() {
     let requests = frames(&peer);
     let data = Data::new(format!("\"{}\"", "a".repeat(FRAME_BYTES)).into_bytes());
     for id in 1..=requests {
-        let request = Frame::Req { id, pattern: ANSWER.to_owned(), headers: CallHeaders::new(), data: data.clone() };
+        let request = Frame::req(id, ANSWER, CallHeaders::new(), data.clone());
         // Queued at the call; the send's wait is dropped unpolled.
         drop((outbound.send)(Pattern::from(ANSWER), request, Some(ReplyTo { id })));
     }

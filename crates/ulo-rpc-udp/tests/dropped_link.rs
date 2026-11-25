@@ -97,13 +97,13 @@ async fn a_reply_queued_as_the_server_link_drops_is_sent() {
     let mut inbound = udp.listen(&[Pattern::from("dropped_link.add").into()]).await.expect("the link listens");
     let addr = udp.bound().first().map(|bound| bound.addr).expect("the link's address");
     let caller = tokio::net::UdpSocket::bind("127.0.0.1:0").await.expect("the caller's socket");
-    let request = Frame::Req { id: 7, pattern: "dropped_link.add".to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    let request = Frame::req(7, "dropped_link.add", CallHeaders::new(), Data::new(b"1".as_slice()));
     caller.send_to(&Codec::Json.encode_frame(&request).expect("the request encodes"), addr).await.expect("the request is sent");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next()).await.expect("the request in time").expect("a delivery");
 
     let reply = delivery.reply.expect("a request's reply path");
     // Queued at the call; the send's wait is dropped unpolled, as an aborted call's would be.
-    drop(reply.send(Frame::Res { id: delivery.frame.id().expect("the request's id"), data: Data::new(b"2".as_slice()) }));
+    drop(reply.send(Frame::res(delivery.frame.id().expect("the request's id"), Data::new(b"2".as_slice()))));
     drop(reply);
     drop(inbound);
     drop(udp);
@@ -112,7 +112,7 @@ async fn a_reply_queued_as_the_server_link_drops_is_sent() {
     let (len, from) = tokio::time::timeout(PATIENCE, caller.recv_from(&mut buffer)).await.expect("the reply in time").expect("the reply is received");
     assert_eq!(from, addr, "the reply came from the server's socket");
     let frame = Codec::Json.decode_frame(&buffer[..len]).expect("the reply decodes");
-    assert_eq!(frame, Frame::Res { id: 7, data: Data::new(b"2".as_slice()) }, "the reply, under the caller's own id");
+    assert_eq!(frame, Frame::res(7, Data::new(b"2".as_slice())), "the reply, under the caller's own id");
 }
 
 #[tokio::test(flavor = "multi_thread")]

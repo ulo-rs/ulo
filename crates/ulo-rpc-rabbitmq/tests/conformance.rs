@@ -152,7 +152,7 @@ async fn a_server_link_dropped_holding_a_call_closes_its_connection() {
         let relay = Relay::start(broker.server).await;
         let server = prepared(RabbitMq::url(format!("amqp://guest:guest@{}/%2f", relay.addr()))).await;
         let mut inbound = server.listen(&[Pattern::from(pattern).into()]).await.expect("the server's link listens");
-        let request = Frame::Req { id, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+        let request = Frame::req(id, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
         (outbound.send)(Pattern::from(pattern), request, Some(ReplyTo { id })).await.expect("the request is published");
         let delivery = tokio::time::timeout(PATIENCE, inbound.next())
             .await
@@ -214,7 +214,7 @@ async fn the_server_s_connection_recovers_after_the_broker_closes_it() {
     let client = broker.link();
     let runtime: Arc<dyn Runtime> = Arc::new(ulo_runtime_tokio::Tokio::current());
     let mut outbound = client.connect(&runtime).await.expect("the client's link connects");
-    let request = Frame::Req { id: 1, pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let request = Frame::req(1, pattern, CallHeaders::new(), Data::new(b"null".as_slice()));
     (outbound.send)(Pattern::from(pattern), request, Some(ReplyTo { id: 1 })).await.expect("the request is published");
     let delivery = tokio::time::timeout(PATIENCE, inbound.next())
         .await
@@ -222,12 +222,12 @@ async fn the_server_s_connection_recovers_after_the_broker_closes_it() {
         .expect("the server's inbound stream ended at the broker's close");
     let Frame::Req { id, .. } = delivery.frame else { panic!("the server received something other than the request: {:?}", delivery.frame) };
     let reply = delivery.reply.as_ref().expect("a request carries its reply path");
-    reply.send(Frame::Res { id, data: Data::new(b"7".as_slice()) }).await.expect("the recovered server's reply is published");
+    reply.send(Frame::res(id, Data::new(b"7".as_slice()))).await.expect("the recovered server's reply is published");
     let answer = tokio::time::timeout(PATIENCE, outbound.replies.next())
         .await
         .unwrap_or_else(|_| panic!("the recovered server's reply did not arrive within {PATIENCE:?}"))
         .expect("the client's reply lane ended");
-    assert!(matches!(&answer, Frame::Res { id: 1, data } if data.as_bytes() == b"7"), "the client received something other than the reply: {answer:?}");
+    assert!(matches!(&answer, Frame::Res { id: 1, data, .. } if data.as_bytes() == b"7"), "the client received something other than the reply: {answer:?}");
 
     let after = peer_ports(&broker).await;
     assert!(after.iter().all(|port| !held.contains(port)), "the server's connection from before the close is still held: {held:?} then {after:?}");
@@ -452,7 +452,7 @@ fn too_long(refused: &ulo::BoxError) -> (&'static str, usize, u64) {
 
 /// An event on `pattern` from `outbound`.
 async fn emitted(outbound: &ulo_rpc::Outbound, pattern: &str) -> Result<(), ulo::BoxError> {
-    let event = Frame::Evt { pattern: pattern.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    let event = Frame::evt(pattern, CallHeaders::new(), Data::new(b"1".as_slice()));
     (outbound.send)(Pattern::from(pattern), event, None).await
 }
 
@@ -506,15 +506,15 @@ async fn a_client_frame_on_a_pattern_amqp_cannot_name_fails_alone() {
     let event = emitted(&outbound, &"v".repeat(242)).await.expect_err("an event whose exchange name is 256 bytes was published");
     assert_eq!(too_long(&event), ("event pattern", 242, 241), "the refusal of an event on a 242-byte pattern");
     let pattern = "r".repeat(256);
-    let request = Frame::Req { id: 1, pattern: pattern.clone(), headers: CallHeaders::new(), data: Data::new(b"null".as_slice()) };
+    let request = Frame::req(1, pattern.clone(), CallHeaders::new(), Data::new(b"null".as_slice()));
     let request = (outbound.send)(Pattern::from(pattern.as_str()), request, Some(ReplyTo { id: 1 })).await.expect_err("a 256-byte routing key was published");
     assert_eq!(too_long(&request), ("request pattern", 256, 255), "the refusal of a request on a 256-byte pattern");
-    let open = Frame::Open { id: 2, pattern: pattern.clone(), headers: CallHeaders::new() };
+    let open = Frame::open(2, pattern.clone(), CallHeaders::new());
     let open = (outbound.send)(Pattern::from(pattern.as_str()), open, Some(ReplyTo { id: 2 })).await.expect_err("a stream's open on a 256-byte routing key was published");
     assert_eq!(too_long(&open), ("stream pattern", 256, 255), "the refusal of a stream's open on a 256-byte pattern");
     let mut headers = CallHeaders::new();
     headers.insert("h".repeat(256), "v");
-    let named = Frame::Evt { pattern: served.to_owned(), headers, data: Data::new(b"1".as_slice()) };
+    let named = Frame::evt(served, headers, Data::new(b"1".as_slice()));
     let named = (outbound.send)(Pattern::from(served), named, None).await.expect_err("an event carrying a 256-byte header name was published");
     assert_eq!(too_long(&named), ("header name", 256, 255), "the refusal of a 256-byte header name");
 

@@ -56,7 +56,7 @@ pub fn problems_of<T: DeserializeOwned>(config: &Config, path: &str) -> Vec<Prob
 /// The path, line and column of a file origin; panics on any other origin.
 pub fn file_at(origin: &Origin) -> (String, u32, u32) {
     match origin {
-        Origin::File { path, line, column } => (path.to_string(), *line, *column),
+        Origin::File { path, line, column, .. } => (path.to_string(), *line, *column),
         other => panic!("expected a file origin, found {other:?}"),
     }
 }

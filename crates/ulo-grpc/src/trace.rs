@@ -54,7 +54,7 @@ pub(crate) fn reserved(context: &TraceContext, metadata: &MetadataMap) -> Result
 
 /// The `reserved_header` refusal as a status: `BadRequest` with the reason as an `ErrorInfo`.
 fn refusal(message: String) -> tonic::Status {
-    let info = Detail::ErrorInfo { reason: REASON.to_owned(), domain: DOMAIN.to_owned(), metadata: Default::default() };
+    let info = Detail::error_info(REASON, DOMAIN, Default::default());
     crate::to_status(&CallError::new(ErrorKind::BadRequest, message).with_details(Details::new().with(info)))
 }
 

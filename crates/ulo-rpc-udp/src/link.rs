@@ -510,7 +510,7 @@ impl Awaiting {
     fn sent(&mut self, frame: &Frame) -> Sent {
         if let (Some(lane), Some(failed)) = (&self.lane, &self.failed) {
             return match request_id(frame) {
-                Some(id) => Sent::Told(lane.clone(), Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, failed.clone(), Details::new()) }),
+                Some(id) => Sent::Told(lane.clone(), Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, failed.clone(), Details::new()))),
                 None => Sent::Dropped,
             };
         }
@@ -518,7 +518,7 @@ impl Awaiting {
             Frame::Req { id, .. } | Frame::Open { id, .. } => {
                 self.ids.insert(*id);
             }
-            Frame::Cancel { id } => {
+            Frame::Cancel { id, .. } => {
                 self.ids.remove(id);
             }
             _ => {}
@@ -615,7 +615,7 @@ async fn read_replies(
                 }
                 let ids = std::mem::take(&mut lock(&awaiting).ids);
                 for id in ids {
-                    let frame = Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, failure.clone(), Details::new()) };
+                    let frame = Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, failure.clone(), Details::new()));
                     if frames.send(frame).await.is_err() {
                         return;
                     }
@@ -741,7 +741,7 @@ async fn receive(
         };
         let reply = reply_path(writes.clone(), peer, codec, Arc::clone(&ids));
         let ack = match &frame {
-            Frame::Cancel { id } => taken(&ids, *id),
+            Frame::Cancel { id, .. } => taken(&ids, *id),
             _ => Ack::none(),
         };
         if sender.send(Delivery { frame, reply: Some(reply), ack }).await.is_err() {
@@ -838,7 +838,7 @@ fn queue_unsent(sent: io::Result<usize>, writes: &ordered::Sender<Datagram>, byt
 
 /// `err` of kind `unavailable` with the shutdown phrase, under `id`.
 fn unavailable(id: u64) -> Frame {
-    Frame::Err { id, error: ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()) }
+    Frame::err(id, ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()))
 }
 
 /// `close`'s answer to every call still held, queued on the server socket's writer in one hold of
@@ -878,12 +878,12 @@ fn inward(frame: Frame, peer: SocketAddr, ids: &Mutex<Ids>, next: &AtomicU64) ->
         return Inward::Refuse(frame);
     }
     let mapped = match frame {
-        Frame::Req { id, pattern, headers, data } => Some(Frame::Req { id: ids.open(peer, id, next), pattern, headers, data }),
-        Frame::Open { id, pattern, headers } => Some(Frame::Open { id: ids.open(peer, id, next), pattern, headers }),
-        Frame::Evt { pattern, headers, data } => Some(Frame::Evt { pattern, headers, data }),
-        Frame::In { id, data } => ids.server(peer, id).map(|id| Frame::In { id, data }),
-        Frame::InEnd { id } => ids.server(peer, id).map(|id| Frame::InEnd { id }),
-        Frame::Cancel { id } => ids.cancel(peer, id).map(|id| Frame::Cancel { id }),
+        Frame::Req { id, pattern, headers, data, .. } => Some(Frame::req(ids.open(peer, id, next), pattern, headers, data)),
+        Frame::Open { id, pattern, headers, .. } => Some(Frame::open(ids.open(peer, id, next), pattern, headers)),
+        Frame::Evt { pattern, headers, data, .. } => Some(Frame::evt(pattern, headers, data)),
+        Frame::In { id, data, .. } => ids.server(peer, id).map(|id| Frame::input(id, data)),
+        Frame::InEnd { id, .. } => ids.server(peer, id).map(Frame::in_end),
+        Frame::Cancel { id, .. } => ids.cancel(peer, id).map(Frame::cancel),
         _ => None,
     };
     mapped.map_or(Inward::Discard, Inward::Deliver)
@@ -1167,10 +1167,10 @@ async fn send_datagram(socket: &impl Sending, Datagram { bytes, to, answer }: Da
 
 fn with_id(frame: Frame, id: u64) -> Frame {
     match frame {
-        Frame::Res { data, .. } => Frame::Res { id, data },
-        Frame::Err { error, .. } => Frame::Err { id, error },
-        Frame::Item { data, .. } => Frame::Item { id, data },
-        Frame::End { .. } => Frame::End { id },
+        Frame::Res { data, .. } => Frame::res(id, data),
+        Frame::Err { error, .. } => Frame::err(id, error),
+        Frame::Item { data, .. } => Frame::item(id, data),
+        Frame::End { .. } => Frame::end(id),
         other => other,
     }
 }
@@ -1288,7 +1288,7 @@ mod tests {
             };
             let reply = || {
                 start.wait();
-                queue_reply(&writes, peer, Codec::Json, &ids, Frame::Res { id: server, data: ulo_rpc::Data::new(Bytes::from_static(b"1")) }).map(drop)
+                queue_reply(&writes, peer, Codec::Json, &ids, Frame::res(server, ulo_rpc::Data::new(Bytes::from_static(b"1")))).map(drop)
             };
             // The thread spawned reaches the barrier last and usually runs first, so the two sides
             // swap threads each round and both orders run.
@@ -1322,7 +1322,7 @@ mod tests {
     }
 
     fn request(id: u64) -> Frame {
-        Frame::Req { id, pattern: LATE.to_owned(), headers: ulo_rpc::CallHeaders::new(), data: ulo_rpc::Data::new(Bytes::from_static(b"1")) }
+        Frame::req(id, LATE, ulo_rpc::CallHeaders::new(), ulo_rpc::Data::new(Bytes::from_static(b"1")))
     }
 
     const LATE: &str = "udp.late";
@@ -1385,18 +1385,18 @@ mod tests {
         let held = inward(request(7), peer, &ids, &state.next_id);
         assert!(matches!(held, Inward::Deliver(Frame::Req { .. })), "the request before the sweep was {held:?}");
         answer_held(&ids, &writes, Codec::Json);
-        let open = Frame::Open { id: 8, pattern: LATE.to_owned(), headers: ulo_rpc::CallHeaders::new() };
+        let open = Frame::open(8, LATE, ulo_rpc::CallHeaders::new());
         match inward(open.clone(), peer, &ids, &state.next_id) {
             Inward::Refuse(frame) => assert_eq!(frame, open, "the streamed request refused after the sweep"),
             other => panic!("a streamed request after the sweep was {other:?}"),
         }
         assert!(lock(&ids).by_server.is_empty(), "the swept table holds a call");
-        let event = Frame::Evt { pattern: LATE.to_owned(), headers: ulo_rpc::CallHeaders::new(), data: ulo_rpc::Data::new(Bytes::from_static(b"1")) };
+        let event = Frame::evt(LATE, ulo_rpc::CallHeaders::new(), ulo_rpc::Data::new(Bytes::from_static(b"1")));
         match inward(event.clone(), peer, &ids, &state.next_id) {
             Inward::Deliver(frame) => assert_eq!(frame, event, "the event delivered after the sweep"),
             other => panic!("an event after the sweep was {other:?}"),
         }
-        let forgotten = [Frame::In { id: 7, data: ulo_rpc::Data::new(Bytes::from_static(b"1")) }, Frame::InEnd { id: 7 }, Frame::Cancel { id: 7 }];
+        let forgotten = [Frame::input(7, ulo_rpc::Data::new(Bytes::from_static(b"1"))), Frame::in_end(7), Frame::cancel(7)];
         for frame in forgotten {
             let inward = inward(frame.clone(), peer, &ids, &state.next_id);
             assert!(matches!(inward, Inward::Discard), "{frame:?} naming the call the sweep answered was {inward:?}");
@@ -1649,7 +1649,7 @@ mod host_names {
 
     /// Sends one `cancel` through `outbound` and waits for `socket` to receive a datagram.
     async fn reaches(outbound: &Outbound, socket: &UdpSocket, which: &str) {
-        (outbound.send)(Pattern::new("host_names"), Frame::Cancel { id: 1 }, None).await.expect("the frame is sent");
+        (outbound.send)(Pattern::new("host_names"), Frame::cancel(1), None).await.expect("the frame is sent");
         let mut buf = [0u8; 256];
         tokio::time::timeout(PATIENCE, socket.recv_from(&mut buf))
             .await
@@ -1799,10 +1799,10 @@ mod host_names {
     #[test]
     fn a_request_after_the_goaway_is_answered_on_the_reply_lane() {
         let mut awaiting = Awaiting::default();
-        let request = |id| Frame::Req { id, pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        let request = |id| Frame::req(id, "p", Default::default(), ulo_rpc::Data::default());
         assert!(matches!(awaiting.sent(&request(1)), Sent::Queued), "a request before the failure");
         assert!(matches!(awaiting.sent(&request(2)), Sent::Queued), "a request before the failure");
-        assert!(matches!(awaiting.sent(&Frame::Cancel { id: 2 }), Sent::Queued), "a cancel");
+        assert!(matches!(awaiting.sent(&Frame::cancel(2)), Sent::Queued), "a cancel");
         assert_eq!(awaiting.ids, HashSet::from([1]), "the requests awaiting a reply");
         awaiting.failed = Some("the socket failed".to_owned());
         assert!(matches!(awaiting.sent(&request(3)), Sent::Queued), "a request after the failure, before the `goaway`");
@@ -1810,12 +1810,12 @@ mod host_names {
         let (lane, _replies) = tokio::sync::mpsc::channel(1);
         awaiting.lane = Some(lane);
         match awaiting.sent(&request(4)) {
-            Sent::Told(_, Frame::Err { id, error }) => assert_eq!((id, error.kind, error.message.as_str()), (4, ErrorKind::Unavailable, "the socket failed")),
+            Sent::Told(_, Frame::Err { id, error, .. }) => assert_eq!((id, error.kind, error.message.as_str()), (4, ErrorKind::Unavailable, "the socket failed")),
             _ => panic!("a request after the `goaway` was not answered on the lane"),
         }
-        let event = Frame::Evt { pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        let event = Frame::evt("p", Default::default(), ulo_rpc::Data::default());
         assert!(matches!(awaiting.sent(&event), Sent::Dropped), "an event after the `goaway`");
-        assert!(matches!(awaiting.sent(&Frame::Cancel { id: 1 }), Sent::Dropped), "a cancel after the `goaway`");
+        assert!(matches!(awaiting.sent(&Frame::cancel(1)), Sent::Dropped), "a cancel after the `goaway`");
         assert_eq!(awaiting.ids, HashSet::from([1, 3]), "nothing after the `goaway` changes the calls taken");
     }
 
@@ -1829,20 +1829,20 @@ mod host_names {
         socket.connect(silent.local_addr().expect("an address")).await.expect("the socket connects");
         let (_epoch, epoch) = watch::channel(0);
         let (frames, mut replies) = tokio::sync::mpsc::channel(1);
-        frames.send(Frame::Cancel { id: 0 }).await.expect("the lane's one slot is filled");
+        frames.send(Frame::cancel(0)).await.expect("the lane's one slot is filled");
         let awaiting = Arc::new(Mutex::new(Awaiting { ids: HashSet::from([4]), failed: Some("the socket failed".to_owned()), lane: None }));
         let refused = Arc::new(Notify::new());
         refused.notify_one();
         let sent_to = SentTo { addr: silent.local_addr().expect("an address"), name: None };
         let reading = tokio::spawn(read_replies(Arc::new(socket), epoch, Codec::Json, frames, Arc::clone(&awaiting), refused, sent_to));
         tokio::task::yield_now().await;
-        let request = Frame::Req { id: 5, pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        let request = Frame::req(5, "p", Default::default(), ulo_rpc::Data::default());
         assert!(matches!(lock(&awaiting).sent(&request), Sent::Queued), "a request before the `goaway` is queued was answered apart from the calls the lane takes");
         let mut sent = Vec::new();
         while sent.len() < 4 {
             let frame = tokio::time::timeout(PATIENCE, replies.recv()).await.expect("the lane sends").expect("the lane is open");
             sent.push(match frame {
-                Frame::Cancel { id: 0 } => "filler".to_owned(),
+                Frame::Cancel { id: 0, .. } => "filler".to_owned(),
                 Frame::Goaway => "goaway".to_owned(),
                 Frame::Err { id, .. } => format!("err {id}"),
                 other => panic!("the reply lane sent {other:?}"),
@@ -1874,7 +1874,7 @@ mod host_names {
             let mut buf = vec![0u8; MAX_DATAGRAM as usize + 1];
             while let Ok((len, peer)) = server.recv_from(&mut buf).await {
                 if let Ok(Frame::Req { id, .. }) = Codec::Json.decode_frame(&buf[..len]) {
-                    let reply = Codec::Json.encode_frame(&Frame::Res { id, data: ulo_rpc::Data::new("2") }).expect("the reply encodes");
+                    let reply = Codec::Json.encode_frame(&Frame::res(id, ulo_rpc::Data::new("2"))).expect("the reply encodes");
                     let _ = server.send_to(&reply, peer).await;
                 }
             }
@@ -1913,7 +1913,7 @@ mod host_names {
             let mut buf = vec![0u8; MAX_DATAGRAM as usize + 1];
             while let Ok((len, peer)) = server.recv_from(&mut buf).await {
                 if let Ok(Frame::Req { id, .. }) = Codec::Json.decode_frame(&buf[..len]) {
-                    let reply = Codec::Json.encode_frame(&Frame::Res { id, data: ulo_rpc::Data::new("2") }).expect("the reply encodes");
+                    let reply = Codec::Json.encode_frame(&Frame::res(id, ulo_rpc::Data::new("2"))).expect("the reply encodes");
                     let _ = server.send_to(&reply, peer).await;
                 }
             }
@@ -1940,7 +1940,7 @@ mod host_names {
     fn a_send_the_host_refused_fails_the_socket_as_a_receive_would() {
         let sent_to = SentTo { addr: SocketAddr::from(([127, 0, 0, 1], 7000)), name: None };
         let told = sent_to.failure(&io::Error::from(io::ErrorKind::ConnectionRefused));
-        let request = |id| Frame::Req { id, pattern: "p".to_owned(), headers: Default::default(), data: ulo_rpc::Data::default() };
+        let request = |id| Frame::req(id, "p", Default::default(), ulo_rpc::Data::default());
         let refused = Notify::new();
         let mut awaiting = Awaiting::default();
         for id in [1, 2, 3] {
@@ -1986,7 +1986,7 @@ mod host_names {
         let mut answered = Vec::new();
         while let Some(frame) = replies.recv().await {
             match frame {
-                Frame::Err { id, error } => {
+                Frame::Err { id, error, .. } => {
                     assert_eq!((error.kind, error.message.as_str()), (ErrorKind::Unavailable, "the socket failed"), "call {id}");
                     answered.push(id);
                 }
@@ -2006,7 +2006,7 @@ mod host_names {
         let peer = receiving().await;
         let socket = receiving().await;
         socket.connect(peer.local_addr().expect("an address")).await.expect("the socket connects");
-        let reply = Codec::Json.encode_frame(&Frame::Res { id: 4, data: ulo_rpc::Data::new("1") }).expect("the reply encodes");
+        let reply = Codec::Json.encode_frame(&Frame::res(4, ulo_rpc::Data::new("1"))).expect("the reply encodes");
         peer.send_to(&reply, socket.local_addr().expect("an address")).await.expect("the reply is sent");
         tokio::time::timeout(PATIENCE, socket.readable()).await.expect("the reply arrives").expect("the socket is readable");
         let (_epoch, epoch) = watch::channel(0);
@@ -2023,7 +2023,7 @@ mod host_names {
             sent.push(match frame {
                 Frame::Goaway => (0, "goaway"),
                 Frame::Res { id, .. } => (id, "res"),
-                Frame::Err { id, error } => {
+                Frame::Err { id, error, .. } => {
                     assert_eq!(error.message, "the socket failed", "call {id}");
                     (id, "err")
                 }

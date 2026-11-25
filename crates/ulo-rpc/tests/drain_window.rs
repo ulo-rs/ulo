@@ -203,7 +203,7 @@ fn request(id: u64, frames: mpsc::UnboundedSender<Frame>, gate: watch::Receiver<
             Ok(())
         })
     });
-    let frame = Frame::Req { id, pattern: ADD.to_owned(), headers: CallHeaders::new(), data: Data::new(b"1".as_slice()) };
+    let frame = Frame::req(id, ADD, CallHeaders::new(), Data::new(b"1".as_slice()));
     Delivery { frame, reply: Some(reply), ack: Ack::none() }
 }
 
@@ -212,7 +212,7 @@ fn open_gate() -> watch::Receiver<bool> {
 }
 
 fn refused_unavailable(frame: &Result<Frame, mpsc::error::TryRecvError>, id: u64) -> bool {
-    matches!(frame, Ok(Frame::Err { id: answered, error }) if *answered == id && error.kind == ErrorKind::Unavailable)
+    matches!(frame, Ok(Frame::Err { id: answered, error, .. }) if *answered == id && error.kind == ErrorKind::Unavailable)
 }
 
 #[tokio::test(flavor = "current_thread")]

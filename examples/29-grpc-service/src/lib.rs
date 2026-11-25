@@ -56,11 +56,7 @@ impl Classify for ItemError {
     fn details(&self) -> Details {
         match self {
             ItemError::EmptyId => Details::new().with(Detail::FieldViolations(vec![FieldViolation::new("id", "must not be empty")])),
-            ItemError::Missing(id) => Details::new().with(Detail::ErrorInfo {
-                reason: "ITEM_NOT_FOUND".to_owned(),
-                domain: "catalog.example".to_owned(),
-                metadata: BTreeMap::from([("id".to_owned(), id.clone())]),
-            }),
+            ItemError::Missing(id) => Details::new().with(Detail::error_info("ITEM_NOT_FOUND", "catalog.example", BTreeMap::from([("id".to_owned(), id.clone())]))),
         }
     }
 }
