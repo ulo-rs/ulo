@@ -221,6 +221,11 @@ impl CallError {
     /// not run invisibly on every `?`. A passed deadline is not in the error: a transport tests
     /// `exec.cancel_reason()` first and renders `Timeout` for `CancelReason::Deadline`.
     ///
+    /// This names no transport's own error type, so a boxed `tonic::Status` or `ConnectRefused` is
+    /// `Internal` here and its wire code is lost. A transport's renderer recognises its own types
+    /// before calling this; an error handler that rebuilds an error calls its own transport's helper,
+    /// `ulo_grpc::call_error` or `ulo_ws::call_error`, which does the same and falls back to this.
+    ///
     /// The original is kept as the source. A [`Redacted`] holding one of the errors above, as
     /// `err` itself or as a constructor's error inside `LookupError::Construct`, maps as its
     /// original would: redaction changes the text, not the kind. No other `source()` chain is

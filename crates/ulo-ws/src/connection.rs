@@ -1621,7 +1621,7 @@ async fn message(conn: Connection, flight: Arc<Flight>, event: Option<(MountedHa
     flight.answer_hold.before_queueing(&name).await;
     match outcome {
         Err(err) => {
-            let error = CallError::from_boxed(err);
+            let error = crate::gateway::call_error(err);
             trace::record_failure(&call_span, error.kind());
             let _ = outbound.push(envelope::error(codec, id.as_ref(), &error.__into_sent(&conn.inner.app)));
         }
@@ -1737,7 +1737,7 @@ async fn late(
 ) -> Message {
     // `pump` runs instrumented with the message's span, so the current span is the message's.
     let call_span = Span::current();
-    let original = CallError::from_boxed(err);
+    let original = crate::gateway::call_error(err);
     let Some(handler) = handler else {
         trace::record_failure(&call_span, original.kind());
         return envelope::error(codec, id, &original.__into_sent(cx.app()));
@@ -1745,7 +1745,7 @@ async fn late(
     let summary = original.summary();
     match ulo::dispatch_late(handler, exec, cx, Box::new(original)).await {
         LateOutcome::Render(reshaped) => {
-            let reshaped = CallError::from_boxed(reshaped);
+            let reshaped = crate::gateway::call_error(reshaped);
             trace::record_failure(&call_span, reshaped.kind());
             envelope::error(codec, id, &reshaped.__into_sent(cx.app()))
         }
