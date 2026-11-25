@@ -2,6 +2,7 @@
 //! transport-neutral [`ErrorKind`] through [`Classify`], becomes a [`CallError`], and each
 //! transport renders that canonically.
 
+use std::any::Any;
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
@@ -239,16 +240,8 @@ impl CallError {
         call
     }
 
-    /// The blanket `From`, except behind a `Dependency`: there the lookup error maps as
-    /// `from_boxed` maps it, so an execution-scoped constructor's `CallError` keeps the challenge
-    /// and every transport's code, which `Classify` has no method to carry.
     pub(crate) fn from_extract(err: ExtractError) -> Self {
-        let mut call = match &err {
-            ExtractError::Dependency { source, .. } => from_lookup(source, 0),
-            _ => return CallError::from(err),
-        };
-        call.source = Some(Box::new(err));
-        call
+        CallError::from(err)
     }
 
     pub fn with_details(mut self, details: Details) -> Self {
@@ -391,7 +384,10 @@ impl CallError {
 
 impl<E: Classify> From<E> for CallError {
     fn from(e: E) -> Self {
-        let mut call = classified(&e);
+        let mut call = match (&e as &dyn Any).downcast_ref::<ExtractError>() {
+            Some(ExtractError::Dependency { source, .. }) => from_lookup(source, 0),
+            _ => classified(&e),
+        };
         call.source = Some(Box::new(e));
         call
     }

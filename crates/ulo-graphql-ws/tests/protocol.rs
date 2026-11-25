@@ -559,8 +559,19 @@ async fn a_subscribe_handled_during_the_drain_is_refused_with_the_shutdown_phras
         }
     })
     .await;
-    // The second frame is read while the first is held; nothing is read once the drain begins.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // The read loop answers a ping only after reading every frame before it, so the pong shows
+    // the second frame was read while the first is held; nothing is read once the drain begins.
+    socket.send(Message::Ping(Vec::new().into())).await.expect("the ping was sent");
+    within("the pong", async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Pong(_))) => break,
+                Some(Ok(Message::Ping(_))) => {}
+                other => panic!("expected the pong, got {other:?}"),
+            }
+        }
+    })
+    .await;
 
     let handle = app.handle.clone();
     let closing = tokio::spawn(async move {

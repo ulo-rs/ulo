@@ -328,9 +328,19 @@ pub struct UpgradeHead {
     pub(crate) app: AppHandle,
 }
 
+/// Header values and the query are left out: the head carries `Authorization`, `Cookie` and
+/// tokens in a query, and `{:?}` of it lands in logs.
 impl fmt::Debug for UpgradeHead {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UpgradeHead").field("parts", &self.parts).field("subprotocol", &self.subprotocol).finish_non_exhaustive()
+        let parts = &*self.parts;
+        let names: Vec<&str> = parts.headers.keys().map(|name| name.as_str()).collect();
+        f.debug_struct("UpgradeHead")
+            .field("method", &parts.method)
+            .field("path", &parts.uri.path())
+            .field("version", &parts.version)
+            .field("header_names", &names)
+            .field("subprotocol", &self.subprotocol)
+            .finish_non_exhaustive()
     }
 }
 

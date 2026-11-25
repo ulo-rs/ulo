@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package codegen.keywords.v1;
+
+// Services named after Rust keywords: the marker module of each is a raw identifier, or for
+// `super`, which no raw identifier spells, the name with a trailing `_`.
+
+service Match {
+  rpc Go(Ping) returns (Ping);
+}
+
+service Type {
+  rpc Go(Ping) returns (Ping);
+}
+
+service Super {
+  rpc Go(Ping) returns (Ping);
+}
+
+message Ping {}

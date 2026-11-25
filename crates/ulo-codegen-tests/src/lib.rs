@@ -20,3 +20,8 @@ pub mod probe {
 pub mod bare {
     ulo_grpc::include_proto!("_");
 }
+
+/// Services named after Rust keywords, whose marker modules are raw identifiers.
+pub mod keywords {
+    ulo_grpc::include_proto!("codegen.keywords.v1");
+}
