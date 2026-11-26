@@ -1,3 +1,4 @@
+use std::fmt;
 use std::ops::Deref;
 
 use http::HeaderMap;
@@ -11,8 +12,16 @@ const LAST_EVENT_ID: &str = "last-event-id";
 /// One typed header from the `headers` crate: `Header<headers::Authorization<Bearer>>`. Absent is
 /// `ExtractError::Missing` naming the header, so `Option<Header<H>>` is `None` then; present and
 /// unparsable is `Malformed`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Header<H>(pub H);
+
+/// The header's name only: `Authorization` and `Cookie` print their credentials through their own
+/// `Debug`, and `{:?}` of an extractor lands in logs.
+impl<H: headers::Header> fmt::Debug for Header<H> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Header").field(&H::name().as_str()).finish_non_exhaustive()
+    }
+}
 
 impl<H> Deref for Header<H> {
     type Target = H;
@@ -63,5 +72,24 @@ impl FromCall<Http> for LastEventId {
 impl FromCall<Http> for HttpCx {
     async fn from_call(cx: &HttpCx) -> Result<Self, ExtractError> {
         Ok(cx.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use headers::{Authorization, Cookie, HeaderMapExt};
+
+    use super::*;
+
+    #[test]
+    fn a_typed_header_s_debug_output_carries_its_name_and_no_value() {
+        let bearer = Header(Authorization::bearer("s3cr3t").expect("a valid token"));
+        let mut map = HeaderMap::new();
+        map.insert("cookie", "sid=abc".parse().expect("a valid value"));
+        let cookie = Header(map.typed_get::<Cookie>().expect("the cookie parses"));
+        for (text, name) in [(format!("{bearer:?}"), "authorization"), (format!("{cookie:#?}"), "cookie")] {
+            assert!(!text.contains("s3cr3t") && !text.contains("sid=abc"), "a value appears in {text}");
+            assert!(text.contains(name), "{name} is kept: {text}");
+        }
     }
 }
