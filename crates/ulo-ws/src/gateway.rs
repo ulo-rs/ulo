@@ -21,7 +21,7 @@ use ulo::{
     MountedHandler, TypeName, Unreached,
 };
 use ulo_transport::prepare::{Failure, Failures, Names, zero_bound, zero_count};
-use ulo_transport::{CallError, Count, ErrorKind};
+use ulo_transport::{CallError, Count, Detail, Details, ErrorKind};
 
 use crate::handler::{GatewayHooks, HandlerFn, WsHandler};
 use crate::close::{CloseCode, CloseCodeError, by_kind_whole, check_reason, cut};
@@ -468,6 +468,14 @@ impl ConnectRefused {
 /// An error handler that rebuilds an error calls this rather than `from_boxed`, which names no
 /// ulo-ws type and answers a boxed refusal `Internal`. The refusal stays the error's source.
 ///
+/// What a refusal answers a handshake with under `refuse = handshake` is kept: its HTTP status
+/// as [`WithHttpStatus`](ulo_http::WithHttpStatus), its `Retry-After` as a `RetryAfter` detail
+/// and its `WWW-Authenticate` challenge as the error's challenge, so the rebuilt error refuses a
+/// handshake as the original did. The `RetryAfter` detail is also sent in a message's error
+/// envelope, as any error's details are. Any other header a refusal carries is lost, and so is
+/// the mark of a refusal for the server's own state, a drain or `max_connections`, whose 503
+/// takes the server's `Retry-After`; the error holds neither.
+///
 /// ```
 /// use ulo_ws::{CloseCode, ConnectRefused, ErrorKind, WithCloseCode};
 ///
@@ -492,10 +500,26 @@ pub fn call_error(err: BoxError) -> CallError {
                 CallError::new(refused.kind.unwrap_or(ErrorKind::Forbidden), refused.reason.clone())
                     .__with_close_code(refused.close_code.get())
             });
-            call.with_source(*refused)
+            with_head(call, &refused).with_source(*refused)
         }
         Err(err) => CallError::from_boxed(err),
     }
+}
+
+/// `call` answering a handshake as `refused` does: the status, a `Retry-After` of whole seconds and
+/// the challenge, each as HTTP reads them off a `CallError` when it writes them again. A value is
+/// read as UTF-8, not through `HeaderValue::to_str`, which refuses the non-ASCII bytes a
+/// challenge's realm may carry.
+fn with_head(call: CallError, refused: &ConnectRefused) -> CallError {
+    let mut call = ulo_http::WithHttpStatus::with_http_status(call, refused.status);
+    let header = |name| refused.headers.get(name).and_then(|value| std::str::from_utf8(value.as_bytes()).ok());
+    if let Some(seconds) = header(http::header::RETRY_AFTER).and_then(|value| value.parse::<u64>().ok()) {
+        call = call.with_details(Details::new().with(Detail::RetryAfter(Duration::from_secs(seconds))));
+    }
+    if let Some(challenge) = header(http::header::WWW_AUTHENTICATE) {
+        call = call.__with_challenge(challenge);
+    }
+    call
 }
 
 /// A refusal by the error's kind, as [`ConnectRefused::kind`] refuses with its message, or with the
@@ -1076,5 +1100,27 @@ mod tests {
         let code = CloseCode::new(4406).expect("an application's code");
         let refused = ConnectRefused::code(code, "no subprotocol").expect("the reason fits");
         assert_eq!((refused.status, refused.headers.len()), (StatusCode::FORBIDDEN, 0));
+    }
+
+    /// A rebuilt refusal keeps the status, `Retry-After` and challenge, and loses a header of any
+    /// other name.
+    /// Planted breaks: dropping the status, the `Retry-After` or the challenge mapping fails the
+    /// comparison of the matching case.
+    #[test]
+    fn call_error_keeps_the_status_retry_after_and_challenge_and_loses_other_headers() {
+        let cases = [
+            ConnectRefused::from(retry(ErrorKind::TooManyRequests)),
+            ConnectRefused::from(CallError::unauthorized("Basic realm=\"ws\"")),
+            ConnectRefused::from(CallError::unauthorized("Basic realm=\"caf\u{e9}\"")),
+            ConnectRefused::from(CallError::new(ErrorKind::Conflict, "gone").with_http_status(StatusCode::PRECONDITION_FAILED)),
+        ];
+        for original in cases {
+            let rebuilt = ConnectRefused::from(call_error(Box::new(original.clone())));
+            assert_eq!((rebuilt.status, &rebuilt.headers), (original.status, &original.headers), "{original:?}");
+            let mut marked = original.clone();
+            marked.headers.insert("x-trace", "abc".parse().expect("a header value"));
+            let lost = ConnectRefused::from(call_error(Box::new(marked)));
+            assert_eq!((lost.status, &lost.headers), (original.status, &original.headers), "only the other header is lost");
+        }
     }
 }

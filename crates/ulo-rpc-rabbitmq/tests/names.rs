@@ -9,6 +9,7 @@
 use std::error::Error;
 use std::io::ErrorKind;
 use std::net::TcpListener;
+use std::time::Duration;
 
 use ulo::{App, BoxError, Construct, ConstructError, Controller, Dependencies, HandlerSpec, Handlers, Module, ModuleDef, ModuleIdentity};
 use ulo::{Mount, Resolver, Signal, StartupError};
@@ -63,9 +64,13 @@ impl<const BYTES: usize, const EVERY: bool> Module for Root<BYTES, EVERY> {
     }
 }
 
+/// How long a start waits for a connect. A port that refuses answers at once, so a start that
+/// runs to this bound met something that accepted and never answered.
+const CONNECT_BOUND: Duration = Duration::from_secs(5);
+
 /// A server on a link to `port`.
 fn server(port: u16) -> Server<RabbitMq> {
-    Server::new(RabbitMq::url(format!("amqp://guest:guest@127.0.0.1:{port}/%2f")))
+    Server::new(RabbitMq::url(format!("amqp://guest:guest@127.0.0.1:{port}/%2f")).connect_within(CONNECT_BOUND))
 }
 
 /// A loopback listener nothing accepts on, which a test reads for a connection the start made.
@@ -120,7 +125,8 @@ async fn refused<const BYTES: usize, const EVERY: bool>(parts: &[String]) {
 
 /// A start that went past the names to connect, which a port refusing connections fails.
 async fn served<const BYTES: usize, const EVERY: bool>() {
-    let error = started::<BYTES, EVERY>(refusing_addr().port()).await;
+    let refusing = refusing_addr();
+    let error = started::<BYTES, EVERY>(refusing.port()).await;
     assert!(!ulo::is_permanent(&error), "a {BYTES}-byte pattern was refused rather than connected for: {error}");
     let StartupError::Bind { source, .. } = error else { panic!("expected a `Bind` failure, got: {error}") };
     let cause = source.original();
@@ -132,7 +138,10 @@ async fn served<const BYTES: usize, const EVERY: bool>() {
     })
     .filter_map(|error| error.downcast_ref::<std::io::Error>())
     .any(|io| io.kind() == ErrorKind::ConnectionRefused);
-    assert!(connected, "the start on a {BYTES}-byte pattern did not reach the connect: {cause}");
+    assert!(
+        connected,
+        "the start on a {BYTES}-byte pattern waited up to {CONNECT_BOUND:?} for a connect to {refusing} and did not get a refusal: {cause}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

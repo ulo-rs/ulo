@@ -79,9 +79,11 @@ impl AppHandle {
     /// Wires `module` against the frozen graph, every error collected, then connects it through
     /// its own readiness checks and init hooks. Loading an equal identity twice returns the
     /// existing handle, or `LoadError::Wiring` holding `WiringError::DifferingSettings` when the
-    /// settings differ, its second site naming this call; a `#[module(identity = type)]` module
-    /// with fields is registered once, and a second load of it is `WiringError::RegisteredTwice`. Refused from Stopping on with
-    /// `LoadError::Closed` (§8.6).
+    /// settings differ, its second site naming this call. A `#[module(identity = type)]` module
+    /// with fields is the exception: its fields are not compared, so two loads of it cannot be
+    /// told equal, and a second load answers `LoadError::Wiring` holding
+    /// `WiringError::RegisteredTwice` in place of the existing handle. Refused from Stopping on
+    /// with `LoadError::Closed` (§8.6).
     #[track_caller]
     pub fn load(&self, module: impl Module) -> impl Future<Output = Result<ModuleRef, LoadError>> {
         let at = Location::caller();

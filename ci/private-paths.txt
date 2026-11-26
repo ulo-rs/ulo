@@ -7,7 +7,7 @@ emitter ulo-handler-codegen  # builds the handler code every transport attribute
 
 allow ulo-transport ulo::__private::HandlerParam  # `Param::dependencies`, which generated handler code calls, labels each parameter's reads through the core's helper: both halves are macro ABI
 allow ulo-transport ulo::__private::handler_param  # the same helper, called from `Param`'s two impls
-allow ulo-transport ulo::__private::find_error  # `CallError::find`, which walks an error's chain through a `Redacted`'s original and the fields of the core's own error types, on the bound `is_panic` and `is_permanent` use: those types are the core's, so the walk that reads them lives beside the two predicates
+allow ulo-transport ulo::__private::find_error  # `CallError::find`, which walks an error's chain through a `Redacted`'s original, the fields of the core's own error types and, through the hook it passes, the `Redacted` an `ExtractError` holds, on the bound `is_panic` and `is_permanent` use: those types are the core's, so the walk that reads them lives beside the two predicates
 
 allow ulo-rpc ulo_transport::__private::Param  # re-exported in `ulo_rpc::__private` for the code `#[ulo_rpc::message]` and `#[ulo_rpc::event]` generate, which names `::ulo_rpc::__private::Param`
 allow ulo-rpc ulo_transport::__private::ViaCall  # the marker `Param`'s generated call infers, re-exported beside it
