@@ -63,10 +63,10 @@ async fn start_serves_on_the_current_tokio_runtime() {
 }
 
 #[tokio::test]
-async fn start_replaces_a_clock_set_before_it() {
+async fn start_keeps_a_clock_set_before_it() {
     let clock = ScriptedTimer::new();
     let served = start(TestApp::of(AppModule).timer(clock.clone()), Beacon).await.expect("starts");
-    assert!(!sleeps_on(&served, &clock), "the app times on tokio's clock, not the scripted one");
+    assert!(sleeps_on(&served, &clock), "the app times on the scripted clock, not tokio's");
     served.close().await.expect("close is clean");
 }
 

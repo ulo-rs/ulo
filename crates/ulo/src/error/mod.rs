@@ -110,7 +110,7 @@ impl fmt::Display for RuntimeMissing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "transport `{}` is bound on an app with no `Runtime`; set one with `.runtime(..)`, which sets the app's timer too",
+            "transport `{}` is bound on an app with no `Runtime`; set one with `.runtime(..)`, which supplies the app's clock when none was given",
             self.transport
         )
     }

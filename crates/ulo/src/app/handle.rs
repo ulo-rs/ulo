@@ -157,8 +157,8 @@ impl AppHandle {
     /// without one. The app's runtime is the core's wrapper around the one given, which spawns on
     /// it and redacts a spawned task's panic with the app's secrets; it is not that object, so
     /// nothing reaches the given runtime's own type through it, a downcast included. Its clock is
-    /// [`timer`](Self::timer)'s: the same object, unless `.timer(..)` came after `.runtime(..)`,
-    /// when this times with that timer's clock.
+    /// [`timer`](Self::timer)'s: the same object, unless a `.timer(..)` was given, in either
+    /// order with `.runtime(..)`, when this times with that timer's clock.
     pub fn runtime(&self) -> Option<&Arc<dyn Runtime>> {
         self.shared.config.runtime.as_ref()
     }

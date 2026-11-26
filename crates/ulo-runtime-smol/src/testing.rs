@@ -23,9 +23,8 @@
 //! A smol test ends with `close`: the listener of a `TestServer` dropped without it is released only
 //! when the executor next runs, which it never does after `block_on` returns.
 //!
-//! `start` sets the runtime, and `TestApp::runtime` sets the clock with it, so a clock given with
-//! `TestApp::timer` before `start` is replaced by smol's. A test that pins a clock sets both in the
-//! order that keeps it, `.runtime(smol).timer(clock)`, and starts with `TestServer::start_on`.
+//! `start` sets the runtime and leaves the clock to the app: a clock given with `TestApp::timer`
+//! stays the app's clock, and without one the app times on smol's.
 
 use ulo::testing::{TestApp, TestServer};
 use ulo::{Servers, StartupError};

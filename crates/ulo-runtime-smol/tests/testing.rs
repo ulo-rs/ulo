@@ -70,11 +70,11 @@ fn start_serves_on_the_smol_runtime_running_the_test() {
 }
 
 #[test]
-fn start_replaces_a_clock_set_before_it() {
+fn start_keeps_a_clock_set_before_it() {
     smol().block_on(async {
         let clock = ScriptedTimer::new();
         let served = start(TestApp::of(AppModule).timer(clock.clone()), Beacon).await.expect("starts");
-        assert!(!sleeps_on(&served, &clock), "the app times on smol's clock, not the scripted one");
+        assert!(sleeps_on(&served, &clock), "the app times on the scripted clock, not smol's");
         served.close().await.expect("close is clean");
     });
 }

@@ -61,9 +61,10 @@ pub trait Spawn: Send + Sync + 'static {
 }
 
 /// The app's clock and executor in one value, set with `AppBuilder::runtime`. Services read it as
-/// `Dep<dyn Runtime>`, and `Dep<dyn Timer>` resolves to the same object; after a later
-/// `AppBuilder::timer`, `Dep<dyn Runtime>` spawns on the runtime and times with that timer. Either
-/// way the object is the app's wrapper around the runtime given, which redacts a spawned task's
+/// `Dep<dyn Runtime>`, and `Dep<dyn Timer>` resolves to the same object; given an
+/// `AppBuilder::timer`, in either order, `Dep<dyn Runtime>` spawns on the runtime and times with
+/// that timer. Either way the object is the app's wrapper around the runtime given, which redacts a
+/// spawned task's
 /// panic with the app's secrets. Implemented for anything that implements both halves.
 pub trait Runtime: Timer + Spawn {}
 

@@ -16,10 +16,8 @@
 //! # }
 //! ```
 //!
-//! `start` sets the runtime, and `TestApp::runtime` sets the clock with it, so a clock given with
-//! `TestApp::timer` before `start` is replaced by tokio's. A test that pins a clock sets both in the
-//! order that keeps it, `.runtime(Tokio::current()).timer(clock)`, and starts with
-//! `TestServer::start_on`.
+//! `start` sets the runtime and leaves the clock to the app: a clock given with `TestApp::timer`
+//! stays the app's clock, and without one the app times on tokio's.
 
 use ulo::testing::{TestApp, TestServer};
 use ulo::{Servers, StartupError};
