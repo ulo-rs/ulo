@@ -12,7 +12,7 @@ The server listens on `PORT` (default 3000).
 Read first:
 
 - `src/lib.rs`: the production app: a mailer module, two private `Ledger`s, a factory-built `Stamp`, and an `Uptime` that reads the clock.
-- `tests/testing.rs`: each kind of replacement answering through HTTP, the replaced module served by `ulo_http_hyper::testing::TestServer`; a paused tokio clock setting what `Uptime` reads; the two refusals, with the key, the declaring line and the modules named.
+- `tests/testing.rs`: each kind of replacement answering through HTTP, the replaced module served by `ulo::testing::TestServer` through `ulo_http_hyper::testing::TestServerExt::start`; a paused tokio clock setting what `Uptime` reads; the two refusals, with the key, the declaring line and the modules named.
 - `tests/binary.rs`: runs the compiled binary with `PORT` set to a free port, requests the address it prints and ends it with SIGTERM.
 
 Next: [14 without macros](../14-without-macros).
