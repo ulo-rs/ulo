@@ -13,6 +13,8 @@
 //! key, `AsyncGraphql<ApiSchema, GqlContext> as dyn Engine`, so a handler on any transport takes
 //! `Dep<dyn Engine>`; a second schema is bound with the DI's ordinary qualifier.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use ulo::{BoxFuture, ExecutionRef};
@@ -47,7 +49,13 @@ pub trait Engine: Send + Sync + 'static {
 
 /// A GraphQL request, as GraphQL-over-HTTP's JSON body and graphql-transport-ws's `subscribe`
 /// payload carry it.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+///
+/// `Debug` prints the query, the operation name and the names of the variables and extensions,
+/// never their values: a login mutation's `password` variable or a bearer token in `extensions`
+/// would otherwise land in a log. `variables` and `extensions` are objects or absent, so there is
+/// no other shape to print. The query is the caller's text and prints as written: a literal inside
+/// it (`login(password: "x")`) is printed, and variables are the place for a secret.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct GqlRequest {
     pub query: String,
     #[serde(rename = "operationName", default, skip_serializing_if = "Option::is_none")]
@@ -57,6 +65,21 @@ pub struct GqlRequest {
     pub variables: Option<Map<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Map<String, Value>>,
+}
+
+impl fmt::Debug for GqlRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GqlRequest")
+            .field("query", &self.query)
+            .field("operation_name", &self.operation_name)
+            .field("variable_names", &names(&self.variables))
+            .field("extension_names", &names(&self.extensions))
+            .finish()
+    }
+}
+
+fn names(map: &Option<Map<String, Value>>) -> Option<Vec<&str>> {
+    map.as_ref().map(|map| map.keys().map(String::as_str).collect())
 }
 
 impl GqlRequest {
