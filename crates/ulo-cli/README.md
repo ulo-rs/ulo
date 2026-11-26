@@ -71,6 +71,10 @@ src/database.rs     with --db
 Every file with logic carries a test, and `src/app.rs` wires the whole application in one.
 Environment variables named `APP_<SECTION>__<KEY>` override `config/app.toml`.
 
+Created below a Cargo workspace, the project is added to the nearest workspace root's `members` as
+`cargo new` does (a line says so), unless they already match it or its `exclude` covers it; a root
+that cannot be parsed or edited leaves the project with an empty `[workspace]` table of its own.
+
 ## Generate a file
 
 ```bash
