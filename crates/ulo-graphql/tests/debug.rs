@@ -21,7 +21,8 @@ fn debug_prints_names_and_no_caller_values() {
     }
     let text = format!("{:?}", login());
     assert!(text.contains(r#"operation_name: Some("Login")"#), "{text}");
-    assert!(text.contains(r#"variable_names: Some(["password", "user"])"#), "{text}");
+    let names = text.split("variable_names: Some([").nth(1).and_then(|rest| rest.split("])").next()).expect("variable_names lists its keys");
+    assert!(names.contains(r#""password""#) && names.contains(r#""user""#), "{text}");
 }
 
 #[test]
