@@ -6,12 +6,11 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use ulo::testing::TestApp;
+use ulo::testing::{TestApp, TestServer};
 use ulo::{Signal, controller, handlers, module};
-use ulo_http_hyper::ServerOn;
-use ulo_http_hyper::testing::{TestServer, TestServerExt};
+use ulo_http_hyper::{Server, ServerOn};
 use ulo_listener_smol::SmolListener;
-use ulo_runtime_tokio::Tokio;
+use ulo_runtime_tokio::testing::start;
 
 #[controller]
 struct Notes;
@@ -52,7 +51,7 @@ async fn released(addr: SocketAddr) {
 
 #[tokio::test]
 async fn it_serves_a_request_and_closes_cleanly() {
-    let served = TestServer::start(TestApp::of(AppModule).runtime(Tokio::current())).await.expect("starts");
+    let served = start(TestApp::of(AppModule), Server::new("127.0.0.1:0")).await.expect("starts");
     let addr = served.addr();
     assert_ne!(addr.port(), 0);
     assert_eq!(served.url("/notes/1"), format!("http://{addr}/notes/1"));
@@ -70,7 +69,7 @@ async fn it_serves_a_request_and_closes_cleanly() {
 
 #[tokio::test]
 async fn closing_the_app_first_leaves_close_answering() {
-    let served = TestServer::start(TestApp::of(AppModule).runtime(Tokio::current())).await.expect("starts");
+    let served = start(TestApp::of(AppModule), Server::new("127.0.0.1:0")).await.expect("starts");
     let addr = served.addr();
     let first = served.handle().close(Signal::new("early")).await.expect("the handle closes");
     assert_eq!(first.signal.name(), "early");
@@ -82,7 +81,7 @@ async fn closing_the_app_first_leaves_close_answering() {
 
 #[tokio::test]
 async fn dropping_without_close_releases_the_port() {
-    let served = TestServer::start(TestApp::of(AppModule).runtime(Tokio::current())).await.expect("starts");
+    let served = start(TestApp::of(AppModule), Server::new("127.0.0.1:0")).await.expect("starts");
     let addr = served.addr();
     assert!(get(addr, "/notes/1").await.starts_with("HTTP/1.1 200"));
     drop(served);

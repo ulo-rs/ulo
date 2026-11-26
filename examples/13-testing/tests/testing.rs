@@ -4,8 +4,9 @@ use std::time::Duration;
 use ex_13_testing::{AppModule, BillingModule, Ledger, MailModule, Mailer, RefundsModule, Stamp, Uptime};
 use ex_support::{get, listen};
 use ulo::{Dep, Signal, StartupError, TestApp, WiringError, injectable, module};
-use ulo_http_hyper::testing::{TestServer, TestServerExt};
+use ulo_http_hyper::Server;
 use ulo_runtime_tokio::Tokio;
+use ulo_runtime_tokio::testing::start;
 
 #[injectable]
 struct FakeMailer;
@@ -42,7 +43,7 @@ struct FakeMailModule;
 
 #[tokio::test]
 async fn a_replaced_module_stands_in_for_the_original() {
-    let served = TestServer::start(test_app().replace_module(MailModule, FakeMailModule)).await.unwrap();
+    let served = start(TestApp::of(AppModule).replace_module(MailModule, FakeMailModule), Server::new("127.0.0.1:0")).await.unwrap();
     assert_eq!(get(served.addr(), "/signup").await.body, "fake to ada at production in billing");
     served.close().await.unwrap();
 }

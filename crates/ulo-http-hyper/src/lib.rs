@@ -46,7 +46,6 @@
 
 mod backend;
 mod convert;
-pub mod testing;
 
 pub use backend::HyperOn;
 pub use ulo_server_hyper::ReadCount;

@@ -1188,7 +1188,7 @@ impl fmt::Display for Rendered<'_> {
 /// module binds `dyn Runtime` from `.runtime(..)`, and `dyn Timer` from either call.
 fn builder_help(key: Key) -> Option<&'static str> {
     if key == Key::of::<dyn Runtime, ()>() {
-        Some("help: set one on the app with `.runtime(..)`, which sets its timer too")
+        Some("help: set one on the app with `.runtime(..)`, which supplies its clock when none was given")
     } else if key == Key::of::<dyn Timer, ()>() {
         Some("help: set one on the app with `.timer(..)`, or with `.runtime(..)`, which sets both")
     } else {

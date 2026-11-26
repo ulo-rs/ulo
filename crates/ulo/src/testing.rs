@@ -19,8 +19,8 @@
 //! A test that serves the app over a socket starts it with [`TestServer::start_on`], which takes
 //! any [`Server`](crate::Server), an HTTP, WebSocket or gRPC one, and serves it in a task of the
 //! runtime the `TestApp` was given. The core binds no socket and names no runtime: the runtime
-//! crates supply `ulo_runtime_tokio::testing::start`, and `ulo_http_hyper::testing::TestServerExt`
-//! serves the HTTP backend on port 0.
+//! crates supply `ulo_runtime_tokio::testing::start` and `ulo_runtime_smol::testing::start`, which
+//! take the servers and set the runtime.
 //!
 //! # Time in a test
 //!
@@ -286,15 +286,17 @@ impl<S> TestApp<S> {
 
     /// The one clock that times the drain, the hooks, the constructions and the readiness
     /// checks, and that services read as `Dep<dyn Timer>`. It sets only the clock, as
-    /// [`AppBuilder::timer`](crate::AppBuilder::timer) does: `.runtime(r).timer(t)` spawns on `r`
-    /// and times with `t`, a real executor under a test's clock.
+    /// [`AppBuilder::timer`](crate::AppBuilder::timer) does, and it wins over the runtime's in
+    /// either order: `.runtime(r).timer(t)` and `.timer(t).runtime(r)` both spawn on `r` and time
+    /// with `t`, a real executor under a test's clock.
     pub fn timer(self, timer: impl Timer) -> TestApp<Settled> {
         TestApp { builder: self.builder.timer(timer), _s: PhantomData }
     }
 
     /// The clock and executor, as [`AppBuilder::runtime`](crate::AppBuilder::runtime) sets them:
-    /// services read it as `Dep<dyn Runtime>`, and as `Dep<dyn Timer>`. It sets both, so
-    /// `.timer(t).runtime(r)` spawns and times on `r`.
+    /// services read it as `Dep<dyn Runtime>`, and as `Dep<dyn Timer>`. Its clock is the app's only
+    /// when no [`timer`](Self::timer) was given, so `.timer(t).runtime(r)` spawns on `r` and times
+    /// with `t`.
     pub fn runtime(self, runtime: impl Runtime) -> TestApp<Settled> {
         TestApp { builder: self.builder.runtime(runtime), _s: PhantomData }
     }

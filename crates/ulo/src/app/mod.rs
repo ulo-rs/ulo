@@ -115,10 +115,13 @@ pub struct AppBuilder {
 /// The app's timing configuration. `None` is unset.
 #[derive(Clone, Default)]
 pub(crate) struct AppConfig {
-    /// The clock: the same object as `runtime`, unless `.timer(..)` came after `.runtime(..)`.
+    /// The clock: the explicit `.timer(..)` if one was given, else the runtime's.
     pub(crate) timer: Option<Arc<dyn Timer>>,
+    /// Whether `timer` came from `.timer(..)`. An explicit one survives every `.runtime(..)`; one a
+    /// runtime supplied is replaced by the next.
+    timer_explicit: bool,
     /// What `Dep<dyn Runtime>` resolves to: the app's wrapper around the runtime as given, timing
-    /// with its clock or, once a later `.timer(..)` replaced it, with that timer's.
+    /// with the explicit `.timer(..)` if one was given, else with the runtime's own clock.
     pub(crate) runtime: Option<Arc<dyn Runtime>>,
     /// The runtime as given to `.runtime(..)`, which a later `.timer(..)` takes the spawning of.
     spawner: Option<Arc<dyn Runtime>>,
@@ -214,16 +217,17 @@ impl App {
 impl AppBuilder {
     /// The app's one clock; bound for services as `Dep<dyn Timer>` in the core's global module.
     ///
-    /// It sets the clock and nothing else, so after [`runtime`](Self::runtime) it replaces only
-    /// the runtime's clock: `.runtime(r).timer(t)` spawns on `r` and times with `t`, and
+    /// It sets the clock and nothing else, and it wins over the runtime's in either order:
+    /// `.runtime(r).timer(t)` and `.timer(t).runtime(r)` both spawn on `r` and time with `t`, and
     /// `Dep<dyn Runtime>` then sleeps and reads the time on `t`, so the app has one clock whatever
-    /// reads it.
+    /// reads it. Of several `.timer(..)` calls the last wins.
     pub fn timer(mut self, timer: impl Timer) -> Self {
         let timer: Arc<dyn Timer> = Arc::new(timer);
         self.config.runtime = self.config.spawner.as_ref().map(|spawner| {
             Arc::new(Clocked::new(Arc::clone(spawner), Arc::clone(&timer), self.config.redactor.clone())) as Arc<dyn Runtime>
         });
         self.config.timer = Some(timer);
+        self.config.timer_explicit = true;
         self
     }
 
@@ -237,13 +241,19 @@ impl AppBuilder {
     /// wrapper around the one given, not that object, so code holding `Dep<dyn Runtime>` cannot
     /// reach `runtime`'s own type through it, a downcast included.
     ///
-    /// It sets both the spawning and the clock, so it replaces a [`timer`](Self::timer) set
-    /// before it: `.timer(t).runtime(r)` spawns and times on `r`.
+    /// It supplies the clock only when no [`timer`](Self::timer) was given: an explicit timer
+    /// keeps the clock whichever call came first, `.timer(t).runtime(r)` spawning on `r` and timing
+    /// with `t`. A later `.runtime(..)` replaces the runtime and, absent a timer, its clock.
     pub fn runtime(mut self, runtime: impl Runtime) -> Self {
         let runtime: Arc<dyn Runtime> = Arc::new(runtime);
-        let clock = Arc::clone(&runtime) as Arc<dyn Timer>;
+        let clock = match (self.config.timer_explicit, &self.config.timer) {
+            (true, Some(timer)) => Arc::clone(timer),
+            _ => Arc::clone(&runtime) as Arc<dyn Timer>,
+        };
         let wrapped: Arc<dyn Runtime> = Arc::new(Clocked::new(Arc::clone(&runtime), clock, self.config.redactor.clone()));
-        self.config.timer = Some(Arc::clone(&wrapped) as Arc<dyn Timer>);
+        if !self.config.timer_explicit {
+            self.config.timer = Some(Arc::clone(&wrapped) as Arc<dyn Timer>);
+        }
         self.config.spawner = Some(runtime);
         self.config.runtime = Some(wrapped);
         self

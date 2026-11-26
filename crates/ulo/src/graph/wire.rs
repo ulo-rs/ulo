@@ -32,8 +32,8 @@ use crate::type_name::TypeName;
 pub(crate) struct WireEnv {
     /// When set, bound under `dyn Timer` as a value in the core's own global module.
     pub(crate) timer: Option<Arc<dyn Timer>>,
-    /// When set, bound beside it under `dyn Runtime`. Its clock is `timer`, the same object unless
-    /// `.timer(..)` came after `.runtime(..)`.
+    /// When set, bound beside it under `dyn Runtime`. Its clock is `timer`, the same object unless a
+    /// `.timer(..)` was given, in either order with `.runtime(..)`.
     pub(crate) runtime: Option<Arc<dyn Runtime>>,
     /// The builder knobs that were set: each is a wiring error without a `Timer` (step 6).
     pub(crate) knobs_set: Vec<&'static str>,

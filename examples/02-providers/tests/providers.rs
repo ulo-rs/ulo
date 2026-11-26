@@ -4,12 +4,13 @@ use ex_02_providers::{AppModule, Counter, Greeter, HelloController, Settings};
 use ex_support::get;
 use ulo::testing::TestApp;
 use ulo::{ConnectError, Dep, StartupError, module};
-use ulo_http_hyper::testing::{TestServer, TestServerExt};
+use ulo_http_hyper::Server;
 use ulo_runtime_tokio::Tokio;
+use ulo_runtime_tokio::testing::start;
 
 #[tokio::test]
 async fn two_requests_read_one_singletons_counter() {
-    let served = TestServer::start(TestApp::of(AppModule).runtime(Tokio::current())).await.unwrap();
+    let served = start(TestApp::of(AppModule), Server::new("127.0.0.1:0")).await.unwrap();
 
     assert_eq!(get(served.addr(), "/").await.body, "Hello #1");
     assert_eq!(get(served.addr(), "/").await.body, "Hello #2");

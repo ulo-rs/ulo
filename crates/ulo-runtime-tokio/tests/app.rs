@@ -98,15 +98,17 @@ async fn an_app_without_a_clock_hands_out_neither() {
     app.close(Signal::new("test")).await.expect("the app did not close");
 }
 
-/// `.runtime(r).timer(t)`: the app spawns on `r` and has `t` as its one clock. `Dep<dyn Timer>`
-/// and `AppHandle::timer` are `t`; `Dep<dyn Runtime>` and `AppHandle::runtime` are one object
-/// whose clock reads and sleeps on `t` and whose tasks run on `r`.
+/// `.runtime(r).timer(t)` or `.timer(t).runtime(r)`: the app spawns on `r` and has `t` as its one
+/// clock. `Dep<dyn Timer>` and `AppHandle::timer` are `t`; `Dep<dyn Runtime>` and
+/// `AppHandle::runtime` are another object, whose clock reads and sleeps on `t` and whose tasks run
+/// on `r`.
 async fn assert_spawns_on_the_runtime_and_times_with_the_timer(app: App<Connected>, at: Instant) {
-    let runtime = app.get::<dyn Runtime>().await.expect("`Dep<dyn Runtime>` after `.timer(..)` replaced its clock");
+    let runtime = app.get::<dyn Runtime>().await.expect("`Dep<dyn Runtime>` with a `.timer(..)`");
     let timer = app.get::<dyn Timer>().await.expect("`Dep<dyn Timer>` after `.timer(..)`");
     let handle = app.handle();
-    assert_eq!(timer.now(), at, "`Dep<dyn Timer>` is the timer set after the runtime");
-    assert_eq!(runtime.now(), at, "`Dep<dyn Runtime>`'s clock is the timer set after the runtime");
+    assert_eq!(timer.now(), at, "`Dep<dyn Timer>` is the timer");
+    assert_eq!(runtime.now(), at, "`Dep<dyn Runtime>`'s clock is the timer");
+    assert_ne!(address(&*timer), address(&*runtime), "`Dep<dyn Timer>` is the timer, not the runtime's wrapper");
     assert_eq!(handle.timer().map(|timer| timer.now()), Some(at), "`AppHandle::timer`");
     assert_eq!(handle.runtime().map(|runtime| runtime.now()), Some(at), "`AppHandle::runtime`'s clock");
     assert_eq!(handle.timer().map(|timer| address(&**timer)), Some(address(&*timer)), "`AppHandle::timer` is `Dep<dyn Timer>`");
@@ -119,18 +121,6 @@ async fn assert_spawns_on_the_runtime_and_times_with_the_timer(app: App<Connecte
     assert!(slept.is_ok(), "`Dep<dyn Runtime>` slept an hour on the runtime's own clock, not the timer's");
     let task = tokio::time::timeout(PATIENCE, runtime.spawn(Box::pin(async {}))).await;
     assert!(task.as_ref().is_ok_and(TaskEnd::is_finished), "a task spawned through `Dep<dyn Runtime>` ended {task:?}");
-    app.close(Signal::new("test")).await.expect("the app did not close");
-}
-
-/// `.timer(t).runtime(r)`: the app's wrapper around `r` for both, one object.
-async fn assert_one_object_on_the_runtime(app: App<Connected>, at: Instant) {
-    let runtime = app.get::<dyn Runtime>().await.expect("`Dep<dyn Runtime>` after `.runtime(..)`");
-    let timer = app.get::<dyn Timer>().await.expect("`Dep<dyn Timer>` after `.runtime(..)`");
-    assert_eq!(address(&*timer), address(&*runtime), "`Dep<dyn Timer>` is the runtime set after the timer");
-    assert_ne!(timer.now(), at, "`Dep<dyn Timer>` still reads the timer `.runtime(..)` replaced");
-    let handle = app.handle();
-    assert_eq!(handle.timer().map(|timer| address(&**timer)), Some(address(&*runtime)), "`AppHandle::timer`");
-    assert_eq!(handle.runtime().map(|runtime| address(&**runtime)), Some(address(&*runtime)), "`AppHandle::runtime`");
     app.close(Signal::new("test")).await.expect("the app did not close");
 }
 
@@ -165,7 +155,7 @@ async fn a_secret_a_loaded_module_registers_is_redacted_from_a_task_s_panic() {
 }
 
 #[tokio::test]
-async fn a_timer_after_a_runtime_replaces_only_its_clock() {
+async fn a_timer_after_a_runtime_is_the_clock() {
     let frozen = Frozen::new();
     let at = frozen.0;
     let app = connect(App::builder(Empty).runtime(Tokio::current()).timer(frozen)).await;
@@ -173,15 +163,15 @@ async fn a_timer_after_a_runtime_replaces_only_its_clock() {
 }
 
 #[tokio::test]
-async fn a_runtime_after_a_timer_replaces_both() {
+async fn a_timer_before_a_runtime_is_the_clock() {
     let frozen = Frozen::new();
     let at = frozen.0;
     let app = connect(App::builder(Empty).timer(frozen).runtime(Tokio::current())).await;
-    assert_one_object_on_the_runtime(app, at).await;
+    assert_spawns_on_the_runtime_and_times_with_the_timer(app, at).await;
 }
 
 #[tokio::test]
-async fn a_test_s_timer_after_its_runtime_replaces_only_its_clock() {
+async fn a_test_s_timer_after_its_runtime_is_the_clock() {
     let frozen = Frozen::new();
     let at = frozen.0;
     let app = TestApp::of(Empty).runtime(Tokio::current()).timer(frozen).connect().await.expect("the test app connects");
@@ -189,11 +179,79 @@ async fn a_test_s_timer_after_its_runtime_replaces_only_its_clock() {
 }
 
 #[tokio::test]
-async fn a_test_s_runtime_after_its_timer_replaces_both() {
+async fn a_test_s_timer_before_its_runtime_is_the_clock() {
     let frozen = Frozen::new();
     let at = frozen.0;
     let app = TestApp::of(Empty).timer(frozen).runtime(Tokio::current()).connect().await.expect("the test app connects");
-    assert_one_object_on_the_runtime(app, at).await;
+    assert_spawns_on_the_runtime_and_times_with_the_timer(app, at).await;
+}
+
+/// A runtime whose clock stands a fixed span ahead of tokio's, so which runtime supplied an app's
+/// clock shows in `now()`.
+struct Ahead(Duration);
+
+impl Timer for Ahead {
+    fn sleep(&self, d: Duration) -> BoxFuture<'static, ()> {
+        Tokio::current().sleep(d)
+    }
+
+    fn now(&self) -> Instant {
+        Tokio::current().now() + self.0
+    }
+
+    fn try_sleep(&self, d: Duration) -> BoxFuture<'static, Result<(), ulo::Refused>> {
+        Tokio::current().try_sleep(d)
+    }
+}
+
+impl ulo::Spawn for Ahead {
+    fn spawn(&self, fut: BoxFuture<'static, ()>) -> ulo::TaskHandle {
+        Tokio::current().spawn(fut)
+    }
+
+    fn try_spawn(&self, fut: BoxFuture<'static, ()>) -> Result<ulo::TaskHandle, ulo::Refused> {
+        Tokio::current().try_spawn(fut)
+    }
+
+    fn spawn_blocking(&self, work: Box<dyn FnOnce() + Send>) -> ulo::TaskHandle {
+        Tokio::current().spawn_blocking(work)
+    }
+}
+
+/// How far ahead of tokio's clock the app's one clock reads.
+async fn clock_lead(app: &App<Connected>) -> Duration {
+    let timer = app.get::<dyn Timer>().await.expect("`Dep<dyn Timer>`");
+    timer.now().saturating_duration_since(Instant::now())
+}
+
+#[tokio::test]
+async fn a_runtime_alone_supplies_its_clock() {
+    let app = connect(App::builder(Empty).runtime(Ahead(Duration::from_secs(1000)))).await;
+    assert!(clock_lead(&app).await >= Duration::from_secs(900), "the app's clock is the runtime's");
+    app.close(Signal::new("test")).await.expect("the app did not close");
+}
+
+#[tokio::test]
+async fn a_second_runtime_supplies_the_clock_when_no_timer_was_given() {
+    let app = connect(App::builder(Empty).runtime(Ahead(Duration::from_secs(1000))).runtime(Ahead(Duration::from_secs(5000)))).await;
+    assert!(clock_lead(&app).await >= Duration::from_secs(4900), "the later runtime's clock is the app's");
+    app.close(Signal::new("test")).await.expect("the app did not close");
+}
+
+#[tokio::test]
+async fn the_last_timer_wins_across_a_runtime() {
+    let (first, last) = (Frozen::new(), Frozen(Instant::now() + Duration::from_secs(172_800)));
+    let at = last.0;
+    let app = connect(App::builder(Empty).timer(first).runtime(Tokio::current()).timer(last)).await;
+    assert_spawns_on_the_runtime_and_times_with_the_timer(app, at).await;
+}
+
+#[tokio::test]
+async fn a_timer_survives_every_later_runtime() {
+    let frozen = Frozen::new();
+    let at = frozen.0;
+    let app = connect(App::builder(Empty).timer(frozen).runtime(Ahead(Duration::from_secs(1000))).runtime(Tokio::current())).await;
+    assert_spawns_on_the_runtime_and_times_with_the_timer(app, at).await;
 }
 
 /// A module whose init hook never returns, under `hook_timeout`.
