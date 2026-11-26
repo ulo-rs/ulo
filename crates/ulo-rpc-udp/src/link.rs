@@ -949,7 +949,7 @@ impl Ids {
     /// `cancel` among them, and the call's replies are dropped before the wire until
     /// [`release`](Self::release) forgets it, each send answered then. The call stays known until
     /// the server has taken the `cancel`: a reply refused before then would cancel the call
-    /// `Disconnected` ahead of the `cancel` naming its reason, and one answered at once would let
+    /// `ReplyFailed` ahead of the `cancel` naming its reason, and one answered at once would let
     /// a stream whose items are always ready run on without yielding, which on a one-thread
     /// runtime keeps the `cancel` from ever arriving.
     fn cancel(&mut self, peer: SocketAddr, caller: u64) -> Option<u64> {

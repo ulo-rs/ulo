@@ -92,7 +92,7 @@ pub use extract::{Inbound, Payload};
 pub use frame::{Data, ErrorBody, Frame, PayloadKind};
 pub use handler::RpcHandler;
 pub use link::{
-    Ack, Capabilities, ConnectTimedOut, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Link, Misconfigured, NameInvalid, NameTooLong,
+    Ack, CallerGone, Capabilities, ConnectTimedOut, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Link, Misconfigured, NameInvalid, NameTooLong,
     NoDestination, NoTimer, Ordering, Outbound, Pattern, ReplyPath, ReplyTo, Subscription,
 };
 pub use server::Server;

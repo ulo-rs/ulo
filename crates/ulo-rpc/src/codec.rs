@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
-use serde::ser::{SerializeMap, Serializer};
+use serde::ser::{Error as _, SerializeMap, Serializer};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::value::RawValue;
 use ulo::BoxError;
@@ -167,6 +167,7 @@ impl<D: Serialize + ?Sized> Serialize for Wire<'_, D> {
             Frame::Err { .. } | Frame::Credit { .. } => 2,
             Frame::End { .. } | Frame::InEnd { .. } | Frame::Cancel { .. } => 1,
             Frame::Goaway => 0,
+            Frame::InTooLarge { .. } => return Err(S::Error::custom("`in_too_large` is the link's own signal to the server, not a frame of the wire")),
         };
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry("t", self.frame.kind())?;
@@ -195,7 +196,7 @@ impl<D: Serialize + ?Sized> Serialize for Wire<'_, D> {
                 map.serialize_entry("n", n)?;
             }
             Frame::End { id } | Frame::InEnd { id } | Frame::Cancel { id } => map.serialize_entry("id", id)?,
-            Frame::Goaway => {}
+            Frame::Goaway | Frame::InTooLarge { .. } => {}
         }
         if let Some(d) = self.d {
             map.serialize_entry("d", d)?;
@@ -451,5 +452,13 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "frames that did not read back as written:\n{}", failures.join("\n"));
+    }
+
+    /// A link's `in_too_large` never reaches a wire: both codecs refuse to write it.
+    #[test]
+    fn no_codec_writes_a_link_s_in_too_large() {
+        for codec in [Codec::Json, Codec::Cbor] {
+            assert!(codec.encode_frame(&Frame::in_too_large(1, 2, 1)).is_err(), "{codec:?} wrote `in_too_large`");
+        }
     }
 }

@@ -281,11 +281,12 @@ async fn a_frame_whose_leading_bytes_name_no_call_is_dropped_and_the_next_answer
     running.stop().await;
 }
 
-/// An item over the limit for a streamed request in flight is answered under the call's `id`, and
-/// the call ends there: its handler is cancelled, nothing more is written for it, and the request
-/// after the item is answered on the same connection. Planted breaks: the call left running, its
-/// `in_end` dropped, which leaves its handler waiting; the call kept mapped, whose handler answers
-/// its `in_end` with the total of its items.
+/// An item over the limit for a streamed request in flight ends the call: the server answers it
+/// under the call's `id` in the words the link answers a request over the limit with, its handler
+/// is cancelled, and the request after the item is answered on the same connection, the two
+/// answers in either order, since each call's task writes its own. Planted breaks: the call left
+/// running, its `in_end` dropped, which leaves its handler waiting; the link's `in_too_large`
+/// dropped by the server, whose handler then answers its `in_end` with the total of its items.
 #[tokio::test]
 async fn an_over_limit_item_ends_its_call_and_the_connection_carries_the_next() {
     let running = Running::start(loopback()).await;
@@ -296,8 +297,11 @@ async fn an_over_limit_item_ends_its_call_and_the_connection_carries_the_next() 
         r#"{"t":"in_end","id":5}"#.to_owned(),
         echo(6),
     ];
-    let answered = exchange(running.addr, &frames, 2).await;
+    let mut answered = exchange(running.addr, &frames, 2).await;
+    answered.sort_by_key(Frame::id);
     assert!(matches!(answered.as_slice(), [first, second] if is_payload_too_large(first, 5) && is_echo(second, 6)), "{answered:?}");
+    let Frame::Err { error, .. } = &answered[0] else { unreachable!("matched above") };
+    assert_eq!(error.message, format!("a frame of {} bytes is over the server's `max_frame` of {MIB} bytes", frames[2].len()));
     let ended = tokio::time::timeout(PATIENCE, async {
         while HELD_ENDED.load(Ordering::SeqCst) == 0 {
             tokio::time::sleep(Duration::from_millis(5)).await;

@@ -104,15 +104,13 @@ fn fits_as_json(codec: Codec, data: &Data, error: &BoxError) -> bool {
 /// whatever task reads it; the call is answered `unavailable` with the reason `overflow` whatever
 /// the handler returns. An item over `max_queued_bytes` on its own ends the request with
 /// [`ExtractError::TooLarge`] naming the bound, and the call is answered `bad_request` with the
-/// reason `payload_too_large`. A request still being read on another task when its call ends
-/// before `in_end` yields there the items that had arrived, then [`ExtractError::Cancelled`] when
-/// the caller left, its `cancel` arriving or the link losing it, and [`ExtractError::CallEnded`]
-/// when the server ended the call: its handler answered, its deadline passed or the drain ended
-/// it.
-///
-/// A link that ends a call on its own account reports it as a `cancel`, so a TCP link refusing an
-/// item over its frame bound, or a broker link whose reply frame failed to publish, also reads
-/// `Cancelled` here.
+/// reason `payload_too_large`, and so does an item the link refused for its size, the TCP link's
+/// `max_frame`, `TooLarge` naming the link's bound. A request still being read on another task
+/// when its call ends before `in_end` yields there the items that had arrived, then
+/// [`ExtractError::Cancelled`] when the caller left, its `cancel` arriving or its link losing it,
+/// and [`ExtractError::CallEnded`] when the server ended the call: its handler answered, its
+/// deadline passed, the drain ended it, or a reply frame failed to send for a fault of the
+/// server's own side, a broker publish among them.
 pub struct Inbound<T> {
     pub(crate) items: BoxStream<'static, Result<T, ExtractError>>,
 }

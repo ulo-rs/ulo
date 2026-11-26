@@ -29,6 +29,11 @@ impl Broker for Loopback {
         Tcp::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
     }
 
+    /// The server's link refusing frames over `bytes`, below the client's 1 MiB.
+    fn link_with_max_frame(&self, bytes: u64) -> Option<Tcp> {
+        Some(self.link().max_frame(bytes))
+    }
+
     /// Through the relay, aimed at the address the server bound.
     fn client_link(&self, server: &[BoundAddr]) -> Tcp {
         let [bound] = server else { startup_failed!("expected one bound server address, got {server:?}") };

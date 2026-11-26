@@ -1,7 +1,8 @@
 //! Per-delivery execution (transports DESIGN §5.2): one execution per call, `deadline-ms` as its
 //! deadline, a `deadline-ms` the server cannot read refused before any execution opens, a spent
 //! one, zero, answered `timeout` before any execution opens and with no error handler offered it,
-//! `cancel` as `ClientCancelled`, the four shapes, `dispatch_late` for an item's error,
+//! `cancel` as `ClientCancelled`, a link's `in_too_large` as the byte bound's refusal, the four
+//! shapes, `dispatch_late` for an item's error,
 //! and the split per `Capabilities` between the whole frame and the payload with native
 //! correlation. `Server::serve` runs it for every delivery the link's inbound stream yields.
 //!
@@ -41,8 +42,8 @@ use ulo_transport::sync::Watch;
 use crate::handler::{HandlerFn, Kind};
 use crate::codec::Codec;
 use crate::frame::{Data, ErrorBody, Frame};
-use crate::link::{Ack, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Pattern, ReplyPath};
-use crate::queue::{self, Cut, Feed, Halted, Overflow};
+use crate::link::{Ack, CallerGone, Capabilities, Delivery, DeliveryMode, FrameTooLarge, FrameUnencodable, Instances, Pattern, ReplyPath};
+use crate::queue::{self, Bound, Cut, Feed, Halted, Overflow};
 use crate::trace;
 use crate::transport::{Body, CallHeaders, CxInner, LinkInfo, NoHandler, Reply, Rpc, RpcCx};
 
@@ -162,24 +163,11 @@ pub(crate) fn accept(shared: &Arc<Shared>, delivery: Delivery, tasks: &mut TaskS
             // Offered, never awaited: waiting for room here would stall every call on the link
             // behind one handler that does not read.
             let size = u64::try_from(data.len()).unwrap_or(u64::MAX);
-            let overflowed = {
-                let mut calls = shared.calls();
-                match calls.get_mut(&id) {
-                    Some(live) if live.inbound.as_ref().is_some_and(|feed| feed.offer(data, size).is_err()) => {
-                        if let Some(feed) = live.inbound.take() {
-                            feed.halt();
-                        }
-                        Some(live.exec.clone())
-                    }
-                    _ => None,
-                }
-            };
-            // The halt wakes a reader on any task, and its next read fails; the call's task answers
-            // `overflow` whether the cancellation or the handler's answer reaches it first, and
-            // the client's pump stops sending when that answer ends the call.
-            if let Some(exec) = overflowed {
-                exec.cancel_with(CancelReason::Explicit);
-            }
+            overflow(shared, id, |feed| feed.offer(data, size));
+            ack.ack();
+        }
+        Frame::InTooLarge { id, size, limit } => {
+            overflow(shared, id, |feed| feed.refuse_over_frame(size, limit));
             ack.ack();
         }
         Frame::InEnd { id } => {
@@ -200,6 +188,28 @@ pub(crate) fn accept(shared: &Arc<Shared>, delivery: Delivery, tasks: &mut TaskS
             tracing::debug!(kind = other.kind(), link = shared.link, "a frame the server does not take arrived and was dropped");
             ack.ack();
         }
+    }
+}
+
+/// Ends call `id`'s streamed request when `offer` refuses its item: the queue halted and the
+/// execution cancelled `Explicit`. The halt wakes a reader on any task, and its next read fails;
+/// the call's task answers with the bound passed whether the cancellation or the handler's answer
+/// reaches it first, and the client's pump stops sending when that answer ends the call.
+fn overflow(shared: &Shared, id: u64, offer: impl FnOnce(&Feed<Data>) -> Result<(), Overflow>) {
+    let overflowed = {
+        let mut calls = shared.calls();
+        match calls.get_mut(&id) {
+            Some(live) if live.inbound.as_ref().is_some_and(|feed| offer(feed).is_err()) => {
+                if let Some(feed) = live.inbound.take() {
+                    feed.halt();
+                }
+                Some(live.exec.clone())
+            }
+            _ => None,
+        }
+    };
+    if let Some(exec) = overflowed {
+        exec.cancel_with(CancelReason::Explicit);
     }
 }
 
@@ -638,17 +648,17 @@ async fn late(handler: Option<&MountedHandler<Rpc>>, exec: &ExecutionRef, cx: &R
     }
 }
 
-/// What a cancelled call writes: nothing to a caller that left or cancelled, `timeout` at the
-/// deadline, `unavailable` at the drain's end (the shutdown phrase every refusal carries) or an
-/// explicit cancel, and, for a call cancelled because its streamed request's queue refused an
-/// item, `unavailable` with the reason `overflow` or, for an item over the byte bound on its own,
-/// `bad_request` with `payload_too_large`.
+/// What a cancelled call writes: nothing to a caller that left or cancelled, nor on a reply path
+/// that failed, `timeout` at the deadline, `unavailable` at the drain's end (the shutdown phrase
+/// every refusal carries) or an explicit cancel, and, for a call cancelled because its streamed
+/// request's queue refused an item, `unavailable` with the reason `overflow` or, for an item over
+/// the byte bound or the link's frame bound on its own, `bad_request` with `payload_too_large`.
 async fn cancelled(reply: &ReplyPath, exec: &ExecutionRef, id: u64, reason: Option<CancelReason>, halted: Option<&Halted>) {
     // A queue is halted at an overflow, which records the bound it passed, and once its call has
     // ended, after this answer.
     let overflow = halted.filter(|halted| halted.get()).and_then(Halted::overflow);
     let error = match (reason, overflow) {
-        (Some(CancelReason::ClientCancelled | CancelReason::Disconnected), _) => return,
+        (Some(CancelReason::ClientCancelled | CancelReason::Disconnected | CancelReason::ReplyFailed), _) => return,
         (Some(CancelReason::Deadline), _) => timed_out(),
         (Some(CancelReason::Drain), _) => ErrorBody::new(ErrorKind::Unavailable, ulo_transport::SHUTDOWN_MESSAGE, Details::new()),
         (Some(CancelReason::Explicit), Some(passed)) => overflow_answer(passed),
@@ -672,9 +682,9 @@ fn cut_short(exec: &ExecutionRef) -> Option<CancelReason> {
 }
 
 /// The answer to a call whose streamed request's next item passed `passed`, one of the bounds on
-/// the items waiting for its handler: `unavailable` with `overflow` for a bound the handler's
-/// reads make room under, `bad_request` with `payload_too_large` for an item no read makes room
-/// for, which a retry would send again.
+/// the items waiting for its handler or the link's frame bound: `unavailable` with `overflow` for
+/// a bound the handler's reads make room under, `bad_request` with `payload_too_large` for an item
+/// no read makes room for, which a retry would send again.
 fn overflow_answer(passed: Overflow) -> ErrorBody {
     match passed {
         Overflow::Items { limit } => ErrorBody::new(
@@ -691,11 +701,18 @@ fn overflow_answer(passed: Overflow) -> ErrorBody {
             ),
             Details::new().with(reason("overflow")),
         ),
-        Overflow::TooLarge { limit, item } => ErrorBody::new(
+        Overflow::TooLarge { limit, item, of: Bound::Queued } => ErrorBody::new(
             ErrorKind::BadRequest,
             format!(
                 "the streamed request's next item, of {item} bytes, is over the server's `max_queued_bytes` of {limit} on its own, and ended the call"
             ),
+            Details::new().with(reason("payload_too_large")),
+        ),
+        // The words the TCP link answers a frame over its bound with, whose size its `max_frame`
+        // floor is measured by.
+        Overflow::TooLarge { limit, item, of: Bound::Frame } => ErrorBody::new(
+            ErrorKind::BadRequest,
+            format!("a frame of {item} bytes is over the server's `max_frame` of {limit} bytes"),
             Details::new().with(reason("payload_too_large")),
         ),
     }
@@ -703,8 +720,9 @@ fn overflow_answer(passed: Overflow) -> ErrorBody {
 
 /// Sends one frame; `false` when it did not reach the caller. A frame over the link's limit, or
 /// one its codec cannot encode, is replaced by an `err` of kind `internal` under the same `id`;
-/// the second is the server's own code failing and is logged at `error`. Any other failure means
-/// the caller is gone, and the call is cancelled `Disconnected`.
+/// the second is the server's own code failing and is logged at `error`. Any other failure
+/// cancels the call, `Disconnected` when the link says the caller is gone ([`CallerGone`]) and
+/// `ReplyFailed` otherwise.
 async fn send(reply: &ReplyPath, exec: &ExecutionRef, id: u64, frame: Frame) -> bool {
     // Every caller runs in the call's task, instrumented with the call's span, so the current span
     // is the call's. Every failure a caller is told of is an `err` frame sent here.
@@ -727,17 +745,23 @@ async fn send(reply: &ReplyPath, exec: &ExecutionRef, id: u64, frame: Frame) -> 
             };
             let error = ErrorBody::new(ErrorKind::Internal, message, Details::new());
             trace::record_failure(&call_span, error.kind);
-            if reply.send(Frame::Err { id, error }).await.is_err() {
-                exec.cancel_with(CancelReason::Disconnected);
+            if let Err(err) = reply.send(Frame::Err { id, error }).await {
+                exec.cancel_with(unsent(&err));
             }
             false
         }
         Err(err) => {
-            tracing::debug!(error = %err, "a reply frame could not be sent; the caller is gone");
-            exec.cancel_with(CancelReason::Disconnected);
+            tracing::debug!(error = %err, "a reply frame could not be sent");
+            exec.cancel_with(unsent(&err));
             false
         }
     }
+}
+
+/// The reason a call whose reply frame failed to send is cancelled with: the caller leaving when
+/// the link says so, and otherwise the server's own failure, a broker publish among them.
+fn unsent(err: &BoxError) -> CancelReason {
+    if err.is::<CallerGone>() { CancelReason::Disconnected } else { CancelReason::ReplyFailed }
 }
 
 /// A refusal written without an execution, over the in-flight limit or once the drain began,
@@ -747,7 +771,7 @@ fn refuse(shared: &Arc<Shared>, tasks: &mut TaskSet, reply: ReplyPath, id: u64, 
     let pending = Refusing(Arc::clone(shared));
     tasks.spawn(shared.turns.track(async move {
         if let Err(err) = reply.send(Frame::Err { id, error }).await {
-            tracing::debug!(error = %err, "a refusal could not be sent; the caller is gone");
+            tracing::debug!(error = %err, "a refusal could not be sent");
         }
         drop(pending);
     }));
@@ -863,7 +887,8 @@ struct Registered {
 /// A streamed request whose `in_end` had not arrived when its call ended is cut rather than
 /// ended: a task the handler handed it to reads its end as a failure, not as a complete request.
 /// The execution's cancel reason says who ended the call: a caller whose `cancel` arrived, or
-/// whom the link lost, left; anything else is the server's own end.
+/// whom the link lost, left; anything else is the server's own end, a reply that failed to send
+/// (`ReplyFailed`) among them.
 impl Drop for Registered {
     fn drop(&mut self) {
         let mut calls = self.shared.calls();

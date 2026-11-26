@@ -115,6 +115,17 @@ pub trait Broker: Sized + Send + Sync + 'static {
         self.link()
     }
 
+    /// A server link as [`link`](Self::link) answers it, refusing frames over `bytes`, below the
+    /// frame bound of [`client_link`](Self::client_link)'s, for the scenario in which the
+    /// server's link refuses an item its caller's link carried: on TCP, `max_frame(bytes)`.
+    /// `None`, the default, where the server's link has no frame bound of its own to set below
+    /// its client's, a broker that enforces its bound on the publisher among them; such a link
+    /// declares that scenario not applicable.
+    fn link_with_max_frame(&self, bytes: u64) -> Option<Self::Link> {
+        let _ = bytes;
+        None
+    }
+
     /// Severs the client's connection however the environment allows, for the recovery scenario:
     /// the calls waiting on it fail `Unavailable`, and the client connects again for the next. On
     /// a link declaring `durable_replies` the waiting call is answered instead, so a `disrupt` that
@@ -257,6 +268,7 @@ macro_rules! conformance_suite {
             cancel_mid_stream => cancel::mid_stream,
             a_parked_request_ends_cancelled_when_its_caller_cancels => cancel::parked_request_after_cancel,
             a_parked_request_ends_unavailable_when_its_handler_answers_first => cancel::parked_request_after_the_answer,
+            a_parked_request_ends_too_large_when_its_server_s_link_refuses_an_item => cancel::parked_request_over_the_frame_bound,
             a_reply_stream_its_caller_does_not_read_ends_overflow => queues::reply_overflow,
             a_streamed_request_its_handler_does_not_read_ends_overflow => queues::request_overflow,
             deadline_ms_fires_deadline => deadlines::deadline_ms,

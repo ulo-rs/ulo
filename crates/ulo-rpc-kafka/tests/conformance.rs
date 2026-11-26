@@ -145,7 +145,9 @@ impl Broker for KraftBroker {
     }
 }
 
-ulo_rpc_conformance::conformance_suite!(KraftBroker);
+ulo_rpc_conformance::conformance_suite!(KraftBroker; not_applicable {
+    a_parked_request_ends_too_large_when_its_server_s_link_refuses_an_item: "the frame bound is the producer's `message.max.bytes`, enforced on the publisher, so no item over it reaches the server's link",
+});
 
 /// An app with nothing in it, whose handle the server's link is prepared with.
 struct Empty;

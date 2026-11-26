@@ -22,7 +22,7 @@ use ulo::app::Bound as Listening;
 use ulo::{App, AppHandle, BoxError, CancelReason, Dep, ExecutionRef, Module, ModuleDef, ModuleIdentity, Runtime, Signal, StartupError, controller, handlers, injectable};
 use ulo_rpc::link::Inbound as Deliveries;
 use ulo_rpc::{
-    Ack, CallHeaders, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, Inbound, Link, Outbound, Subscription, Payload, ReplyPath, RpcClient,
+    Ack, CallHeaders, CallerGone, Capabilities, Codec, Data, Delivery, DeliveryMode, Frame, Inbound, Link, Outbound, Subscription, Payload, ReplyPath, RpcClient,
     RpcClientModule, RpcError, ZeroBytes, ZeroCount,
 };
 use ulo_rpc_tcp::Tcp;
@@ -1133,6 +1133,51 @@ async fn a_request_read_on_another_task_ends_cancelled_when_its_caller_leaves() 
         let expected = (ErrorKind::Cancelled, format!("`payload` was cut short: the caller went away: {how}"));
         assert_eq!(feeding.handed().await, Some(expected), "a caller that left ({how})");
         assert!(feeding.answers().is_empty(), "a call its caller left was answered ({how}): {:?}", feeding.answers());
+        feeding.stop().await;
+    }
+}
+
+/// A request handed to another task ends there `TooLarge`, naming the link's bound, when its link
+/// refuses one of its items for its size and delivers `in_too_large`: the server ended the call,
+/// not the caller, and answers it `bad_request` with `payload_too_large` in the words the TCP link
+/// writes for a frame over its `max_frame`. Planted break: the link's refusal read as the
+/// caller's `cancel`.
+#[tokio::test]
+async fn a_request_read_on_another_task_ends_too_large_when_its_link_refuses_an_item() {
+    let feeding = Feeding::start().await;
+    feeding.hand_over(CallHeaders::new()).await;
+    feeding.deliveries.send(delivery(Frame::in_too_large(1, 2_000, 1_000), Some(feeding.reply()))).expect("the server reads its link");
+    assert_eq!(feeding.handed().await, Some((ErrorKind::BadRequest, "`payload` is larger than 1000 bytes".to_owned())), "the request's end");
+    eventually("the call's answer", || !feeding.answers().is_empty()).await;
+    let message = answer_message(&feeding.answers(), (ErrorKind::BadRequest, "payload_too_large"));
+    assert_eq!(message, "a frame of 2000 bytes is over the server's `max_frame` of 1000 bytes");
+    feeding.stop().await;
+}
+
+/// A request handed to another task ends there `CallEnded` when its handler's answer fails to send
+/// for a fault of the server's own side, a broker's publish among them: the server ended the call,
+/// cancelling it `ReplyFailed`. A send the link fails with `CallerGone`, its caller's connection
+/// closed, ends it `Cancelled`, the caller having left. Planted break: every failed send read as
+/// the caller leaving.
+#[tokio::test]
+async fn a_request_read_on_another_task_ends_call_ended_when_its_answer_fails_to_send() {
+    let departed = "`payload` was cut short: the caller went away: the link lost it";
+    for (caller_gone, expected) in [(false, CALL_ENDED), (true, departed)] {
+        let feeding = Feeding::start().await;
+        let failing = ReplyPath::new(move |_| {
+            Box::pin(async move {
+                if caller_gone {
+                    Err(BoxError::from(CallerGone { why: "the connection closed" }))
+                } else {
+                    Err(BoxError::from("the broker connection is down"))
+                }
+            })
+        });
+        feeding.deliveries.send(delivery(Frame::open(1, EARLY, CallHeaders::new()), Some(failing))).expect("the server reads its link");
+        feeding.items(0..1);
+        let seen = feeding.seen.clone();
+        eventually("the reading task's end", || lock(&seen.0.early).is_some()).await;
+        assert_eq!(lock(&seen.0.early).clone(), Some(Some(expected.to_owned())), "a send failing with the caller gone: {caller_gone}");
         feeding.stop().await;
     }
 }

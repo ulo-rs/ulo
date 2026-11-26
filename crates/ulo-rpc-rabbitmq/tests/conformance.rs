@@ -82,7 +82,9 @@ impl Broker for RabbitMqBroker {
     }
 }
 
-ulo_rpc_conformance::conformance_suite!(RabbitMqBroker);
+ulo_rpc_conformance::conformance_suite!(RabbitMqBroker; not_applicable {
+    a_parked_request_ends_too_large_when_its_server_s_link_refuses_an_item: "the link declares no frame bound, so no item is refused for its size",
+});
 
 /// How long a dropped link's connections have to close at the broker.
 const RELEASE: Duration = Duration::from_secs(10);

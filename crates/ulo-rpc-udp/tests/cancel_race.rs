@@ -1,7 +1,7 @@
 //! A caller's `cancel` is the call's reason, `ClientCancelled`, even when the server answers
 //! between the link reading the `cancel` and the server taking it. The link writes a call nothing
 //! once it reads the call's `cancel`; a send refused in that window would cancel the call
-//! `Disconnected` before the `cancel` arrived.
+//! `ReplyFailed` before the `cancel` arrived.
 //!
 //! [`Gated`] wraps the server's link. It holds each caller's `cancel` on its way from the link to
 //! the server, after the link has read it, until the server's send of the call's answer waits or

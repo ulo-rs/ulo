@@ -117,7 +117,9 @@ impl ExecOptions {
 pub enum CancelReason {
     /// The backend observed the peer close the connection or reset the stream: a dropped response
     /// body, a closed connection, and on HTTP an h2 `RST_STREAM`. The server dropping an unread
-    /// request body is not one. gRPC never reports it: see `ClientCancelled`.
+    /// request body is not one. On RPC, a link that lost the caller: its connection closed. It
+    /// is the caller's side only, never the server's own failure to send (`ReplyFailed`). gRPC
+    /// never reports it: see `ClientCancelled`.
     Disconnected,
     /// A WebSocket or RPC `cancel` frame, or a gRPC caller abandoning its call. On gRPC that is
     /// every abandonment, a lost connection as well as an `RST_STREAM`: hyper drops the call's
@@ -131,6 +133,10 @@ pub enum CancelReason {
     Drain,
     /// `cancel()` by whoever holds the execution.
     Explicit,
+    /// The server's own side failed to send the call's answer, with nothing saying the caller
+    /// left: on RPC, a broker link whose reply publish failed, or a link already closed. A
+    /// transport answers nothing for it, since the path the answer takes is what failed.
+    ReplyFailed,
 }
 
 /// How a reply stream ended, as `Execution::on_stream_end` callbacks receive it.
