@@ -48,7 +48,8 @@ impl<T: prost::Message + Default + Send + 'static> FromCall<Grpc> for Message<T>
     }
 }
 
-/// The whole request: the message with its metadata.
+/// The whole request: the message with its metadata. `Debug` prints the metadata's keys only,
+/// as [`GrpcMetadata`] does.
 #[derive(Debug)]
 pub struct Request<T> {
     pub(crate) message: T,
