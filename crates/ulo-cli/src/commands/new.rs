@@ -5,6 +5,7 @@ use clap::ValueEnum;
 use colored::Colorize;
 use tokio::fs;
 
+use super::workspace::{self, Placement};
 use super::{is_keyword, render};
 
 /// The version every `ulo-*` dependency of a generated project is pinned to, exactly. The
@@ -444,6 +445,20 @@ struct Plan {
 }
 
 impl Plan {
+    fn manifest(&self) -> &str {
+        self.files.iter().find(|(path, _)| path == "Cargo.toml").map_or("", |(_, text)| text.as_str())
+    }
+
+    /// Makes the project its own workspace root, which is how cargo accepts a package below a
+    /// workspace that does not list it.
+    fn make_standalone(&mut self) {
+        if let Some((_, text)) = self.files.iter_mut().find(|(path, _)| path == "Cargo.toml")
+            && !text.contains("\n[workspace]")
+        {
+            text.push_str("\n[workspace]\n");
+        }
+    }
+
     fn build(name: &str, transport: Transport, db: Option<Db>) -> Result<Plan> {
         let layout = transport.layout();
         let store = db.map(Db::store);
@@ -576,10 +591,15 @@ impl Plan {
 }
 
 pub async fn execute(args: NewArgs) -> Result<()> {
-    let plan = Plan::build(&args.project_name, args.transport, args.db)?;
+    let mut plan = Plan::build(&args.project_name, args.transport, args.db)?;
     validate_project_name(&args.project_name, &plan.dependencies)?;
 
     let root = PathBuf::from(&args.project_name);
+    let absolute = std::env::current_dir().context("Failed to read the working directory")?.join(&root);
+    let mut placement = workspace::place(&absolute);
+    if matches!(placement, Placement::Standalone { .. }) {
+        plan.make_standalone();
+    }
     // `create_dir` refuses an existing directory atomically, so a project is never written into
     // one that appeared after the check, and the cleanup below only ever removes what this made.
     fs::create_dir(&root)
@@ -589,12 +609,34 @@ pub async fn execute(args: NewArgs) -> Result<()> {
         let _ = fs::remove_dir_all(&root).await;
         return Err(error);
     }
+    // The ancestor manifest is edited last, so a failure before this leaves nothing of it behind.
+    if let Placement::Member { manifest, text, .. } = &placement
+        && let Err(error) = workspace::write(manifest, text)
+    {
+        plan.make_standalone();
+        let manifest_path = root.join("Cargo.toml");
+        if let Err(error) = fs::write(&manifest_path, plan.manifest()).await {
+            let _ = fs::remove_dir_all(&root).await;
+            return Err(error).with_context(|| format!("Failed to write {}", manifest_path.display()));
+        }
+        placement = Placement::Standalone { manifest: manifest.clone(), reason: error.to_string() };
+    }
 
     let transport = value_name(args.transport);
     let layers = match args.db {
         Some(db) => format!("transport {transport}, database {}", value_name(db)),
         None => format!("transport {transport}"),
     };
+    match &placement {
+        Placement::Member { manifest, member, .. } => {
+            println!("Added `{member}` to the members of the workspace at {}.", manifest.display());
+        }
+        Placement::Standalone { manifest, reason } => println!(
+            "{} cannot take the project as a member ({reason}); the project's manifest carries an empty `[workspace]` table, so it builds with a Cargo.lock and target directory of its own.",
+            manifest.display()
+        ),
+        Placement::Outside | Placement::Covered => {}
+    }
     println!(
         "\n{}",
         format!(

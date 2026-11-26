@@ -4,6 +4,7 @@ pub mod dev;
 pub mod exec;
 pub mod generate;
 pub mod new;
+mod workspace;
 
 use anyhow::{Result, bail};
 
