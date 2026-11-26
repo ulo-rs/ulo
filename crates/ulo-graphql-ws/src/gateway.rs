@@ -90,10 +90,19 @@ pub struct GraphqlWs<Q = ()> {
 /// builds per execution: `Session<ConnectionInit>`.
 ///
 /// It also holds the connection's protocol state, which the gateway reads; a clone shares it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct ConnectionInit {
     pub(crate) payload: OnceLock<Map<String, Value>>,
     pub(crate) state: Arc<ConnState>,
+}
+
+/// The payload's keys only: a client sends its token in `connection_init`, and `{:?}` of the
+/// session lands in logs.
+impl fmt::Debug for ConnectionInit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let keys: Option<Vec<&str>> = self.payload.get().map(|payload| payload.keys().map(String::as_str).collect());
+        f.debug_struct("ConnectionInit").field("payload_keys", &keys).finish_non_exhaustive()
+    }
 }
 
 impl ConnectionInit {
@@ -503,4 +512,21 @@ async fn send(conn: &Connection, message: &ServerMessage<'_>) -> bool {
 /// `ConnectRefused::code` accepts; the fallback keeps the refusal should that ever change.
 fn refusal(code: CloseCode, reason: &'static str) -> ConnectRefused {
     ConnectRefused::code(code, reason).unwrap_or_else(|_| ConnectRefused::kind(ErrorKind::Internal, reason))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_init_payload_s_debug_output_carries_its_keys_and_no_value() {
+        let init = ConnectionInit::default();
+        let mut payload = Map::new();
+        payload.insert("authorization".into(), Value::String("Bearer s3cr3t".into()));
+        init.payload.set(payload).expect("the payload is unset");
+        for text in [format!("{init:?}"), format!("{init:#?}")] {
+            assert!(!text.contains("s3cr3t"), "the token appears in {text}");
+            assert!(text.contains("authorization"), "the key is kept: {text}");
+        }
+    }
 }

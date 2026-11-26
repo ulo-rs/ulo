@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::fmt;
 use std::net::SocketAddr;
 
 use http::request::Parts;
@@ -53,9 +54,23 @@ impl HttpCarried for Http {}
 /// The request line and headers, as an execution input: `Dep<RequestHead>` in an execution-scoped
 /// service. Read as `Option<Dep<RequestHead>>` in a service shared with another transport, where
 /// it is `None`.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RequestHead {
     pub(crate) parts: Parts,
+}
+
+/// Header values and the query are left out: the head carries `Authorization`, `Cookie` and
+/// tokens in a query, and `{:?}` of it lands in logs.
+impl fmt::Debug for RequestHead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<&str> = self.parts.headers.keys().map(|name| name.as_str()).collect();
+        f.debug_struct("RequestHead")
+            .field("method", &self.parts.method)
+            .field("path", &self.parts.uri.path())
+            .field("version", &self.parts.version)
+            .field("header_names", &names)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RequestHead {
@@ -90,3 +105,27 @@ impl RequestHead {
 /// `behind_proxy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClientAddr(pub SocketAddr);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_head_s_debug_output_carries_no_header_value_and_no_query() {
+        let (parts, ()) = http::Request::builder()
+            .method("POST")
+            .uri("/users?token=q7")
+            .header("authorization", "Bearer s3cr3t")
+            .header("cookie", "sid=abc")
+            .body(())
+            .unwrap()
+            .into_parts();
+        let text = format!("{:?}", RequestHead { parts });
+        for secret in ["s3cr3t", "sid=abc", "q7"] {
+            assert!(!text.contains(secret), "{secret} appears in {text}");
+        }
+        for kept in ["POST", "/users", "authorization", "cookie"] {
+            assert!(text.contains(kept), "{kept} is kept: {text}");
+        }
+    }
+}

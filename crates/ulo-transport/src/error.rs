@@ -321,6 +321,15 @@ impl CallError {
         self.challenge.as_deref()
     }
 
+    /// The store `ulo_ws::call_error` writes a rebuilt refusal's `WWW-Authenticate` challenge to,
+    /// whatever the error's kind; HTTP's renderer reads it on a 401 only.
+    /// [`unauthorized`](Self::unauthorized) is the spelling for an `Unauthorized`.
+    #[doc(hidden)]
+    pub fn __with_challenge(mut self, challenge: impl Into<String>) -> Self {
+        self.challenge = Some(challenge.into());
+        self
+    }
+
     /// The store behind `ulo_grpc::WithGrpcCode`, which takes a typed code and writes its number
     /// here. gRPC's renderer reads it back through [`__grpc_code`](Self::__grpc_code), and no other
     /// transport reads it.
@@ -366,7 +375,9 @@ impl CallError {
 
     /// The first `E` in `error`, wherever it sits: `error` itself, or down its `source()` chain,
     /// which reaches the source of a `CallError` and the original of a [`Redacted`](ulo::Redacted),
-    /// and inside the core's own errors, as a constructor's error inside a `LookupError`.
+    /// and inside the core's own errors, as a constructor's error inside a `LookupError`, and the
+    /// `Redacted` an [`ExtractError`] holds in `Malformed`, `Mismatched` and `Cancelled`, which its
+    /// `source()` does not hand out.
     /// A `GuardRejected` arrives bare and a [`Classify`] error arrives inside a `CallError`, and
     /// this answers for both.
     ///
@@ -391,7 +402,7 @@ impl CallError {
     /// assert!(CallError::find::<Gone>(&bare).is_some());
     /// ```
     pub fn find<E: Error + 'static>(error: &BoxError) -> Option<&E> {
-        ulo::__private::find_error::<E>(error)
+        ulo::__private::find_error::<E>(error, ExtractError::held)
     }
 
     /// The domain error this was built from, by type: `err.downcast_ref::<CallError>()?.source_as::<UserError>()`.
