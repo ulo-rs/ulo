@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use ulo::testing::TestApp;
 use ulo::{Signal, controller, handlers, module};
 use ulo_http_hyper::ServerOn;
-use ulo_http_hyper::testing::TestServer;
+use ulo_http_hyper::testing::{TestServer, TestServerExt};
 use ulo_listener_smol::SmolListener;
 use ulo_runtime_tokio::Tokio;
 

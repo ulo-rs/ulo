@@ -16,8 +16,11 @@
 //! method on the pending override, after every override kind and before any scope:
 //! `.override_value::<PgPool>(fake).qualified::<Replica>().in_module::<DbModule>()`.
 //!
-//! A test that serves the app over a socket starts it with `ulo_http_hyper::testing::TestServer`,
-//! which binds port 0 and serves in a task of the runtime the `TestApp` was given.
+//! A test that serves the app over a socket starts it with [`TestServer::start_on`], which takes
+//! any [`Server`](crate::Server), an HTTP, WebSocket or gRPC one, and serves it in a task of the
+//! runtime the `TestApp` was given. The core binds no socket and names no runtime: the runtime
+//! crates supply `ulo_runtime_tokio::testing::start`, and `ulo_http_hyper::testing::TestServerExt`
+//! serves the HTTP backend on port 0.
 //!
 //! # Time in a test
 //!
@@ -66,7 +69,9 @@
 //! ```
 
 mod scripted;
+mod server;
 pub use scripted::ScriptedTimer;
+pub use server::TestServer;
 
 use std::any::{TypeId, type_name};
 use std::marker::PhantomData;

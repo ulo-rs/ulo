@@ -1,8 +1,9 @@
 //! The smol runtime for `ulo` (transports DESIGN §8): [`run`], which serves an application on an
 //! executor it builds until the OS asks the process to stop; the core's
 //! [`Runtime`](ulo::Runtime) as [`Smol`], spawning on an `async-executor` [`Executor`] the caller
-//! owns and runs, and timing with `async-io`'s timers; and the OS signal future
-//! [`shutdown_signal`] for `serve`. No tokio in its tree.
+//! owns and runs, and timing with `async-io`'s timers; the OS signal future
+//! [`shutdown_signal`] for `serve`; and [`testing::start`], which serves a `TestApp` on a socket. No
+//! tokio in its tree.
 //!
 //! ```no_run
 //! # #[ulo::module]
@@ -40,6 +41,8 @@
 //! [`with_workers`](Smol::with_workers), the executor runs on threads beside the test's, so a task
 //! may be polled on another thread than the one that spawned it, and [`Smol::current`] answers the
 //! runtime on each of them.
+
+pub mod testing;
 
 use std::cell::RefCell;
 use std::error::Error;

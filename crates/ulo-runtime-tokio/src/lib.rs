@@ -1,7 +1,8 @@
 //! The tokio runtime for `ulo` (transports DESIGN §8): [`run`], which serves an application on a
 //! tokio runtime it builds until the OS asks the process to stop; the core's
 //! [`Runtime`](ulo::Runtime) as [`Tokio`], its clock alone as [`Timer`], the OS signal future
-//! [`shutdown_signal`] for `serve`, and [`spawn`] and [`spawn_in`]. A tokio-based RPC link holds a
+//! [`shutdown_signal`] for `serve`, [`spawn`] and [`spawn_in`], and [`testing::start`], which serves a
+//! `TestApp` on a socket. A tokio-based RPC link holds a
 //! `Tokio` of its own and runs its I/O there through [`Tokio::run`].
 //!
 //! ```no_run
@@ -29,6 +30,8 @@
 //! # Ok(())
 //! # }
 //! ```
+
+pub mod testing;
 
 use std::error::Error;
 use std::fmt;

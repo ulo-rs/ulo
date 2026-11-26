@@ -4,7 +4,7 @@ use ex_02_providers::{AppModule, Counter, Greeter, HelloController, Settings};
 use ex_support::get;
 use ulo::testing::TestApp;
 use ulo::{ConnectError, Dep, StartupError, module};
-use ulo_http_hyper::testing::TestServer;
+use ulo_http_hyper::testing::{TestServer, TestServerExt};
 use ulo_runtime_tokio::Tokio;
 
 #[tokio::test]

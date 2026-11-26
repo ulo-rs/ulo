@@ -4,7 +4,7 @@ use std::time::Duration;
 use ex_13_testing::{AppModule, BillingModule, Ledger, MailModule, Mailer, RefundsModule, Stamp, Uptime};
 use ex_support::{get, listen};
 use ulo::{Dep, Signal, StartupError, TestApp, WiringError, injectable, module};
-use ulo_http_hyper::testing::TestServer;
+use ulo_http_hyper::testing::{TestServer, TestServerExt};
 use ulo_runtime_tokio::Tokio;
 
 #[injectable]
