@@ -230,9 +230,17 @@ impl fmt::Debug for Reply {
 /// The server reads both into the execution's inbound context; a value it cannot read is ignored,
 /// never refused, and the call runs with no context, as the specification has a recipient restart
 /// the trace.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct CallHeaders {
     pub(crate) entries: Vec<(String, String)>,
+}
+
+/// Names only: a call's headers carry bearer tokens, and `{:?}` of them lands in logs.
+impl fmt::Debug for CallHeaders {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<&str> = self.entries.iter().map(|(name, _)| name.as_str()).collect();
+        f.debug_struct("CallHeaders").field("names", &names).finish()
+    }
 }
 
 impl CallHeaders {
@@ -325,3 +333,18 @@ impl fmt::Display for NoHandler {
 }
 
 impl std::error::Error for NoHandler {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_headers_debug_output_carries_names_and_no_value() {
+        let mut headers = CallHeaders::new();
+        headers.insert("authorization", "Bearer s3cr3t");
+        headers.insert("x-tenant", "acme");
+        let text = format!("{headers:?}");
+        assert!(!text.contains("s3cr3t") && !text.contains("acme"), "a value appears in {text}");
+        assert!(text.contains("authorization") && text.contains("x-tenant"), "the names are kept: {text}");
+    }
+}

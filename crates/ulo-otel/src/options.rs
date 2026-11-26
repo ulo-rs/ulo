@@ -1,3 +1,4 @@
+use std::fmt;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -18,7 +19,7 @@ const DEFAULT_FLUSH: Duration = Duration::from_secs(5);
 /// Read from a configuration section with [`from_config`](Self::from_config), or from the standard
 /// `OTEL_*` variable names with [`from_env`](Self::from_env) over an `Env` the application passes,
 /// which a test fills from a map.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[derive(Clone, Default, PartialEq, Deserialize)]
 pub struct OtelOptions {
     /// `service.name`; `OTEL_SERVICE_NAME`. Unset, the resource names `unknown_service` with the
     /// executable's name, as the semantic conventions specify.
@@ -36,6 +37,20 @@ pub struct OtelOptions {
     /// How long the flush at shutdown may take, 5000 by default and never zero. The shutdown
     /// hook's bound is a second longer. No standard variable names it.
     pub flush_timeout_ms: Option<u64>,
+}
+
+/// The endpoint prints as its scheme, host, port and path, as the exporter's settings print it:
+/// `https://user:key@collector:4318` carries a credential in its userinfo.
+impl fmt::Debug for OtelOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OtelOptions")
+            .field("service_name", &self.service_name)
+            .field("endpoint", &self.endpoint.as_deref().map(ulo::secrets::setting_url))
+            .field("headers", &self.headers)
+            .field("sample_ratio", &self.sample_ratio)
+            .field("flush_timeout_ms", &self.flush_timeout_ms)
+            .finish()
+    }
 }
 
 impl OtelOptions {
@@ -154,4 +169,19 @@ fn headers_valid(text: &str) -> bool {
         .map(str::trim)
         .filter(|member| !member.is_empty())
         .all(|member| member.split_once('=').is_some_and(|(key, _)| !key.trim().is_empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_options_debug_output_carries_no_endpoint_credential() {
+        let options = OtelOptions { endpoint: Some("https://user:k3y@collector:4318/v1?t=q7".into()), ..OtelOptions::default() };
+        let text = format!("{options:?}");
+        for secret in ["k3y", "user", "q7"] {
+            assert!(!text.contains(secret), "{secret} appears in {text}");
+        }
+        assert!(text.contains("https://collector:4318/v1"), "the endpoint is kept: {text}");
+    }
 }

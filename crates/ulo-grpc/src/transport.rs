@@ -1,3 +1,4 @@
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -202,9 +203,17 @@ impl FromCall<Grpc> for GrpcCx {
 
 /// The call's request metadata, as an execution input and as a handler parameter: a token guard
 /// reads a bearer token from it.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct GrpcMetadata {
     pub(crate) map: MetadataMap,
+}
+
+/// Keys only: a bearer token travels in a value, and `{:?}` of the metadata lands in logs. A
+/// binary key is the one ending in `-bin`.
+impl fmt::Debug for GrpcMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GrpcMetadata").field("keys", &metadata_keys(&self.map)).finish()
+    }
 }
 
 impl GrpcMetadata {
@@ -258,7 +267,6 @@ pub struct PeerAddr(pub SocketAddr);
 ///
 /// [`uncompressed`](Self::uncompressed) sends the reply's messages uncompressed on a server that
 /// would compress them.
-#[derive(Debug)]
 pub struct Response<T> {
     pub(crate) message: T,
     pub(crate) metadata: MetadataMap,
@@ -266,6 +274,28 @@ pub struct Response<T> {
     /// The first entry `metadata` or `trailer` refused, which fails the reply.
     pub(crate) refused: Option<MetadataError>,
     pub(crate) uncompressed: bool,
+}
+
+/// Metadata and trailers print their keys only: a reply can carry a token in either.
+impl<T: fmt::Debug> fmt::Debug for Response<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Response")
+            .field("message", &self.message)
+            .field("metadata", &metadata_keys(&self.metadata))
+            .field("trailers", &metadata_keys(&self.trailers))
+            .field("refused", &self.refused)
+            .field("uncompressed", &self.uncompressed)
+            .finish()
+    }
+}
+
+fn metadata_keys(map: &MetadataMap) -> Vec<&str> {
+    map.keys()
+        .map(|key| match key {
+            tonic::metadata::KeyRef::Ascii(key) => key.as_str(),
+            tonic::metadata::KeyRef::Binary(key) => key.as_str(),
+        })
+        .collect()
 }
 
 impl<T> Response<T> {
@@ -438,5 +468,42 @@ mod tests {
     fn a_reply_fails_with_its_first_refusal() {
         let reply = Response::new(()).metadata("x-a", "1").trailer("te", "trailers").metadata("grpc-x", "v");
         assert_eq!(refusal(reply.into_grpc_reply()), MetadataError::Reserved { key: "te".into() });
+    }
+
+    fn credentials() -> MetadataMap {
+        let mut map = MetadataMap::new();
+        map.insert("authorization", "Bearer s3cr3t".parse().unwrap());
+        map.insert_bin("x-digest-bin", tonic::metadata::BinaryMetadataValue::from_bytes(b"b1nary"));
+        map
+    }
+
+    fn assert_keys_only(text: &str) {
+        for secret in ["s3cr3t", "Bearer", "b1nary", "YjFuYXJ5"] {
+            assert!(!text.contains(secret), "{secret} appears in {text}");
+        }
+        assert!(text.contains("authorization") && text.contains("x-digest-bin"), "the keys are kept: {text}");
+    }
+
+    #[test]
+    fn the_metadata_s_debug_output_carries_keys_and_no_value() {
+        assert_keys_only(&format!("{:?}", GrpcMetadata { map: credentials() }));
+    }
+
+    #[test]
+    fn a_request_s_debug_output_carries_its_message_and_no_metadata_value() {
+        let request = crate::extract::Request { message: "hello", metadata: GrpcMetadata { map: credentials() } };
+        let text = format!("{request:?}");
+        assert!(text.contains("hello"), "the message is kept: {text}");
+        assert_keys_only(&text);
+    }
+
+    #[test]
+    fn a_reply_s_debug_output_carries_no_metadata_or_trailer_value() {
+        let mut reply = Response::new("hello");
+        reply.metadata = credentials();
+        reply.trailers = credentials();
+        let text = format!("{reply:?}");
+        assert!(text.contains("hello"), "the message is kept: {text}");
+        assert_keys_only(&text);
     }
 }
