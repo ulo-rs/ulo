@@ -131,8 +131,27 @@ impl Error for Redacted {
 /// a text that short is contained in most messages, and replacing it would mangle them without
 /// hiding anything. `ulo-config` applies the same floor to the messages it checks.
 ///
-/// `Debug` and `Display` never print the value. Equality and hashing are the value's, so a
-/// configured module holding one keeps identity by value.
+/// `Debug` and `Display` never print the value, wherever the secret appears, including inside a
+/// type that derives `Debug`. Equality and hashing are the value's, so a configured module holding
+/// one keeps identity by value.
+///
+/// ```
+/// use ulo::Secret;
+///
+/// let secret = Secret::new("hunter2".to_owned());
+/// assert_eq!(format!("{secret:?}"), "Secret([redacted])");
+/// assert_eq!(format!("{secret}"), "[redacted]");
+/// ```
+///
+/// Under `Debug`, the framework's own types print no value the caller supplied: a request head, a
+/// header, a metadata map, a query string, an init payload and a GraphQL variable print their
+/// names or keys and no value. What names the call prints, its path and a GraphQL document among
+/// them. An error's message is outside the line: an extraction error's can quote the input it
+/// refused. A value the server wrote may print, a response header or a refusal's
+/// `WWW-Authenticate` or `Retry-After`. That line is no permission to print a secret the server
+/// holds: a `Secret` redacts itself wherever it appears. A body type generic over the
+/// application's own `T` prints the application's data, which ulo cannot classify; wrap a
+/// credential field in `Secret`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret<T> {
     value: T,

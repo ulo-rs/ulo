@@ -136,3 +136,4 @@ break ulo-runtime-conformance trait_method_added 1  # `Harness::workers`, the co
 # unchecked ulo-http Header  # its `Debug` prints the header's name, where it printed the typed header, a bearer token or a cookie included; it is implemented for `H: headers::Header`, where it was for `H: Debug`
 # unchecked ulo-graphql-ws ConnectionInit  # its `Debug` prints the payload's keys, where it printed the payload, a token included
 # unchecked ulo-otel OtelOptions  # its `Debug` prints the endpoint as its scheme, host, port and path, where it printed the endpoint as written, userinfo included
+# unchecked ulo-graphql GqlRequest  # its `Debug` prints the query, the operation name and the names of the variables and extensions, where it printed their values, a login mutation's password included
