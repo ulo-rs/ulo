@@ -280,6 +280,24 @@ impl ExtractError {
 }
 
 impl ExtractError {
+    /// The `Redacted` a variant holds as its `source`, for `CallError::find`. Every variant is
+    /// named, so one added holding a `Redacted` is decided here.
+    pub(crate) fn held<'a>(error: &'a (dyn Error + 'static)) -> Option<&'a Redacted> {
+        match error.downcast_ref::<ExtractError>()? {
+            ExtractError::Malformed { source, .. } | ExtractError::Mismatched { source, .. } | ExtractError::Cancelled { source, .. } => Some(source),
+            ExtractError::Missing { .. }
+            | ExtractError::UnsupportedMediaType { .. }
+            | ExtractError::TooLarge { .. }
+            | ExtractError::Invalid { .. }
+            | ExtractError::Dependency { .. }
+            | ExtractError::HostMissing { .. }
+            | ExtractError::BodyTaken { .. }
+            | ExtractError::Overflowed { .. }
+            | ExtractError::OverflowedBytes { .. }
+            | ExtractError::CallEnded { .. } => None,
+        }
+    }
+
     pub fn param(&self) -> &'static str {
         match self {
             ExtractError::Missing { param }

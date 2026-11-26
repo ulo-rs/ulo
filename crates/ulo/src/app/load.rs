@@ -19,8 +19,9 @@ use crate::module::handle::ModuleRef;
 
 /// Refused from Stopping on with `LoadError::Closed`: a module loaded then would miss the
 /// before-shutdown stage already running. An identity already in the graph returns its
-/// existing handle, unless its settings differ from the graph's module. Lazily loaded modules
-/// shut down in reverse load order.
+/// existing handle, unless its settings differ from the graph's module, or it is a
+/// `#[module(identity = type)]` module with fields, which answers `RegisteredTwice`. Lazily
+/// loaded modules shut down in reverse load order.
 ///
 /// A load that fails to connect runs the destroy hooks of what it initialized, in reverse (§9.2),
 /// then leaves the app as it found it: the graph it extended is put back and the singletons it
