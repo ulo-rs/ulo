@@ -74,7 +74,9 @@ impl Broker for NatsServer {
     }
 }
 
-ulo_rpc_conformance::conformance_suite!(NatsServer);
+ulo_rpc_conformance::conformance_suite!(NatsServer; not_applicable {
+    a_parked_request_ends_too_large_when_its_server_s_link_refuses_an_item: "the frame bound is the NATS server's `max_payload`, enforced on the publisher, so no item over it reaches the server's link",
+});
 
 /// A server's link after `prepare` on an app that hands it the tokio runtime's clock, which
 /// `listen` refuses to go without.

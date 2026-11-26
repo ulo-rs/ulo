@@ -1047,7 +1047,7 @@ fn overflow(conn: &Conn, id: u64, waiting: &Waiting, passed: Overflow) {
         })));
     }
     let error = match passed {
-        Overflow::TooLarge { limit, item } => RpcError::new(
+        Overflow::TooLarge { limit, item, .. } => RpcError::new(
             ErrorKind::BadRequest,
             format!(
                 "the stream's next reply item, of {item} bytes, is over the client's `max_queued_bytes` of {limit} on its own, and ended the call; its server was sent `cancel`"

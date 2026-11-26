@@ -54,6 +54,11 @@ impl Broker for Loopback {
         Tcp::new(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
     }
 
+    /// The server's link refusing frames over `bytes`, below the client's 1 MiB.
+    fn link_with_max_frame(&self, bytes: u64) -> Option<Tcp> {
+        Some(self.link().max_frame(bytes))
+    }
+
     /// The client's link, through the relay, aimed at the address the server bound.
     fn client_link(&self, server: &[BoundAddr]) -> Tcp {
         let [bound] = server else { startup_failed!("expected one bound server address, got {server:?}") };
@@ -82,8 +87,9 @@ and reports the three declared above as ignored with their reasons.
 
 Your link takes `Tcp`'s place. `start` answers an environment no other scenario shares: a fresh
 broker or namespace, or nothing where the server binds port 0. `link` answers the server's link,
-`client_link` the client's once the servers are bound, and `disrupt` severs the client's
-connection. A link run against a broker in a container starts it in `start`, through
+`client_link` the client's once the servers are bound, `link_with_max_frame` a server link
+refusing frames over a size its client's carries, where the server's link has a frame bound of its
+own to set, and `disrupt` severs the client's connection. A link run against a broker in a container starts it in `start`, through
 `relay::unshadowed` when the container's port is published on the host, and fails a start that
 does not come up through `startup_failed!`. The suite depends on no container library; the link's
 own dev-dependencies bring one.

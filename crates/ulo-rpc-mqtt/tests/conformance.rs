@@ -96,7 +96,9 @@ impl Broker for Mosquitto {
 // `a_server_s_connection_ends_at_the_grace_when_the_broker_does_not_close_it`, not by the stamp's
 // own pass counts, which do not tell a link that lingers past its DISCONNECT from one that does
 // not (F479).
-ulo_rpc_conformance::conformance_suite!(Mosquitto);
+ulo_rpc_conformance::conformance_suite!(Mosquitto; not_applicable {
+    a_parked_request_ends_too_large_when_its_server_s_link_refuses_an_item: "the frame bound is the broker's Maximum Packet Size, enforced on the publisher, so no item over it reaches the server's link",
+});
 
 /// How long a test waits for a frame the server's link should deliver.
 const PATIENCE: Duration = Duration::from_secs(5);

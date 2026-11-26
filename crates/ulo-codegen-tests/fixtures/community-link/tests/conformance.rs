@@ -32,4 +32,5 @@ ulo_rpc_conformance::conformance_suite!(InProcess; not_applicable {
     a_late_opened_releases_the_held_cancel: "a request and its control frames share one ordered queue, so the link holds no `cancel` for an `opened`",
     a_held_cancel_is_dropped_when_its_hold_runs_out: "a request and its control frames share one ordered queue, so the link holds no `cancel` for an `opened`",
     a_held_cancel_lasts_until_its_call_s_deadline: "a request and its control frames share one ordered queue, so the link holds no `cancel` for an `opened`",
+    a_parked_request_ends_too_large_when_its_server_s_link_refuses_an_item: "the link declares no frame bound, so no item is refused for its size",
 });

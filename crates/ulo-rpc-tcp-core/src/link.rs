@@ -18,7 +18,7 @@ use ulo::{Bound, BoundAddr, BoxError, BoxFuture, Refused, Runtime, RuntimeShutDo
 use ulo_net::rustls::ServerConfig;
 use ulo_net::{Activation, BindError, BoundListener, Endpoint, EndpointSpec, HostPort, Lookup, ResolveCause, ResolveError, Target, Tls};
 use ulo_rpc::link::Inbound;
-use ulo_rpc::{Ack, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
+use ulo_rpc::{Ack, CallerGone, Capabilities, Codec, Delivery, DeliveryMode, ErrorBody, Frame, FrameTooLarge, NoTimer, Outbound, Pattern, ReplyPath, ReplyTo};
 use ulo_transport::sync::{Watch, ordered};
 use ulo_transport::{Count, Detail, Details, ErrorKind, TaskSet};
 
@@ -1008,8 +1008,8 @@ impl Server {
                 Next::Frame(bytes) => bytes,
                 Next::Over(call, len) => {
                     activity.touch();
-                    let Some(cancel) = self.over(call, len, &queue, &ids, peer) else { continue };
-                    let delivery = Delivery { frame: Frame::cancel(cancel), reply: Some(path.clone()), ack: taken(&ids, cancel) };
+                    let Some(refused) = self.over(call, len, &queue, &ids, peer) else { continue };
+                    let delivery = Delivery { frame: refused, reply: Some(path.clone()), ack: Ack::none() };
                     if deliveries.send(delivery).await.is_err() {
                         break End::Gone;
                     }
@@ -1061,21 +1061,23 @@ impl Server {
 
     /// A frame of `len` bytes, over the limit and read past, naming `call` in its leading bytes:
     /// answered `bad_request` with `payload_too_large` under its call's `id` when it names a
-    /// request, a streamed request's `open`, or an item of a streamed request in flight on this
-    /// connection, and otherwise dropped unanswered. The connection reads the next frame either
-    /// way. The server id of a call in flight whose item it was, which the caller holds ended,
-    /// is answered for the reader to cancel: its replies from here on are dropped before the wire.
-    fn over(&self, call: Option<(Calling, u64)>, len: u64, queue: &ordered::Sender<Bytes>, ids: &Mutex<Ids>, peer: SocketAddr) -> Option<u64> {
+    /// request or a streamed request's `open`, which reached no server, and otherwise dropped
+    /// unanswered. An item of a streamed request in flight on this connection is answered by the
+    /// server instead: the `in_too_large` returned for the reader to deliver ends the call's
+    /// request as too large, and the server's answer reaches the caller as any reply does. The
+    /// connection reads the next frame either way.
+    fn over(&self, call: Option<(Calling, u64)>, len: u64, queue: &ordered::Sender<Bytes>, ids: &Mutex<Ids>, peer: SocketAddr) -> Option<Frame> {
         let limit = self.limit;
-        let (id, cancel) = match call {
-            Some((Calling::Req | Calling::Open, id)) => (id, None),
-            Some((Calling::In, id)) => match lock(ids).cancel(id) {
-                Some(server) => (id, Some(server)),
-                None => {
+        let id = match call {
+            Some((Calling::Req | Calling::Open, id)) => id,
+            Some((Calling::In, id)) => {
+                let Some(server) = lock(ids).server(id) else {
                     tracing::debug!(len, limit, id, %peer, "an item over the link's `max_frame` named no call in flight; it is dropped");
                     return None;
-                }
-            },
+                };
+                tracing::debug!(len, limit, id, %peer, "an item was over the link's `max_frame`; the server ends its call and the connection reads the next frame");
+                return Some(Frame::in_too_large(server, len, limit));
+            }
             None => {
                 tracing::debug!(len, limit, %peer, "a frame naming no call in its leading bytes was over the link's `max_frame`; it is dropped");
                 return None;
@@ -1087,7 +1089,7 @@ impl Server {
             Err(error) => tracing::debug!(%error, %peer, "the answer to an over-limit frame did not encode; the call is not answered"),
         }
         tracing::debug!(len, limit, id, %peer, "a frame was over the link's `max_frame`; it is answered and the connection reads the next");
-        cancel
+        None
     }
 
     /// A caller's frame with its id mapped to the server's; `None` for one the server takes no
@@ -1127,7 +1129,9 @@ enum End {
     Idle,
 }
 
-/// The `err` a server writes for call `id` when a frame of `len` bytes is over its `limit`.
+/// The `err` a server writes for call `id` when a frame of `len` bytes is over its `limit`. The
+/// server answers an `in_too_large` with the same words, so the `max_frame` floor measured from
+/// this answer holds for that one too.
 fn over_limit_answer(id: u64, len: u64, limit: u64) -> Frame {
     let error = ErrorBody::new(
         ErrorKind::BadRequest,
@@ -1388,7 +1392,7 @@ fn reply_path(queue: ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: Arc<
         let queued = queue_reply(&queue, codec, limit, &ids, frame);
         Box::pin(async move {
             match queued? {
-                Queued::Written(room) => room.await.map_err(|_| BoxError::from("the TCP connection closed")),
+                Queued::Written(room) => room.await.map_err(|_| BoxError::from(CallerGone { why: "the TCP connection closed" })),
                 Queued::Dropped(released) => {
                     released.wait_for(|released| *released).await;
                     Ok(())
@@ -1418,7 +1422,7 @@ fn queue_reply(queue: &ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: &M
     let caller = match lock(ids).caller(server) {
         Some(Caller::Live(caller)) => caller,
         Some(Caller::Cancelled(released)) => return Ok(Queued::Dropped(released)),
-        None => return Err("the call is no longer in flight on this connection".into()),
+        None => return Err(CallerGone { why: "the call is no longer in flight on this connection" }.into()),
     };
     let ends = matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. });
     let bytes = encode(codec, limit, &with_id(frame, caller))?;
@@ -1587,6 +1591,24 @@ mod tests {
     }
 
     const LIMIT: u64 = 1024;
+
+    /// A reply to a call its connection no longer maps, and one whose connection's writer has gone,
+    /// fail with `CallerGone`, which the server reads as the caller leaving, `Disconnected`, not as
+    /// a failure of its own. Planted break: either failure a plain message.
+    #[test]
+    fn a_reply_after_its_caller_s_connection_closed_fails_caller_gone() {
+        let core = Core::new(EndpointSpec::from(SocketAddr::from(([127, 0, 0, 1], 0))));
+        let activity = Arc::new(Activity::new(Arc::new(ulo::testing::ScriptedTimer::new())));
+        let ids = Arc::new(Mutex::new(Ids::new(Arc::clone(&core.state), activity)));
+        let (queue, writer) = ordered::channel(4);
+        let path = reply_path(queue, Codec::Json, LIMIT, Arc::clone(&ids), SocketAddr::from(([127, 0, 0, 1], 1)));
+        let unmapped = block_on(path.send(Frame::res(1, ulo_rpc::Data::default()))).expect_err("a reply to a call never mapped was sent");
+        assert!(unmapped.is::<CallerGone>(), "a reply to a call no longer mapped: {unmapped}");
+        let server = lock(&ids).open(7, &AtomicU64::new(1));
+        drop(writer);
+        let closed = block_on(path.send(Frame::res(server, ulo_rpc::Data::default()))).expect_err("a reply with no writer was sent");
+        assert!(closed.is::<CallerGone>(), "a reply after the writer went: {closed}");
+    }
 
     /// Q31-15: a frame over the limit is read to its declared end, its call named from its leading
     /// bytes, and the frame after it is read whole, whether the frame is longer than the leading

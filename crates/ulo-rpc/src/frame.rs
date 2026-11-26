@@ -16,6 +16,9 @@
 //! goaway  {t:"goaway"}            server draining: no new calls on this connection
 //! ```
 //!
+//! [`Frame::InTooLarge`] is no frame of the grammar: a link's server side raises it in place of an
+//! `in` it read past for its size, and no codec writes it.
+//!
 //! `id` is a `u64` the caller allocates per connection on TCP and UDP; a broker carries the
 //! correlation natively. TCP, UDP and Redis carry the whole frame; on NATS, AMQP, MQTT and Kafka
 //! the request lane carries `d` as the message body, `p` as the subject, queue or topic and `h` as
@@ -28,7 +31,7 @@ use ulo_transport::{Details, ErrorKind};
 
 use crate::transport::CallHeaders;
 
-/// One frame of the grammar.
+/// One frame of the grammar, or the link's own [`InTooLarge`](Frame::InTooLarge).
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Frame {
@@ -56,6 +59,14 @@ pub enum Frame {
     #[non_exhaustive]
     Credit { id: u64, n: u64 },
     Goaway,
+    /// An `in` of call `id`, `size` bytes, that the link refused under its frame bound of
+    /// `limit`, delivered in the item's place: the server ends the call's request with
+    /// `ExtractError::TooLarge` and answers the call `bad_request` with the reason
+    /// `payload_too_large`, as it does an item over its own `max_queued_bytes`. A caller's
+    /// `cancel` is the caller leaving, so a link refusing an item delivers this, never a
+    /// `cancel`. Never on the wire: a codec refuses to encode it.
+    #[non_exhaustive]
+    InTooLarge { id: u64, size: u64, limit: u64 },
 }
 
 impl Frame {
@@ -105,7 +116,12 @@ impl Frame {
         Frame::Credit { id, n }
     }
 
-    /// The frame's `t`: `"req"`, `"evt"`, `"res"`, ...
+    pub fn in_too_large(id: u64, size: u64, limit: u64) -> Self {
+        Frame::InTooLarge { id, size, limit }
+    }
+
+    /// The frame's `t`: `"req"`, `"evt"`, `"res"`, ..., and `"in_too_large"`, which no wire
+    /// carries.
     pub fn kind(&self) -> &'static str {
         match self {
             Frame::Req { .. } => "req",
@@ -120,6 +136,7 @@ impl Frame {
             Frame::Cancel { .. } => "cancel",
             Frame::Credit { .. } => "credit",
             Frame::Goaway => "goaway",
+            Frame::InTooLarge { .. } => "in_too_large",
         }
     }
 
@@ -135,7 +152,8 @@ impl Frame {
             | Frame::In { id, .. }
             | Frame::InEnd { id }
             | Frame::Cancel { id }
-            | Frame::Credit { id, .. } => Some(*id),
+            | Frame::Credit { id, .. }
+            | Frame::InTooLarge { id, .. } => Some(*id),
             Frame::Evt { .. } | Frame::Goaway => None,
         }
     }

@@ -164,7 +164,10 @@ pub type Inbound = BoxStream<'static, Delivery>;
 ///
 /// A link that loses the caller of calls in flight, a TCP connection closing, delivers `cancel`
 /// for each with `reply: None`, which the server reads as `CancelReason::Disconnected`; a
-/// `cancel` the caller sent carries its reply path and is `CancelReason::ClientCancelled`.
+/// `cancel` the caller sent carries its reply path and is `CancelReason::ClientCancelled`. A
+/// `cancel` means the caller left and nothing else: a link refusing an `in` for its size delivers
+/// [`Frame::InTooLarge`] in its place, which the server answers as an item over its own byte
+/// bound, `bad_request` with `payload_too_large`.
 pub struct Delivery {
     pub frame: Frame,
     /// `None` for an event. A link may attach one to an event to carry the caller's address
@@ -197,9 +200,11 @@ impl ReplyPath {
 
     /// Sends one reply frame. A send that fails with [`FrameTooLarge`] or [`FrameUnencodable`] is
     /// answered by the server with an `err` frame of kind `internal` under the same `id`, the
-    /// second logged at `error`; any other failure means the caller is gone, and the call is
-    /// cancelled `Disconnected`. A link encoding with [`Codec::encode_frame`] and passing its
-    /// error on with `?` reports an encoding failure as `FrameUnencodable`.
+    /// second logged at `error`. A send that fails with [`CallerGone`] cancels the call
+    /// `Disconnected`, the caller having left; any other failure is the link's own, a broker
+    /// publish that failed or a link already closed, and cancels the call `ReplyFailed`. A link
+    /// encoding with [`Codec::encode_frame`] and passing its error on with `?` reports an encoding
+    /// failure as `FrameUnencodable`.
     pub fn send(&self, frame: Frame) -> BoxFuture<'static, Result<(), BoxError>> {
         (self.send)(frame)
     }
@@ -810,6 +815,23 @@ impl Error for Misconfigured {
         Some(&*self.source)
     }
 }
+
+/// A [`ReplyPath`] send's failure saying the caller is gone, the connection its call arrived on
+/// closed: the server cancels the call `CancelReason::Disconnected`. A link answers it only where
+/// it knows the caller left; any other failure reads as the server's own, `ReplyFailed`.
+#[derive(Debug)]
+pub struct CallerGone {
+    /// What the link saw, for the log line the failure writes.
+    pub why: &'static str,
+}
+
+impl fmt::Display for CallerGone {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "the caller is gone: {}", self.why)
+    }
+}
+
+impl Error for CallerGone {}
 
 /// A frame over the link's limit, refused before it is sent. `RpcClient` answers it `BadRequest`
 /// with `reason: "payload_too_large"`.
