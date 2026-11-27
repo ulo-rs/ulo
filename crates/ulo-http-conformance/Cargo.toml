@@ -3,12 +3,13 @@ name = "ulo-http-conformance"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "The embedding conformance suite every Ulo HTTP host runs, the hyper backend as the reference"
+description = "The embedding conformance suite every Ulo HTTP host runs"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-# A dev-dependency of the adapter crates and of nothing else.
-publish = false
+readme = "README.md"
+keywords = ["ulo", "http", "conformance", "testing"]
+categories = ["development-tools::testing", "network-programming"]
 
 [features]
 # `OnTokio`, the runtime half every tokio host names, and `Counted` over tokio's I/O traits, which
@@ -23,6 +24,9 @@ rocket = ["dep:rocket"]
 [dependencies]
 ulo = { path = "../ulo", version = "=0.1.0-alpha.3" }
 ulo-http = { path = "../ulo-http", version = "=0.1.0-alpha.3" }
+# `Slots`, `startup_failed!`, `report` and `failures_dir`, shared with the other suites and
+# re-exported here, so a host author depends on the suite alone.
+ulo-conformance-support = { path = "../ulo-conformance-support", version = "=0.1.0-alpha.3" }
 # The reference host, on the listener a host's runtime half names.
 ulo-http-hyper = { path = "../ulo-http-hyper", version = "=0.1.0-alpha.3", default-features = false }
 # `FuturesIo` and `RuntimeExecutor`: the suite's client over a host's `futures-io` stream, its
@@ -52,9 +56,18 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"], optio
 # `compat`: the host's `futures-io` stream as tokio's I/O traits, the ones `h2` reads.
 tokio-util = { workspace = true, features = ["compat"] }
 
+[dev-dependencies]
+# The README's first run, compiled as a doctest of this crate: the suite stamped over the reference
+# host, with `OnTokio`. A dev-dependency cycle Cargo allows.
+ulo-http-conformance = { path = ".", features = ["tokio"] }
+
 [lints]
 workspace = true
 
 [[test]]
 name = "stand_in"
+required-features = ["tokio"]
+
+[[test]]
+name = "ignore_reason"
 required-features = ["tokio"]

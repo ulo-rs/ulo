@@ -39,6 +39,16 @@ and `tracing`, and its dependents, `ulo-runtime-tokio` and `ulo-runtime-smol`, t
 dev-dependency, which Cargo strips when publishing; the suite takes `ulo-runtime-smol` as one in
 turn, for the README's first run.
 
+`ulo-http-conformance`, the HTTP conformance suite, is a leaf by the same two conditions. It owns no
+doc-hidden module: `http_conformance_suite!` expands to `Slots`, a public item of the support crate
+that the suite re-exports, and to the suite's own public items, reached through `$crate`. Its
+dependencies are `ulo`, `ulo-http`, `ulo-http-hyper` (the reference host), `ulo-server-hyper`,
+`ulo-transport` and the support crate, and behind its `tokio` and `smol` features, off by default,
+`ulo-runtime-tokio` and `ulo-listener-tokio` or `ulo-runtime-smol` and `ulo-listener-smol`.
+`ulo-http-hyper`, the five embedding host crates, `ulo-ws` and `ulo-ws-hyper` take it as a
+dev-dependency, which Cargo strips when publishing, and the suite takes itself as one for the
+README's first run. The community-host fixture takes it through a dev-dependency too.
+
 ## What `release check` checks
 
 The job checks out the last release, the nearest tag matching `v[0-9]*` among the ancestors of the
@@ -117,8 +127,8 @@ needs first.
 
 One pull request moves `[workspace.package] version` and every `=` pin to the new version,
 regenerates `Cargo.lock` for the workspace members, and updates the Install sections of `README.md`,
-`crates/ulo/README.md`, `crates/ulo-rpc-conformance/README.md` and
-`crates/ulo-runtime-conformance/README.md`, which
+`crates/ulo/README.md`, `crates/ulo-rpc-conformance/README.md`,
+`crates/ulo-runtime-conformance/README.md` and `crates/ulo-http-conformance/README.md`, which
 `scripts/check_readme_install.py` holds to the workspace version.
 While that version is a pre-release the Install sections pin each crate `=<version>`, and the
 script refuses any other operator: a caret on a pre-release also takes a later pre-release of the
@@ -155,7 +165,9 @@ commit is tagged first. A crate is uploaded once every publishable workspace cra
 through a normal or build dependency, is on crates.io, and a name crates.io already has goes before
 a new name that is ready at the same time. Cargo strips a dev-dependency that names no version from
 the published manifest, so it imposes no order; `ulo-rpc-conformance` and `ulo-rpc-tcp` are each a
-dev-dependency of the other, and so are `ulo-runtime-conformance` and `ulo-runtime-smol`. A
+dev-dependency of the other, and so are `ulo-runtime-conformance` and `ulo-runtime-smol`.
+`ulo-http-conformance` depends on `ulo-http-hyper` through a normal dependency, so the reference
+host goes first; its dev-dependency on the suite, and the suite's on itself, impose nothing. A
 dev-dependency that names a version stays in the manifest and is resolved on crates.io, so it orders
 like a normal one: `ulo-grpc` names `ulo-runtime-tokio`'s. `--dry-run` runs one
 `cargo publish --workspace --dry-run`, excluding the crates already on crates.io at their version:

@@ -35,7 +35,7 @@ import re
 import sys
 import tempfile
 
-READMES = ["README.md", "crates/ulo/README.md", "crates/ulo-rpc-conformance/README.md", "crates/ulo-runtime-conformance/README.md"]
+READMES = ["README.md", "crates/ulo/README.md", "crates/ulo-rpc-conformance/README.md", "crates/ulo-runtime-conformance/README.md", "crates/ulo-http-conformance/README.md"]
 CLI_INSTALL = ["README.md", "crates/ulo/README.md", "crates/ulo-cli/README.md", "crates/ulo/src/lib.rs", ".devcontainer/devcontainer.json"]
 INSTALL_COMMAND = re.compile(r"cargo\s+install\s+ulo-cli\b([^\n\"`]*)")
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?"

@@ -720,3 +720,19 @@ Breaks planted, each in the working tree and then restored:
 | a doc-hidden `__private` module in the suite | `lockstep`: the suite placed in the core |
 | a public function naming a `futures` type the suite does not re-export | `public_reach.py check` |
 | a re-export of `ulo_transport::__derive` | `private_paths.py check`, naming the path |
+
+### Q28-14 status (the HTTP suite published)
+
+- Leaf: `scripts/release_check.py lockstep` derives `ulo-http-conformance` as a leaf, 17 core crates and 42 leaves. The suite owns no doc-hidden module: it re-exports `Slots`, `startup_failed!`, `report`, `failures_dir` and `PARALLEL_VAR` from `ulo-conformance-support`, so one copy of each exists.
+- The stamper writes `#[ignore = reason]` with the reason a literal, so libtest prints the declared reason as written, with no prefix; `tests/ignore_reason.rs` reads it from libtest's report.
+- The README's first run, the suite stamped over the reference host on `OnTokio`, compiles as a doctest of the crate; `check_readme_install.py` holds its Install section to the workspace version; `ci/public-reach.txt` lists the crate.
+- `failures_dir` is the support crate's, which reads the running test binary's target directory rather than `CARGO_MANIFEST_DIR`, a registry-cache directory once published.
+- The `community host` job builds `fixtures/community-host`, a host written outside the workspace: its own `Embed` implementation and accept loop over bare hyper, run through the suite in both modes, with `private_paths.py scan` over it first. It needs no private item of `ulo-http` or `ulo`; 86 scenarios pass and 2 are declared not applicable.
+
+| Plant | Check that fails |
+| --- | --- |
+| a `#[doc(hidden)] pub mod __private` in the suite | `lockstep`: the suite placed in the core |
+| `#[ignore = concat!(..)]` in place of the literal | the ignore reason absent from the report |
+| the README's first run misnaming an item | the crate's doctest |
+| a caret on the README pin | `check_readme_install.py`, naming the line |
+| a `ulo_http::__private` path in the fixture | `private_paths.py scan` |

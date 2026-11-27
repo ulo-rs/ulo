@@ -1,0 +1,27 @@
+[package]
+name = "community-host"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "An HTTP host written as a crate outside the workspace would write one: ulo-http's public embedding API over a bare hyper server"
+
+# Its own workspace root: built as a crate outside the repository's workspace is, against the
+# real crates by path, and never adopted by the workspace.
+[workspace]
+
+[dependencies]
+ulo = { path = "../../../ulo" }
+ulo-http = { path = "../../../ulo-http" }
+http = "1"
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful"] }
+tokio = { version = "1", features = ["net", "macros"] }
+# `compat`: hyper's upgraded I/O, tokio's traits through `TokioIo`, reaches `Upgraded::from_futures`
+# as `futures-io`'s.
+tokio-util = { version = "0.7", features = ["compat"] }
+tower = { version = "0.5", default-features = false }
+
+[dev-dependencies]
+# By path, the suite in this tree; a host outside the repository depends on the published crate.
+ulo-http-conformance = { path = "../../../ulo-http-conformance", features = ["tokio"] }
+tokio = { version = "1", features = ["net", "macros", "rt-multi-thread", "sync"] }
