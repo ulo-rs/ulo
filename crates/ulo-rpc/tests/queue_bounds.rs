@@ -1157,19 +1157,20 @@ async fn a_request_read_on_another_task_ends_too_large_when_its_link_refuses_an_
 /// A request handed to another task ends there `CallEnded` when its handler's answer fails to send
 /// for a fault of the server's own side, a broker's publish among them: the server ended the call,
 /// cancelling it `ReplyFailed`. A send the link fails with `CallerGone`, its caller's connection
-/// closed, ends it `Cancelled`, the caller having left. Planted break: every failed send read as
+/// closed, bare or wrapped in an error of the link's own, ends it `Cancelled`, the caller having left. Planted break: every failed send read as
 /// the caller leaving.
 #[tokio::test]
 async fn a_request_read_on_another_task_ends_call_ended_when_its_answer_fails_to_send() {
     let departed = "`payload` was cut short: the caller went away: the link lost it";
-    for (caller_gone, expected) in [(false, CALL_ENDED), (true, departed)] {
+    for (failure, expected) in [("broker", CALL_ENDED), ("gone", departed), ("wrapped", departed)] {
         let feeding = Feeding::start().await;
         let failing = ReplyPath::new(move |_| {
             Box::pin(async move {
-                if caller_gone {
-                    Err(BoxError::from(CallerGone { why: "the connection closed" }))
-                } else {
-                    Err(BoxError::from("the broker connection is down"))
+                match failure {
+                    "gone" => Err(BoxError::from(CallerGone::new("the connection closed"))),
+                    // A link wrapping its send errors keeps the caller's departure on `source()`.
+                    "wrapped" => Err(BoxError::from(WrappedSend(BoxError::from(CallerGone::new("the connection closed"))))),
+                    _ => Err(BoxError::from("the broker connection is down")),
                 }
             })
         });
@@ -1177,7 +1178,7 @@ async fn a_request_read_on_another_task_ends_call_ended_when_its_answer_fails_to
         feeding.items(0..1);
         let seen = feeding.seen.clone();
         eventually("the reading task's end", || lock(&seen.0.early).is_some()).await;
-        assert_eq!(lock(&seen.0.early).clone(), Some(Some(expected.to_owned())), "a send failing with the caller gone: {caller_gone}");
+        assert_eq!(lock(&seen.0.early).clone(), Some(Some(expected.to_owned())), "a send failing as `{failure}`");
         feeding.stop().await;
     }
 }
@@ -1210,6 +1211,22 @@ async fn a_request_read_on_another_task_ends_call_ended_when_the_server_ends_its
     assert_eq!(error.kind, ErrorKind::Unavailable, "{error:?}");
     feeding.stop().await;
     let _ = tokio::time::timeout(PATIENCE, closing).await.expect("close finished in time");
+}
+
+/// A link's own error around the one its transport raised.
+#[derive(Debug)]
+struct WrappedSend(BoxError);
+
+impl std::fmt::Display for WrappedSend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the reply was not sent: {}", self.0)
+    }
+}
+
+impl std::error::Error for WrappedSend {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.0)
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

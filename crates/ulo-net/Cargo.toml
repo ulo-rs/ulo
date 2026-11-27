@@ -28,6 +28,9 @@ command-fds = { workspace = true }
 [dev-dependencies]
 # The certificate `tests/tls.rs` serves, made when the tests run.
 ulo-test-certs = { path = "../ulo-test-certs" }
+# The runtime a panicking lookup runs on, in `host.rs`'s tests.
+ulo-runtime-tokio = { path = "../ulo-runtime-tokio" }
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true
