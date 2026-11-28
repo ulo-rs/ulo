@@ -1,32 +1,10 @@
-//! The embedding conformance suite (transports DESIGN §3.8): one scenario list run against the
-//! hyper backend, the reference [`Host`], and against every embedding adapter in both modes,
-//! nested and fallback, stamped per host by [`http_conformance_suite!`].
+#![doc = include_str!("../README.md")]
 //!
-//! ```ignore
-//! # // reason: a template for an adapter crate's tests/conformance.rs: it elides the host's bodies
-//! // crates/ulo-http-axum/tests/conformance.rs
-//! struct AxumHost { /* the host server, its address, the app */ }
+//! ## What the scenarios assert
 //!
-//! impl ulo_http_conformance::Host for AxumHost {
-//!     type Harness = ulo_http_conformance::OnTokio;
-//!     async fn start(app: App<Connected>, mode: Mode) -> Self { /* bind Embedded<Axum>, listen, serve the router */ }
-//!     fn base_url(&self) -> String { /* .. */ }
-//!     fn limits() -> EmbedLimits { <ulo_http_axum::Axum as Embed>::limits() }
-//!     fn connections_read(&self) -> Option<usize> { /* a `ReadCount` over what its listener accepts */ }
-//!     async fn stop(self) { /* .. */ }
-//! }
-//!
-//! ulo_http_conformance::http_conformance_suite!(AxumHost);
-//! ```
-//!
-//! The suite names no runtime. A host's [`Harness`] is its runtime half, as the runtime suite's
-//! and the WebSocket suite's are: the app's runtime, a `block_on` each scenario runs inside, the
-//! listener the reference host accepts on, and the client's connection. Every wait a scenario
-//! makes is bounded by the app's `Timer`, every task it starts is spawned on the app's `Runtime`,
-//! and its client speaks HTTP/1.1 and HTTP/2 through hyper's and `h2`'s client connections over
-//! the stream the harness opens. `OnTokio`, behind the `tokio` feature, is the harness of every
-//! host whose framework runs on tokio; `OnSmol`, behind `smol`, runs the hyper backend's scenarios
-//! on smol with smol's sockets.
+//! The suite is the embedding conformance suite of transports DESIGN §3.8: one scenario list run
+//! against the hyper backend, the reference [`Host`], and against every embedding adapter in both
+//! modes, nested and fallback, stamped per host by [`http_conformance_suite!`].
 //!
 //! The suite asserts byte-identical responses wherever a scenario depends on no declared limit:
 //! status, the headers the app writes and the body, compared against the reference host in the
@@ -40,11 +18,21 @@
 //! does not arrive in time. A scenario that cannot apply to a host is declared not applicable in
 //! [`http_conformance_suite!`] and reported as ignored; run on that host, it fails.
 //!
+//! ## Runtimes
+//!
+//! The suite names no runtime. A host's [`Harness`] is its runtime half, as the runtime suite's
+//! and the WebSocket suite's are: the app's runtime, a `block_on` each scenario runs inside, the
+//! listener the reference host accepts on, and the client's connection. Every wait a scenario
+//! makes is bounded by the app's `Timer`, every task it starts is spawned on the app's `Runtime`,
+//! and its client speaks HTTP/1.1 and HTTP/2 through hyper's and `h2`'s client connections over
+//! the stream the harness opens. `OnTokio`, behind the `tokio` feature, is the harness of every
+//! host whose framework runs on tokio; `OnSmol`, behind `smol`, runs the hyper backend's scenarios
+//! on smol with smol's sockets.
+//!
 //! A host short of memory bounds how many scenarios of one suite run at once by setting
 //! [`PARALLEL_VAR`], `ULO_CONFORMANCE_PARALLEL`, to a positive integer, as the RPC suite reads it.
 //! Unset or empty, it bounds nothing, and libtest's `--test-threads` still applies on top of it.
 
-use std::error::Error;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
@@ -59,7 +47,6 @@ use ulo_http::embed::EmbedLimits;
 mod app;
 pub mod cases;
 mod count;
-mod failures;
 mod reference;
 #[cfg(feature = "smol")]
 mod smol_harness;
@@ -74,8 +61,8 @@ pub use app::{HOST_VALUE_HEADER, HostValue, ORIGIN};
 #[cfg(feature = "tokio")]
 pub use count::Counted;
 pub use count::ReadCount;
-pub use failures::failures_dir;
 pub use reference::HyperHost;
+pub use ulo_conformance_support::{PARALLEL_VAR, Slots, failures_dir, report, startup_failed};
 #[cfg(feature = "smol")]
 pub use smol_harness::OnSmol;
 #[cfg(feature = "tokio")]
@@ -174,104 +161,6 @@ pub trait Host: Sized + Send + Sync + 'static {
     fn stop(self) -> impl Future<Output = ()> + Send;
 }
 
-/// `error` and every source under it, joined by `: `, for a failure message: a scenario that fails
-/// while its host starts says what failed, the app's wiring, its `listen`, the host's listener or
-/// its launch, and why. A source whose text the message already carries is not repeated.
-pub fn report(error: &(dyn Error + 'static)) -> String {
-    let mut text = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        let line = cause.to_string();
-        if !text.contains(&line) {
-            text.push_str(": ");
-            text.push_str(&line);
-        }
-        source = cause.source();
-    }
-    text
-}
-
-/// Fails a scenario whose environment did not start, as `panic!` with the same arguments would,
-/// after writing the message to a file of its own under [`failures_dir`]; the panic names the file.
-/// Every startup path in the suite fails through it, and a [`Host`] implementation's own startup
-/// should too.
-#[macro_export]
-macro_rules! startup_failed {
-    ($($arg:tt)+) => {
-        $crate::__private::startup_failed(::std::format!($($arg)+))
-    };
-}
-
-/// The environment variable through which a host bounds how many scenarios of one suite run at
-/// once; the RPC suite reads the same one. A value that is not a positive integer fails every
-/// scenario through [`startup_failed!`].
-pub const PARALLEL_VAR: &str = "ULO_CONFORMANCE_PARALLEL";
-
-#[doc(hidden)]
-pub mod __private {
-    use std::num::NonZeroUsize;
-    use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
-
-    pub use crate::failures::startup_failed;
-    use crate::PARALLEL_VAR;
-
-    /// The slots one stamped suite's scenarios share, both modes counted together. Each scenario
-    /// runs on its own test thread, so a slot is waited for by blocking that thread before the
-    /// scenario's runtime starts.
-    pub struct Slots {
-        held: Mutex<usize>,
-        freed: Condvar,
-    }
-
-    impl Slots {
-        pub const fn new() -> Self {
-            Slots { held: Mutex::new(0), freed: Condvar::new() }
-        }
-
-        /// A slot when [`PARALLEL_VAR`] bounds the suite, held until the guard drops; `None`
-        /// otherwise.
-        pub fn hold(&'static self) -> Option<Slot> {
-            let parallel = host_parallel()?;
-            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
-            while *held >= parallel.get() {
-                held = self.freed.wait(held).unwrap_or_else(PoisonError::into_inner);
-            }
-            *held += 1;
-            Some(Slot(self))
-        }
-    }
-
-    impl Default for Slots {
-        fn default() -> Self {
-            Slots::new()
-        }
-    }
-
-    /// One held slot, given back on drop, a scenario's panic included.
-    pub struct Slot(&'static Slots);
-
-    impl Drop for Slot {
-        fn drop(&mut self) {
-            *self.0.held.lock().unwrap_or_else(PoisonError::into_inner) -= 1;
-            self.0.freed.notify_one();
-        }
-    }
-
-    /// [`PARALLEL_VAR`] as the host set it, read once per test binary: `None` unset or empty.
-    fn host_parallel() -> Option<NonZeroUsize> {
-        static HOST: OnceLock<Option<NonZeroUsize>> = OnceLock::new();
-        *HOST.get_or_init(|| match std::env::var(PARALLEL_VAR) {
-            Err(std::env::VarError::NotPresent) => None,
-            Ok(value) if value.trim().is_empty() => None,
-            Ok(value) => match value.trim().parse::<NonZeroUsize>() {
-                Ok(parallel) => Some(parallel),
-                Err(_) => startup_failed(format!("{PARALLEL_VAR} is `{value}`, not a positive integer")),
-            },
-            Err(std::env::VarError::NotUnicode(value)) => startup_failed(format!("{PARALLEL_VAR} is {value:?}, not a positive integer")),
-        })
-    }
-}
-
 /// The application every scenario runs: its controller, error handler, upgrade handler and
 /// pre-dispatch entries, wired against `runtime`, as a host that can do everything takes it.
 pub async fn app(runtime: impl Runtime) -> App<Connected> {
@@ -309,8 +198,8 @@ pub fn routing_label(routing: &Routing) -> String {
 /// scenario through the host's [`Harness::block_on`].
 ///
 /// A scenario that cannot apply to a host is declared with its reason, and stamped
-/// `#[ignore = "not applicable: <reason>"]`, so the test report counts it as ignored rather than
-/// passed:
+/// `#[ignore = "<reason>"]`, so the test report counts it as ignored rather than passed and prints
+/// the reason beside it:
 ///
 /// ```ignore
 /// # // reason: names a host type defined in the adapter crate's own tests/conformance.rs
@@ -345,7 +234,9 @@ macro_rules! http_conformance_suite {
             $(
                 ($skip, $d($d test:tt)*) => {
                     #[test]
-                    #[ignore = concat!("not applicable: ", $why)]
+                    // A literal: libtest prints an `ignore` reason only when it is one, and drops
+                    // a `concat!`'s.
+                    #[ignore = $why]
                     $d($d test)*
                 };
             )*
@@ -412,7 +303,7 @@ macro_rules! http_conformance_suite {
         );
     };
     (@cases $host:ty; [$($skip:ident),*]; $($name:ident => $module:ident :: $case:ident),* $(,)?) => {
-        static __ULO_HTTP_CONFORMANCE_SLOTS: $crate::__private::Slots = $crate::__private::Slots::new();
+        static __ULO_HTTP_CONFORMANCE_SLOTS: $crate::Slots = $crate::Slots::new();
         #[allow(dead_code, non_upper_case_globals)]
         mod __ulo_http_conformance_scenarios {
             $(pub(super) const $name: () = ();)*
@@ -421,7 +312,7 @@ macro_rules! http_conformance_suite {
             use super::*;
             $(
                 __ulo_http_conformance_stamp!($name, fn $name() {
-                    let _slot = super::__ULO_HTTP_CONFORMANCE_SLOTS.hold();
+                    let _slot = super::__ULO_HTTP_CONFORMANCE_SLOTS.hold(None);
                     <<$host as $crate::Host>::Harness as $crate::Harness>::block_on(
                         $crate::cases::$module::$case::<$host>($crate::Mode::Nested),
                     );
@@ -432,7 +323,7 @@ macro_rules! http_conformance_suite {
             use super::*;
             $(
                 __ulo_http_conformance_stamp!($name, fn $name() {
-                    let _slot = super::__ULO_HTTP_CONFORMANCE_SLOTS.hold();
+                    let _slot = super::__ULO_HTTP_CONFORMANCE_SLOTS.hold(None);
                     <<$host as $crate::Host>::Harness as $crate::Harness>::block_on(
                         $crate::cases::$module::$case::<$host>($crate::Mode::Fallback),
                     );

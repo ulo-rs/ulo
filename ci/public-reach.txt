@@ -7,6 +7,7 @@ crate ulo-http
 crate ulo-rpc
 crate ulo-rpc-conformance
 crate ulo-conformance-support
+crate ulo-http-conformance
 crate ulo-runtime-conformance
 crate ulo-ws
 crate ulo-grpc
@@ -76,5 +77,8 @@ allow ulo_ws ulo_ws::Reply futures_core::stream::BoxStream  # a futures trait or
 
 allow ulo_transport ulo_transport::span::call tracing::span::Span  # the span a transport opens per call; the transport crate calling this instruments its futures with `tracing::Instrument` and logs through `tracing`'s macros, so it depends on `tracing` whatever this crate re-exports
 allow ulo_transport ulo_transport::Tracked futures_core::stream::Stream  # a futures trait or stream type; reading or building a stream needs `futures`'s own extension traits
+allow ulo_http_conformance ulo_http_conformance::Host ulo_http::embed::EmbedLimits  # what `Host::limits` answers: the host crate's own `Embed::limits`, which `ulo-http` defines and a host depends on `ulo-http` to implement; a second path to it from the suite is not re-exported
+allow ulo_http_conformance ulo_http_conformance::app_for ulo_http::embed::EmbedLimits  # the same `EmbedLimits`, as the suite's app is built for a host declaring them
+allow ulo_http_conformance ulo_http_conformance::routing_label ulo_http::routing::Routing  # the `Routing` a host's middleware reads off the app's response, which `ulo-http` defines and a host depends on `ulo-http` to read
 allow ulo_rpc_conformance ulo_rpc_conformance::Stamped ulo_rpc::link::Link  # the `Link` the wrapper implements is `ulo-rpc`'s SPI, which a link crate running the suite depends on to implement its own; a second path to it from the suite is not re-exported
 allow ulo_rpc_conformance ulo_rpc_conformance::cases::deadlines::Stamped ulo_rpc::link::Link  # the same wrapper at its defining path

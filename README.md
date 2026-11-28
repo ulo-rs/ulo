@@ -152,7 +152,7 @@ pub struct NotesModule;
 
 | Transport | Crates |
 | --- | --- |
-| HTTP | `ulo-http` with a server: `ulo-http-hyper` (the reference), or `ulo-http-axum`, `ulo-http-actix`, `ulo-http-poem`, `ulo-http-rocket`, `ulo-http-salvo`. TLS through `ulo-net`. |
+| HTTP | `ulo-http` with a server: `ulo-http-hyper` (the reference), or `ulo-http-axum`, `ulo-http-actix`, `ulo-http-poem`, `ulo-http-rocket`, `ulo-http-salvo`. TLS through `ulo-net`. Each host passes `ulo-http-conformance`, the suite a host written outside this repository runs too. |
 | WebSocket | `ulo-ws` with `ulo-ws-hyper`; `ulo-ws-redis` carries a broadcast across processes. |
 | RPC | `ulo-rpc` over TCP (`ulo-rpc-tcp`, `ulo-rpc-tcp-smol`), UDP (`ulo-rpc-udp`), NATS, Redis, MQTT, RabbitMQ or Kafka (`ulo-rpc-nats`, `-redis`, `-mqtt`, `-rabbitmq`, `-kafka`). Each link passes `ulo-rpc-conformance`, the suite a link written outside this repository runs too. |
 | gRPC | `ulo-grpc`, with `ulo-build` generating the service shapes from a `.proto`. |
