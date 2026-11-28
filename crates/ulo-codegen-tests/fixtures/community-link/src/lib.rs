@@ -248,7 +248,7 @@ impl Drop for Client {
 fn reply_path(client: Weak<Client>, client_id: u64, instance: Weak<Instance>, server_id: u64) -> ReplyPath {
     ReplyPath::new(move |frame: Frame| -> BoxFuture<'static, Result<(), BoxError>> {
         let Some(replies) = client.upgrade().and_then(|c| lock(&c.replies).clone()) else {
-            return Box::pin(ready(Err(BoxError::from(CallerGone { why: "the client has gone" }))));
+            return Box::pin(ready(Err(BoxError::from(CallerGone::new("the client has gone")))));
         };
         let last = matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. });
         let room = replies.send(with_id(frame, client_id));
@@ -263,7 +263,7 @@ fn reply_path(client: Weak<Client>, client_id: u64, instance: Weak<Instance>, se
                 instance.finish(server_id);
             }
         }
-        Box::pin(async move { room.await.map_err(|_| BoxError::from(CallerGone { why: "the client has gone" })) })
+        Box::pin(async move { room.await.map_err(|_| BoxError::from(CallerGone::new("the client has gone"))) })
     })
 }
 

@@ -375,4 +375,19 @@ mod tests {
         assert!(refused.is::<ulo::RuntimeShutDown>(), "the connect failed as `{refused}`, not as `RuntimeShutDown`");
         assert_eq!(asked.load(Ordering::SeqCst), 0, "the lookups a runtime that has shut down ran");
     }
+
+    /// A client whose name resolves to nothing is built, the name being well formed, and each call
+    /// fails `Unavailable`, naming it, since a later connect may find it. The lookup is planted:
+    /// answering at once, it does not depend on a resolver's time, which a machine with its
+    /// network down may spend past any bound.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_client_on_a_name_resolving_to_nothing_fails_each_call_unavailable() {
+        let tcp = on("nosuch.invalid:7000", Lookup::from_fn(|_| Err(io::Error::new(io::ErrorKind::NotFound, "no such host"))));
+        let rpc = ulo_rpc::RpcClient::new(tcp, Arc::new(Tokio::current())).expect("a client on a well-formed host name is built");
+        for _ in 0..2 {
+            let failed = rpc.request::<_, u32>("client_address.add", &1).timeout(PATIENCE).await.expect_err("a call to a name resolving to nothing");
+            assert_eq!(failed.kind(), ulo_transport::ErrorKind::Unavailable, "the call to `nosuch.invalid:7000` answered {failed:?}, where a `Timeout` is its {PATIENCE:?} passing while it waited on the lookup");
+            assert!(failed.message().contains("`nosuch.invalid:7000` resolved to no address"), "the failure does not name the host: {failed:?}");
+        }
+    }
 }

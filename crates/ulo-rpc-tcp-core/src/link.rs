@@ -1392,7 +1392,7 @@ fn reply_path(queue: ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: Arc<
         let queued = queue_reply(&queue, codec, limit, &ids, frame);
         Box::pin(async move {
             match queued? {
-                Queued::Written(room) => room.await.map_err(|_| BoxError::from(CallerGone { why: "the TCP connection closed" })),
+                Queued::Written(room) => room.await.map_err(|_| BoxError::from(CallerGone::new("the TCP connection closed"))),
                 Queued::Dropped(released) => {
                     released.wait_for(|released| *released).await;
                     Ok(())
@@ -1422,7 +1422,7 @@ fn queue_reply(queue: &ordered::Sender<Bytes>, codec: Codec, limit: u64, ids: &M
     let caller = match lock(ids).caller(server) {
         Some(Caller::Live(caller)) => caller,
         Some(Caller::Cancelled(released)) => return Ok(Queued::Dropped(released)),
-        None => return Err(CallerGone { why: "the call is no longer in flight on this connection" }.into()),
+        None => return Err(CallerGone::new("the call is no longer in flight on this connection").into()),
     };
     let ends = matches!(frame, Frame::Res { .. } | Frame::Err { .. } | Frame::End { .. });
     let bytes = encode(codec, limit, &with_id(frame, caller))?;

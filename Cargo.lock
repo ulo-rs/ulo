@@ -9530,8 +9530,10 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "socket2 0.6.5",
+ "tokio",
  "tracing",
  "ulo",
+ "ulo-runtime-tokio",
  "ulo-test-certs",
 ]
 

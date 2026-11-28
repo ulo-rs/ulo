@@ -2,7 +2,8 @@
 //! resolves through the system resolver (F416). Text that is neither is refused where the client
 //! takes the link, as `RpcClient::new`'s `UnusableLink` or the client module's failed `connect`, not
 //! as every call's `Unavailable` (F415). A name resolving to no address fails a server's `listen()`
-//! as `Configure` and a client's call `Unavailable`, each naming it.
+//! as `Configure`; a client's call `Unavailable`, naming it, is tested against a planted lookup in
+//! `src/link.rs`, since a real lookup's time is the network's.
 //!
 //! `localhost` is the host name the tests resolve, through `/etc/hosts`, and `nosuch.invalid` the
 //! one that resolves to nothing: RFC 6761 reserves `.invalid` so that no resolver answers it.
@@ -175,18 +176,6 @@ async fn a_server_on_a_name_resolving_to_nothing_is_refused_at_listen() {
     assert!(matches!(refused, StartupError::Configure(_)), "{refused:?}");
     let text = refused.to_string();
     assert!(text.contains("`nosuch.invalid:0` resolved to no address"), "the refusal does not name the host: {text}");
-}
-
-/// A client whose name resolves to nothing is built, the name being well formed, and each call
-/// fails `Unavailable`, naming it, since a later connect may find it.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_client_on_a_name_resolving_to_nothing_fails_each_call_unavailable() {
-    let rpc = RpcClient::new(Tcp::new("nosuch.invalid:7000"), Arc::new(Tokio::current())).expect("a client on a well-formed host name is built");
-    for _ in 0..2 {
-        let failed = rpc.request::<_, u32>("client_address.add", &1).timeout(PATIENCE).await.expect_err("a call to a name resolving to nothing");
-        assert_eq!(failed.kind(), ErrorKind::Unavailable, "{failed:?}");
-        assert!(failed.message().contains("`nosuch.invalid:7000` resolved to no address"), "the failure does not name the host: {failed:?}");
-    }
 }
 
 /// A name with an empty label other than the one a trailing dot ends can never resolve, so it is

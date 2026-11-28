@@ -21,6 +21,7 @@
 //! link delivers right after it always finds the call; the call itself then runs in its own task.
 
 use std::collections::HashMap;
+use std::error::Error;
 use std::future::{Future, poll_fn};
 use std::pin::pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -759,9 +760,19 @@ async fn send(reply: &ReplyPath, exec: &ExecutionRef, id: u64, frame: Frame) -> 
 }
 
 /// The reason a call whose reply frame failed to send is cancelled with: the caller leaving when
-/// the link says so, and otherwise the server's own failure, a broker publish among them.
+/// the link says so, and otherwise the server's own failure, a broker publish among them. The
+/// link's word is a [`CallerGone`] anywhere on the error's `source()` chain, to 32 levels.
 fn unsent(err: &BoxError) -> CancelReason {
-    if err.is::<CallerGone>() { CancelReason::Disconnected } else { CancelReason::ReplyFailed }
+    const MAX_DEPTH: usize = 32;
+    let mut cause: Option<&(dyn Error + 'static)> = Some(&**err);
+    for _ in 0..MAX_DEPTH {
+        let Some(error) = cause else { break };
+        if error.is::<CallerGone>() {
+            return CancelReason::Disconnected;
+        }
+        cause = error.source();
+    }
+    CancelReason::ReplyFailed
 }
 
 /// A refusal written without an execution, over the in-flight limit or once the drain began,

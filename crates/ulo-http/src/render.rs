@@ -337,9 +337,9 @@ pub(crate) fn challenge_value(challenge: &str) -> HeaderValue {
 }
 
 /// `Retry-After` as delay-seconds (RFC 9110 §10.2.3), a fraction of a second rounded up so a client
-/// never retries early.
+/// never retries early. A delay past `u64::MAX` seconds saturates there.
 pub(crate) fn retry_after(after: Duration) -> HeaderValue {
-    let seconds = after.as_secs() + u64::from(after.subsec_nanos() > 0);
+    let seconds = after.as_secs().saturating_add(u64::from(after.subsec_nanos() > 0));
     HeaderValue::from(seconds)
 }
 
@@ -406,5 +406,13 @@ mod tests {
         let document: serde_json::Value = serde_json::from_slice(&body).expect("a JSON document");
         assert_eq!(document.get("title"), None, "{document}");
         assert_eq!(document["status"], 499);
+    }
+
+    /// The rounding up of a fraction of a second must not overflow the whole seconds.
+    #[test]
+    fn a_retry_after_of_the_longest_duration_saturates() {
+        assert_eq!(retry_after(Duration::MAX), HeaderValue::from(u64::MAX));
+        assert_eq!(retry_after(Duration::new(1, 1)), HeaderValue::from(2_u64));
+        assert_eq!(retry_after(Duration::from_secs(3)), HeaderValue::from(3_u64));
     }
 }

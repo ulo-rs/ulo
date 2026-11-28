@@ -818,11 +818,20 @@ impl Error for Misconfigured {
 
 /// A [`ReplyPath`] send's failure saying the caller is gone, the connection its call arrived on
 /// closed: the server cancels the call `CancelReason::Disconnected`. A link answers it only where
-/// it knows the caller left; any other failure reads as the server's own, `ReplyFailed`.
+/// it knows the caller left; any other failure reads as the server's own, `ReplyFailed`. Found
+/// anywhere on the failure's `source()` chain, so a link wrapping its send errors keeps the
+/// meaning. Built with [`CallerGone::new`].
+#[non_exhaustive]
 #[derive(Debug)]
 pub struct CallerGone {
     /// What the link saw, for the log line the failure writes.
     pub why: &'static str,
+}
+
+impl CallerGone {
+    pub const fn new(why: &'static str) -> Self {
+        CallerGone { why }
+    }
 }
 
 impl fmt::Display for CallerGone {
