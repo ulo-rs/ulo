@@ -168,6 +168,8 @@ impl Error for ResolveError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match &self.cause {
             ResolveCause::Lookup(error) => Some(error),
+            // The held `Redacted` is the panic's own message: `ulo::is_panic` and `find` walk `source()`.
+            ResolveCause::Panicked(message) => Some(&**message),
             _ => None,
         }
     }
@@ -176,6 +178,24 @@ impl Error for ResolveError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ulo::BoxError;
+
+    async fn resolved(lookup: Lookup) -> ResolveError {
+        let runtime = ulo_runtime_tokio::Tokio::current();
+        lookup.resolve(&HostPort::parse("billing:7000").expect("a host name parses"), &runtime).await.expect_err("the lookup answers no address")
+    }
+
+    /// A panicking lookup is a panic to `ulo::is_panic`; a failed or empty one is not.
+    #[tokio::test]
+    async fn a_panicking_lookup_is_a_panic_and_a_failed_one_is_not() {
+        let panicked = resolved(Lookup::from_fn(|_| panic!("the resolver crashed"))).await;
+        assert!(matches!(panicked.cause(), ResolveCause::Panicked(_)));
+        assert!(ulo::is_panic(&(Box::new(panicked) as BoxError)), "a panicking lookup is not recognised as a panic");
+        for lookup in [Lookup::from_fn(|_| Err(io::Error::new(io::ErrorKind::NotFound, "no such host"))), Lookup::from_fn(|_| Ok(Vec::new()))] {
+            let error = resolved(lookup).await;
+            assert!(!ulo::is_panic(&(Box::new(error) as BoxError)), "a lookup that did not panic is recognised as one");
+        }
+    }
 
     #[test]
     fn a_format_character_in_a_name_that_resolved_to_nothing_is_escaped_in_the_message() {
